@@ -1,0 +1,103 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Package manager files
+package-lock.json
+yarn.lock
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Environment variables
+.env*
+!.env.example
+config.json
+secrets.json
+
+# API Keys and Secrets
+**/api-keys.txt
+**/secrets.txt
+**/private-keys/
+**/*key*
+client_secret.json
+credentials.json
+
+# Production builds
+build/
+dist/
+.next/
+out/
+.nuxt
+
+# Logs
+logs/
+*.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Database files
+*.db
+*.sqlite
+
+# Cache directories
+.cache/
+.tmp/
+.temp/
+tmp/
+temp/
+.turbo
+.parcel-cache
+.eslintcache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+.npm
+
+# Coverage and testing
+coverage/
+*.lcov
+.nyc_output
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build and bundler outputs
+*.tgz
+*.tsbuildinfo
+.out
+.storybook-out
+
+# Deployment
+.vercel
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+*.temp
+
+# Shell scripts (if containing sensitive data)
+*.sh
+
+# Optional files
+.node_repl_history
+.yarn-integritytypescript
