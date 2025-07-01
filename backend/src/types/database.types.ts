@@ -1,0 +1,133 @@
+export interface Database {
+  public: {
+    Tables: {
+      users: {
+        Row: {
+          id: string;
+          did: string;
+          email: string | null;
+          username: string | null;
+          wallet_address: string | null;
+          webauthn_user_id: string | null;
+          webauthn_credentials: any;
+          passkey_registered: boolean;
+          full_name: string | null;
+          avatar_url: string | null;
+          bio: string | null;
+          two_factor_enabled: boolean;
+          last_login_at: string | null;
+          login_count: number;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          did: string;
+          email?: string | null;
+          username?: string | null;
+          wallet_address?: string | null;
+          webauthn_user_id?: string | null;
+          webauthn_credentials?: any;
+          passkey_registered?: boolean;
+          full_name?: string | null;
+          avatar_url?: string | null;
+          bio?: string | null;
+          two_factor_enabled?: boolean;
+          last_login_at?: string | null;
+          login_count?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          did?: string;
+          email?: string | null;
+          username?: string | null;
+          wallet_address?: string | null;
+          webauthn_user_id?: string | null;
+          webauthn_credentials?: any;
+          passkey_registered?: boolean;
+          full_name?: string | null;
+          avatar_url?: string | null;
+          bio?: string | null;
+          two_factor_enabled?: boolean;
+          last_login_at?: string | null;
+          login_count?: number;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+      };
+      ai_passports: {
+        Row: {
+          id: string;
+          did: string;
+          passport_level: 'Basic' | 'Verified' | 'Premium' | 'Enterprise';
+          registration_status: 'pending' | 'verified' | 'complete' | 'suspended';
+          trust_score: number;
+          biometric_verified: boolean;
+          email_verified: boolean;
+          phone_verified: boolean;
+          kyc_verified: boolean;
+          personality_profile: any;
+          learning_patterns: any;
+          communication_style: any;
+          preferences: any;
+          total_interactions: number;
+          successful_verifications: number;
+          data_vaults_count: number;
+          connected_platforms_count: number;
+          created_at: string;
+          updated_at: string;
+          last_activity_at: string;
+        };
+        Insert: {
+          id?: string;
+          did: string;
+          passport_level?: 'Basic' | 'Verified' | 'Premium' | 'Enterprise';
+          registration_status?: 'pending' | 'verified' | 'complete' | 'suspended';
+          trust_score?: number;
+          biometric_verified?: boolean;
+          email_verified?: boolean;
+          phone_verified?: boolean;
+          kyc_verified?: boolean;
+          personality_profile?: any;
+          learning_patterns?: any;
+          communication_style?: any;
+          preferences?: any;
+          total_interactions?: number;
+          successful_verifications?: number;
+          data_vaults_count?: number;
+          connected_platforms_count?: number;
+          created_at?: string;
+          updated_at?: string;
+          last_activity_at?: string;
+        };
+        Update: {
+          id?: string;
+          did?: string;
+          passport_level?: 'Basic' | 'Verified' | 'Premium' | 'Enterprise';
+          registration_status?: 'pending' | 'verified' | 'complete' | 'suspended';
+          trust_score?: number;
+          biometric_verified?: boolean;
+          email_verified?: boolean;
+          phone_verified?: boolean;
+          kyc_verified?: boolean;
+          personality_profile?: any;
+          learning_patterns?: any;
+          communication_style?: any;
+          preferences?: any;
+          total_interactions?: number;
+          successful_verifications?: number;
+          data_vaults_count?: number;
+          connected_platforms_count?: number;
+          created_at?: string;
+          updated_at?: string;
+          last_activity_at?: string;
+        };
+      };
+    };
+  };
+}
