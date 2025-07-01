@@ -20,10 +20,17 @@ import { BackendStatus } from '../ui/BackendStatus';
 
 // 타입 import
 import type { 
-  UnifiedAIPassport, 
-  Message, 
-  ConnectionStatus 
+  UnifiedAIPassport
 } from '../../types/passport.types';
+
+// TODO: 아래 타입들을 실제 정의된 곳에서 import 하거나 임시로 정의하세요.
+type Message = {
+  id: string;
+  type: 'user' | 'ai';
+  content: string;
+};
+
+type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error';
 
 interface MainLayoutProps {
   // 패스포트 데이터
@@ -145,7 +152,7 @@ export function MainLayout({
 
   // 파일 첨부 핸들러
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
+    const files = Array.from(event.target.files || []) as File[];
     setAttachments(prev => [...prev, ...files]);
   };
 
