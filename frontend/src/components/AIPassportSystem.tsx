@@ -1,199 +1,481 @@
+// frontend/src/components/AIPassportSystem.tsx
+// ============================================================================ 
+// /frontend/src/components/AIPassportSystem.tsx
+// 🌐 AI Passport 시스템 컴포넌트
+// ============================================================================ 
+// 이 컴포넌트는 AI Passport 시스템의 전체 흐름을 관리합니다.   
+// 사용자 인증 상태에 따라 등록 흐름 또는 메인 대시보드를 렌더링합니다.
+// 등록 흐름은 WebAuthn을 사용하여 생체인증을 처리하고,
+// 블록체인 지갑과 DID를 생성합니다.
+// 메인 대시보드는 AI 채팅 인터페이스와 데이터 볼트 관리 기능을 포함합니다.
+// 이 컴포넌트는 클라이언트 측에서 동적으로 WebAuthn 라이브러리를 로드하여
+// 오류를 방지하고, 로딩 상태를 표시합니다.
+// 이 컴포넌트는 WebAuthn 등록 및 로그인, AI 채팅, CUE 마이닝,
+// 데이터 볼트 관리 등의 기능을 포함합니다.
+// 이 컴포넌트는 사용자 세션을 영구적으로 유지하고,   
+// 페이지 새로고침 시 세션을 복원합니다.  
+// ============================================================================
+
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  Shield, Fingerprint, CheckCircle, Send, User, Settings, LogOut, Menu, X,
-  MessageCircle, Database, Activity, BarChart3, Sparkles, Mic, Paperclip,
-  Wifi, WifiOff, Copy, Star, Coins, Globe, Hash, Clock, Zap, Search,
-  ChevronRight, Plus, Eye, Lock, AlertCircle, RefreshCw, Brain, Heart
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { Shield, Fingerprint, CheckCircle, AlertCircle, Database, 
+  Wifi, WifiOff,MessageCircle,User,Coins,Settings,LogOut,Loader2,
+  X,Menu, Send,Mic,Paperclip,Sparkles,Activity,BarChart3,Clock,Link,Star,Zap,Eye,
+  Copy,Key,Globe,ArrowUp,Hash
 } from 'lucide-react';
 
-// ============================================================================
-// Enhanced API Client with Real Backend Integration
-// ============================================================================
+// WebAuthn 라이브러리 동적 로드
+let startRegistration = null;
+let startAuthentication = null;
 
-class CueProtocolAPI {
-  private baseURL: string;
-  private websocket: WebSocket | null = null;
-  
+const loadWebAuthn = async () => {
+  if (typeof window !== 'undefined' && !startRegistration) {
+    try {
+      const webauthn = await import('@simplewebauthn/browser');
+      startRegistration = webauthn.startRegistration;
+      startAuthentication = webauthn.startAuthentication;
+      return true;
+    } catch (error) {
+      console.error('❌ WebAuthn 라이브러리 로드 실패:', error);
+      return false;
+    }
+  }
+  return !!startRegistration;
+};
+
+// 🔧 완전한 데이터 유지 API 클라이언트
+class PersistentDataAPIClient {
   constructor() {
     this.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    this.websocket = null;
+    this.listeners = new Map();
   }
 
-  private async request(endpoint: string, options: RequestInit = {}) {
+  // WebSocket 연결
+  connectWebSocket() {
     try {
-      const response = await fetch(`${this.baseURL}${endpoint}`, {
+      this.websocket = new WebSocket(this.baseURL.replace('http', 'ws'));
+      this.websocket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        this.listeners.forEach(callback => callback(data));
+      };
+    } catch (error) {
+      console.warn('WebSocket 연결 실패, HTTP 폴백 사용');
+    }
+  }
+
+  // 실시간 리스너 등록
+  onRealtimeUpdate(callback) {
+    const id = Math.random().toString(36);
+    this.listeners.set(id, callback);
+    return () => this.listeners.delete(id);
+  }
+
+  async request(endpoint, options = {}) {
+    const url = `${this.baseURL}${endpoint}`;
+    
+    try {
+      const response = await fetch(url, {
         ...options,
-        headers: {
+        headers: { 
           'Content-Type': 'application/json',
-          ...options.headers
+          ...options.headers 
         },
+        mode: 'cors',
         credentials: 'include'
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
       }
 
       return await response.json();
     } catch (error) {
-      console.error(`API Error: ${endpoint}`, error);
-      return this.getMockData(endpoint);
+      console.error(`API 요청 실패: ${url}`, error.message);
+      
+      // Mock 폴백 데이터
+      if (endpoint.includes('/health')) {
+        return { status: 'mock', mode: 'frontend-only', timestamp: new Date().toISOString() };
+      }
+      
+      if (endpoint.includes('register/start')) {
+        return {
+          success: true,
+          sessionId: `mock_${Date.now()}`,
+          options: { challenge: btoa(Math.random().toString()) }
+        };
+      }
+      
+      if (endpoint.includes('register/complete') || endpoint.includes('login/complete')) {
+        return {
+          success: true,
+          sessionId: `perm_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`, // 🔧 영구 세션 ID
+          user: {
+            id: `user_${Date.now()}`,
+            userName: `Agent${Math.floor(Math.random() * 10000)}`,
+            userEmail: 'demo@cueprotocol.ai',
+            did: `did:cue:${Date.now()}`,
+            walletAddress: `0x${Math.random().toString(16).substring(2, 42)}`,
+            cueBalance: 15428,
+            trustScore: 92.5,
+            passportLevel: 'Verified',
+            biometricVerified: true,
+            registeredAt: new Date().toISOString()
+          }
+        };
+      }
+      
+      throw error;
     }
   }
 
-  private getMockData(endpoint: string) {
-    if (endpoint.includes('/health')) {
-      return { status: 'mock', mode: 'offline' };
+  // 🔧 WebAuthn 등록 (세션 ID 저장 포함)
+  async startWebAuthnRegistration() {
+    console.log('🆕 === WebAuthn 등록 시작 (데이터 영구 보존) ===');
+
+    try {
+      // Step 1: 등록 시작 요청
+      console.log('📞 1단계: /register/start 호출');
+      const startResponse = await this.request('/api/auth/webauthn/register/start', {
+        method: 'POST',
+        body: JSON.stringify({
+          userName: `PassKey_User_${Date.now()}`,
+          deviceInfo: { 
+            userAgent: navigator.userAgent, 
+            platform: navigator.platform,
+            timestamp: Date.now()
+          }
+        })
+      });
+
+      console.log('✅ 1단계 성공:', { 
+        success: startResponse.success, 
+        sessionId: startResponse.sessionId 
+      });
+
+      if (!startResponse.success || !startResponse.options) {
+        throw new Error('등록 시작 응답이 올바르지 않습니다');
+      }
+
+      // Step 2: WebAuthn 라이브러리 확인
+      console.log('📦 2단계: WebAuthn 라이브러리 로드 확인');
+      const loaded = await loadWebAuthn();
+      
+      let credential;
+      
+      if (!loaded) {
+        console.warn('⚠️ WebAuthn 라이브러리 없음 - Mock 크리덴셜 사용');
+        
+        credential = {
+          id: `mock_cred_${Date.now()}`,
+          type: 'public-key',
+          response: {
+            attestationObject: 'mock-attestation',
+            clientDataJSON: 'mock-client-data'
+          }
+        };
+        
+        console.log('🎭 Mock 크리덴셜 생성:', credential.id);
+      } else {
+        console.log('👆 2단계: 생체인증 팝업 실행...');
+        credential = await startRegistration(startResponse.options);
+        console.log('✅ 생체인증 완료:', credential.id);
+      }
+
+      // Step 3: 등록 완료 요청
+      console.log('📞 3단계: /register/complete 호출');
+      const completeResponse = await this.request('/api/auth/webauthn/register/complete', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          credential, 
+          sessionId: startResponse.sessionId 
+        })
+      });
+
+      console.log('✅ 3단계 완료:', { 
+        success: completeResponse.success,
+        hasUser: !!completeResponse.user,
+        sessionId: completeResponse.sessionId // 🔧 세션 ID 확인
+      });
+
+      // ✅ 응답 검증 강화
+      if (!completeResponse.success) {
+        throw new Error(completeResponse.message || '등록 완료 처리 실패');
+      }
+
+      if (!completeResponse.user) {
+        throw new Error('사용자 정보가 응답에 포함되지 않았습니다');
+      }
+
+      // 🔧 영구 세션 ID 저장 (핵심!)
+      if (completeResponse.sessionId) {
+        console.log('💾 세션 ID localStorage 저장:', completeResponse.sessionId);
+        localStorage.setItem('cue_session_id', completeResponse.sessionId);
+      }
+
+      console.log('🎉 WebAuthn 등록 완료!', {
+        userId: completeResponse.user.id,
+        username: completeResponse.user.username,
+        did: completeResponse.user.did,
+        sessionId: completeResponse.sessionId,
+        isExisting: completeResponse.isExistingUser || false
+      });
+
+      return completeResponse;
+
+    } catch (error) {
+      console.error('💥 WebAuthn 등록 실패:', error);
+      throw error;
     }
-    if (endpoint.includes('/chat')) {
+  }
+
+  // 🔧 세션 복원 (페이지 새로고침 시 자동 호출)
+  async restoreSession() {
+    console.log('🔧 === 세션 복원 시도 ===');
+    
+    try {
+      const sessionId = localStorage.getItem('cue_session_id');
+      
+      if (!sessionId) {
+        console.log('❌ 저장된 세션 ID 없음');
+        return null;
+      }
+
+      console.log('🔍 저장된 세션 ID 발견:', sessionId);
+
+      const response = await this.request('/api/auth/session/restore', {
+        method: 'POST',
+        body: JSON.stringify({ sessionId })
+      });
+
+      if (!response.success) {
+        console.log('❌ 세션 복원 실패, 로그인 필요');
+        localStorage.removeItem('cue_session_id'); // 무효한 세션 ID 삭제
+        return null;
+      }
+
+      console.log('✅ 세션 복원 성공!', {
+        userId: response.user.id,
+        username: response.user.username,
+        walletAddress: response.user.walletAddress,
+        cueBalance: response.user.cueBalance
+      });
+
+      return response;
+
+    } catch (error) {
+      console.error('💥 세션 복원 오류:', error);
+      localStorage.removeItem('cue_session_id'); // 오류 발생 시 세션 ID 삭제
+      return null;
+    }
+  }
+
+  // 🔧 로그아웃 (세션 무효화)
+  async logout() {
+    console.log('🔧 === 로그아웃 처리 ===');
+    
+    try {
+      const sessionId = localStorage.getItem('cue_session_id');
+      
+      if (sessionId) {
+        console.log('🗑️ 서버 세션 무효화:', sessionId);
+        
+        await this.request('/api/auth/session/logout', {
+          method: 'POST',
+          body: JSON.stringify({ sessionId })
+        });
+      }
+
+      // 로컬 세션 ID 삭제
+      localStorage.removeItem('cue_session_id');
+      console.log('✅ 로그아웃 완료');
+
+      return { success: true };
+
+    } catch (error) {
+      console.error('💥 로그아웃 오류:', error);
+      // 오류가 발생해도 로컬 세션은 삭제
+      localStorage.removeItem('cue_session_id');
+      return { success: false, error: error.message };
+    }
+  }
+
+  // AI 채팅
+  async sendChatMessage(message, model, userDid) {
+    try {
+      return await this.request('/api/ai/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message, model, userDid })
+      });
+    } catch {
+      // 모의 AI 응답
+      const responses = [
+        "안녕하세요! CUE Protocol에서 개인화된 AI 어시스턴트입니다. 어떻게 도와드릴까요?",
+        "흥미로운 질문이네요! 개인화 데이터를 기반으로 맞춤형 답변을 준비하고 있습니다.",
+        "데이터 볼트에서 관련 정보를 찾고 있습니다. 잠시만 기다려주세요.",
+        "WebAuthn 인증을 통해 안전하게 저장된 개인 정보를 활용하여 답변드리겠습니다."
+      ];
+      
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       return {
-        response: "This is a mock response. Please connect to the backend for real AI integration.",
-        cueTokensEarned: Math.floor(Math.random() * 5) + 1,
-        timestamp: new Date().toISOString()
+        response: responses[Math.floor(Math.random() * responses.length)],
+        model,
+        timestamp: new Date().toISOString(),
+        cueReward: Math.floor(Math.random() * 15) + 5,
+        trustScore: 0.85 + Math.random() * 0.15
       };
     }
-    return { success: false, error: 'Backend not connected' };
   }
 
-  async healthCheck() {
-    return this.request('/health');
+  // CUE 마이닝
+  async mineCUE(userDid, activity) {
+    try {
+      return await this.request('/api/cue/mine', {
+        method: 'POST',
+        body: JSON.stringify({ userDid, activity })
+      });
+    } catch {
+      return {
+        success: true,
+        amount: Math.floor(Math.random() * 10) + 1,
+        totalBalance: Math.floor(Math.random() * 5000) + 1000,
+        activity
+      };
+    }
   }
 
-  async startWebAuthnRegistration(email: string) {
-    return this.request('/api/auth/webauthn/register/start', {
-      method: 'POST',
-      body: JSON.stringify({ userEmail: email })
-    });
+  // 패스포트 데이터 로드
+  async loadPassport(did) {
+    try {
+      return await this.request(`/api/passport/${did}`);
+    } catch {
+      return {
+        did,
+        username: did.split(':').pop(),
+        trustScore: 85 + Math.floor(Math.random() * 15),
+        level: 'Verified Agent',
+        cueBalance: 2500 + Math.floor(Math.random() * 3000),
+        totalMined: 25000 + Math.floor(Math.random() * 50000),
+        personalityProfile: {
+          traits: ['창의적', '분석적', '신뢰할 수 있는'],
+          communicationStyle: 'friendly',
+          expertise: ['AI', 'Web3', 'Protocol Design']
+        },
+        connectedPlatforms: ['ChatGPT', 'Claude', 'Discord'],
+        achievements: [
+          { name: 'First CUE', icon: '🎯', earned: true },
+          { name: 'Trusted Agent', icon: '🛡️', earned: true },
+          { name: 'Platform Master', icon: '🌐', earned: false }
+        ],
+        createdAt: new Date().toISOString()
+      };
+    }
   }
 
-  async completeWebAuthnRegistration(credential: any, sessionId: string) {
-    return this.request('/api/auth/webauthn/register/complete', {
-      method: 'POST',
-      body: JSON.stringify({ credential, sessionId })
-    });
-  }
-
-  async sendChatMessage(message: string, model: string) {
-    return this.request('/api/ai/chat', {
-      method: 'POST',
-      body: JSON.stringify({ message, model })
-    });
-  }
-
-  async mineCUE(action: string, metadata: any) {
-    return this.request('/api/cue/mine', {
-      method: 'POST',
-      body: JSON.stringify({ action, metadata })
-    });
+  async checkHealth() {
+    try {
+      const response = await this.request('/health');
+      return { connected: true, mode: 'real', ...response };
+    } catch (error) {
+      return { connected: false, mode: 'mock', error: error.message };
+    }
   }
 }
 
-// ============================================================================
-// Type Definitions
-// ============================================================================
+// WebAuthn 지원 확인
+const checkWebAuthnSupport = () => {
+  if (typeof window === 'undefined') {
+    return { supported: false, reason: 'Server-side rendering' };
+  }
+  if (!window.PublicKeyCredential) {
+    return { supported: false, reason: 'WebAuthn을 지원하지 않는 브라우저입니다.' };
+  }
+  return { supported: true };
+};
 
-interface User {
-  id: string;
-  email: string;
-  username: string;
-  did: string;
-  walletAddress: string;
-  createdAt: string;
-}
-
-interface AIPassport {
-  trustScore: number;
-  cueTokens: number;
-  level: string;
-  connectedPlatforms: string[];
-  personalityProfile: {
-    type: string;
-    traits: string[];
-    expertise: string[];
-  };
-}
-
-interface Message {
-  id: string;
-  content: string;
-  role: 'user' | 'assistant';
-  timestamp: string;
-  cueTokensEarned?: number;
-  model?: string;
-}
-
-// ============================================================================
-// UI Components
-// ============================================================================
-
-// Loading Spinner
-const LoadingSpinner = ({ size = 'sm' }: { size?: 'sm' | 'md' | 'lg' }) => (
-  <div className={`animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 ${
+// 컴포넌트들
+const LoadingSpinner = ({ size = 'md', className = '' }) => (
+  <Loader2 className={`animate-spin ${
     size === 'sm' ? 'w-4 h-4' : size === 'lg' ? 'w-8 h-8' : 'w-6 h-6'
-  }`} />
+  } ${className}`} />
 );
 
-// Connection Status Indicator
-const ConnectionStatus = ({ connected, onRetry }: { connected: boolean; onRetry: () => void }) => (
+const StatusIndicator = ({ connected, mode }) => (
   <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium ${
-    connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+    connected ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
   }`}>
     {connected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-    <span>{connected ? 'Connected' : 'Offline'}</span>
-    {!connected && (
-      <button onClick={onRetry} className="ml-1 text-red-600 hover:text-red-800">
-        <RefreshCw className="w-3 h-3" />
-      </button>
-    )}
+    <span>{connected ? `Real (${mode})` : 'Mock Mode'}</span>
   </div>
 );
 
-// Onboarding Flow
+// 온보딩 플로우 (30초 목표)
 const OnboardingFlow = ({ 
   step, 
   isLoading, 
   onStart, 
   backendConnected,
-  error 
-}: {
-  step: 'waiting' | 'auth' | 'wallet' | 'passport' | 'complete';
-  isLoading: boolean;
-  onStart: () => void;
-  backendConnected: boolean;
-  error?: string;
+  backendMode,
+  webauthnSupport,
+  error,
+  onRetryConnection
 }) => {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-lg max-w-md w-full p-8">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-8 border border-gray-100">
+        {/* 헤더 */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-600 rounded-lg flex items-center justify-center mx-auto mb-4">
-            {step === 'waiting' && <Shield className="w-8 h-8 text-white" />}
-            {step === 'auth' && <Fingerprint className="w-8 h-8 text-white animate-pulse" />}
-            {step === 'wallet' && <Wallet className="w-8 h-8 text-white animate-pulse" />}
-            {step === 'passport' && <User className="w-8 h-8 text-white animate-pulse" />}
-            {step === 'complete' && <CheckCircle className="w-8 h-8 text-white" />}
+          <div className="mx-auto w-20 h-20 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mb-6 shadow-lg">
+            {step === 'waiting' && <Shield className="w-10 h-10 text-white" />}
+            {step === 'auth' && <Fingerprint className="w-10 h-10 text-white animate-pulse" />}
+            {step === 'wallet' && <Key className="w-10 h-10 text-white animate-pulse" />}
+            {step === 'passport' && <User className="w-10 h-10 text-white animate-pulse" />}
+            {step === 'complete' && <CheckCircle className="w-10 h-10 text-white" />}
           </div>
           
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">
             {step === 'waiting' && 'CUE Protocol'}
-            {step === 'auth' && 'Setting up authentication...'}
-            {step === 'wallet' && 'Creating wallet...'}
-            {step === 'passport' && 'Building AI Passport...'}
-            {step === 'complete' && 'Welcome!'}
+            {step === 'auth' && '🔐 생체인증 중...'}
+            {step === 'wallet' && '🌐 DID 생성 중...'}
+            {step === 'passport' && '🛡️ AI Passport 생성 중...'}
+            {step === 'complete' && '🎉 완료!'}
           </h1>
           
           <p className="text-gray-600">
-            {step === 'waiting' && 'AI-powered personalization platform'}
-            {step === 'auth' && 'Please complete biometric authentication'}
-            {step === 'wallet' && 'Generating blockchain wallet and DID'}
-            {step === 'passport' && 'Initializing your AI Passport'}
-            {step === 'complete' && 'Your AI Passport is ready!'}
+            {step === 'waiting' && 'Web3 AI 개인화 플랫폼에 오신 것을 환영합니다'}
+            {step === 'auth' && '생체인증을 완료해주세요'}
+            {step === 'wallet' && '블록체인 지갑과 DID를 생성하고 있습니다'}
+            {step === 'passport' && 'AI Passport를 초기화하고 있습니다'}
+            {step === 'complete' && 'AI Passport가 준비되었습니다!'}
           </p>
         </div>
 
+        {/* 시스템 상태 */}
+        <div className="flex justify-center mb-6">
+          <StatusIndicator connected={backendConnected} mode={backendMode} />
+        </div>
+
+        {/* WebAuthn 지원 상태 */}
+        <div className={`mb-6 p-4 rounded-xl ${
+          webauthnSupport.supported ? 'bg-blue-50 border border-blue-200' : 'bg-yellow-50 border border-yellow-200'
+        }`}>
+          <div className="flex items-center space-x-2">
+            <Fingerprint className={`w-4 h-4 ${webauthnSupport.supported ? 'text-blue-600' : 'text-yellow-600'}`} />
+            <span className={`text-sm font-medium ${webauthnSupport.supported ? 'text-blue-800' : 'text-yellow-800'}`}>
+              {webauthnSupport.supported ? '✅ WebAuthn 지원됨' : '⚠️ WebAuthn 제한됨'}
+            </span>
+          </div>
+          {!webauthnSupport.supported && (
+            <p className="text-xs text-yellow-700 mt-1">{webauthnSupport.reason}</p>
+          )}
+        </div>
+
+        {/* 에러 메시지 */}
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
             <div className="flex items-center space-x-2">
               <AlertCircle className="w-5 h-5 text-red-500" />
               <p className="text-sm text-red-700">{error}</p>
@@ -201,38 +483,52 @@ const OnboardingFlow = ({
           </div>
         )}
 
+        {/* 액션 버튼 */}
         {step === 'waiting' && (
           <div className="space-y-4">
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <h3 className="font-medium text-gray-900 mb-2">Quick Setup</h3>
-              <ul className="space-y-1 text-sm text-gray-600">
-                <li>• WebAuthn biometric authentication</li>
-                <li>• Auto-generated blockchain wallet</li>
-                <li>• AI Passport with personalization</li>
-                <li>• CUE token mining system</li>
-              </ul>
+            {/* 핵심 기능 강조 */}
+            <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-xl border border-blue-100">
+              <h3 className="font-semibold text-gray-900 mb-3 flex items-center">
+                <Sparkles className="w-4 h-4 mr-2 text-purple-600" />
+                영구 데이터 보존 기능
+              </h3>
+              <div className="space-y-2 text-sm text-gray-700">
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                  <span>WebAuthn 생체인증 (Face ID, Touch ID)</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                  <span>자동 블록체인 지갑 + DID 생성</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                  <span>영구 세션 기반 데이터 유지</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                  <span>CUE 토큰 & Trust Score 누적</span>
+                </div>
+              </div>
             </div>
             
             <button
               onClick={onStart}
-              disabled={isLoading || !backendConnected}
-              className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+              disabled={isLoading}
+              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-4 px-6 rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-lg transition-all duration-200 shadow-lg hover:shadow-xl"
             >
               {isLoading ? (
                 <div className="flex items-center justify-center space-x-2">
                   <LoadingSpinner size="sm" />
-                  <span>Setting up...</span>
+                  <span>생성 중...</span>
                 </div>
               ) : (
-                'Get Started'
+                <div className="flex items-center justify-center space-x-2">
+                  <Zap className="w-5 h-5" />
+                  <span>영구 AI Passport 생성</span>
+                </div>
               )}
             </button>
-            
-            {!backendConnected && (
-              <p className="text-xs text-red-600 text-center">
-                Backend server required for full functionality
-              </p>
-            )}
           </div>
         )}
 
@@ -245,9 +541,22 @@ const OnboardingFlow = ({
         {step === 'complete' && (
           <button
             onClick={() => window.location.reload()}
-            className="w-full bg-green-600 text-white py-3 px-6 rounded-lg hover:bg-green-700 font-medium"
+            className="w-full bg-gradient-to-r from-green-600 to-blue-600 text-white py-4 px-6 rounded-xl hover:from-green-700 hover:to-blue-700 font-semibold text-lg transition-all duration-200 shadow-lg"
           >
-            Enter AI Passport
+            <div className="flex items-center justify-center space-x-2">
+              <ArrowUp className="w-5 h-5" />
+              <span>AI Passport 사용하기</span>
+            </div>
+          </button>
+        )}
+
+        {/* 백엔드 연결 재시도 */}
+        {!backendConnected && (
+          <button
+            onClick={onRetryConnection}
+            className="w-full mt-3 text-gray-600 hover:text-gray-900 text-sm underline"
+          >
+            백엔드 연결 재시도
           </button>
         )}
       </div>
@@ -255,30 +564,19 @@ const OnboardingFlow = ({
   );
 };
 
-// Main Dashboard
-const MainDashboard = ({ 
-  user, 
-  passport, 
-  onLogout, 
-  backendConnected,
-  onRetryConnection 
-}: {
-  user: User;
-  passport: AIPassport;
-  onLogout: () => void;
-  backendConnected: boolean;
-  onRetryConnection: () => void;
-}) => {
-  const [messages, setMessages] = useState<Message[]>([]);
+// 메인 대시보드 (로그인 후)
+const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode, onRetryConnection }) => {
+  const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [currentView, setCurrentView] = useState('chat');
+  const [api] = useState(() => new PersistentDataAPIClient());
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const api = new CueProtocolAPI();
+  const [currentView, setCurrentView] = useState('chat');
+  const [cueBalance, setCueBalance] = useState(passport?.cueBalance || user?.cueBalance || 0);
+  const messagesEndRef = useRef(null);
 
-  // Responsive detection
+  // 반응형 감지
+  const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     const checkIsMobile = () => setIsMobile(window.innerWidth < 768);
     checkIsMobile();
@@ -286,18 +584,29 @@ const MainDashboard = ({
     return () => window.removeEventListener('resize', checkIsMobile);
   }, []);
 
-  // Auto scroll messages
+  // 자동 스크롤
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // 실시간 업데이트 설정
+  useEffect(() => {
+    api.connectWebSocket();
+    const unsubscribe = api.onRealtimeUpdate((data) => {
+      if (data.type === 'cue_update') {
+        setCueBalance(data.balance);
+      }
+    });
+    return unsubscribe;
+  }, [api]);
+
+  // 메시지 전송
   const handleSendMessage = async () => {
     if (!newMessage.trim()) return;
     
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      content: newMessage,
+    const userMessage = {
       role: 'user',
+      content: newMessage,
       timestamp: new Date().toISOString()
     };
     
@@ -306,168 +615,196 @@ const MainDashboard = ({
     setIsTyping(true);
     
     try {
-      const response = await api.sendChatMessage(newMessage, 'gpt-4');
+      const response = await api.sendChatMessage(newMessage, 'gpt-4o', user?.did);
       
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: response.response,
+      const aiMessage = {
         role: 'assistant',
+        content: response.response,
         timestamp: new Date().toISOString(),
-        cueTokensEarned: response.cueTokensEarned,
-        model: 'gpt-4'
+        model: response.model,
+        cueReward: response.cueReward,
+        trustScore: response.trustScore
       };
       
       setMessages(prev => [...prev, aiMessage]);
       
-      // Mine CUE tokens
-      if (response.cueTokensEarned) {
-        await api.mineCUE('chat_interaction', { messageLength: newMessage.length });
+      // CUE 마이닝
+      if (response.cueReward) {
+        setCueBalance(prev => prev + response.cueReward);
+        await api.mineCUE(user?.did, 'chat_interaction');
       }
       
     } catch (error) {
-      console.error('Failed to send message:', error);
+      console.error('메시지 전송 실패:', error);
+      const errorMessage = {
+        role: 'assistant',
+        content: '죄송합니다. 메시지 전송 중 오류가 발생했습니다.',
+        timestamp: new Date().toISOString(),
+        error: true
+      };
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsTyping(false);
     }
   };
 
-  const views = [
-    { id: 'chat', label: 'Chat', icon: MessageCircle },
-    { id: 'passport', label: 'Passport', icon: User },
-    { id: 'vaults', label: 'Vaults', icon: Database },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 }
-  ];
+  // 키보드 단축키
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-4 py-3">
+      {/* 헤더 - 고정 */}
+      <header className="bg-white border-b border-gray-200 px-4 py-3 flex-shrink-0 shadow-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             {isMobile && (
               <button
                 onClick={() => setShowMobileSidebar(true)}
-                className="p-2 hover:bg-gray-100 rounded-lg"
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 <Menu className="w-5 h-5" />
               </button>
             )}
             
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
                 <Shield className="w-4 h-4 text-white" />
               </div>
-              <div className="hidden sm:block">
-                <h1 className="text-lg font-semibold text-gray-900">CUE Protocol</h1>
-                <p className="text-xs text-gray-500">AI Personalization Platform</p>
+              <div>
+                <h1 className="text-lg font-bold text-gray-900">CUE Protocol</h1>
+                <p className="text-xs text-gray-600">영구 데이터 보존 AI 에이전트</p>
               </div>
             </div>
           </div>
           
           <div className="flex items-center space-x-3">
-            <ConnectionStatus connected={backendConnected} onRetry={onRetryConnection} />
+            <StatusIndicator connected={backendConnected} mode={backendMode} />
             
-            <div className="hidden sm:flex items-center space-x-2 px-3 py-1 bg-yellow-50 rounded-full">
+            {/* CUE 잔액 표시 */}
+            <div className="hidden sm:flex items-center space-x-2 px-3 py-1 bg-gradient-to-r from-yellow-100 to-orange-100 rounded-full">
               <Coins className="w-4 h-4 text-yellow-600" />
-              <span className="text-sm font-medium text-yellow-800">
-                {passport.cueTokens.toLocaleString()}
-              </span>
+              <span className="text-sm font-medium text-yellow-800">{cueBalance.toLocaleString()} CUE</span>
             </div>
             
             <button
               onClick={onLogout}
-              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"
+              className="flex items-center space-x-1 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm transition-colors"
             >
               <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">로그아웃</span>
             </button>
           </div>
         </div>
       </header>
 
+      {/* 메인 콘텐츠 */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar - AI Passport */}
+        {/* 왼쪽 사이드바 - AI Passport Zone (독립 스크롤) */}
         <aside className={`
           w-80 bg-white border-r border-gray-200 flex flex-col overflow-hidden
-          ${isMobile ? (showMobileSidebar ? 'fixed inset-y-0 left-0 z-50 shadow-lg' : 'hidden') : 'relative'}
+          ${isMobile ? (showMobileSidebar ? 'fixed inset-y-0 left-0 z-50 shadow-2xl' : 'hidden') : 'relative'}
         `}>
-          {/* Mobile header */}
+          {/* 모바일 헤더 */}
           {isMobile && showMobileSidebar && (
-            <div className="flex justify-between items-center p-4 border-b border-gray-200">
-              <h2 className="font-semibold text-gray-900">AI Passport</h2>
+            <div className="flex justify-between items-center p-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50">
+              <div className="flex items-center space-x-2">
+                <div className="w-6 h-6 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <Shield className="w-3 h-3 text-white" />
+                </div>
+                <h2 className="font-semibold text-gray-900">AI Passport</h2>
+              </div>
               <button
                 onClick={() => setShowMobileSidebar(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg"
+                className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
           )}
 
-          {/* AI Passport Card */}
+          {/* AI Passport 메인 카드 - 고정 위치 */}
           <div className="p-6 border-b border-gray-200 flex-shrink-0">
-            <div className="bg-blue-600 rounded-lg p-6 text-white">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-white bg-opacity-20 rounded-lg flex items-center justify-center">
-                    <Shield className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold">AI Passport</h3>
-                    <p className="text-blue-100 text-sm">{passport.level}</p>
-                  </div>
-                </div>
-                
-                <div className="text-right">
-                  <div className="flex items-center space-x-1">
-                    <Star className="w-4 h-4 text-yellow-300" />
-                    <span className="font-bold">{passport.trustScore}%</span>
-                  </div>
-                  <p className="text-blue-100 text-xs">Trust Score</p>
-                </div>
-              </div>
-
-              <div className="text-center mb-4">
-                <div className="w-16 h-16 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <User className="w-8 h-8" />
-                </div>
-                <h4 className="font-semibold">{user.username}</h4>
-                <p className="text-blue-100 text-sm">{user.email}</p>
+            <div className="bg-gradient-to-br from-blue-600 via-purple-600 to-indigo-700 rounded-2xl p-6 text-white relative overflow-hidden shadow-xl">
+              {/* 배경 패턴 */}
+              <div className="absolute inset-0 bg-white opacity-5">
+                <div className="absolute top-0 right-0 w-32 h-32 rounded-full -mr-16 -mt-16"></div>
+                <div className="absolute bottom-0 left-0 w-24 h-24 rounded-full -ml-12 -mb-12"></div>
               </div>
               
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-white bg-opacity-15 rounded-lg p-3 text-center">
-                  <Coins className="w-4 h-4 mx-auto mb-1 text-yellow-300" />
-                  <p className="text-sm font-bold">{passport.cueTokens.toLocaleString()}</p>
-                  <p className="text-xs text-blue-100">CUE</p>
+              <div className="relative z-10">
+                {/* AI Passport 헤더 */}
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-12 h-12 bg-white bg-opacity-20 rounded-xl flex items-center justify-center backdrop-blur-sm">
+                      <Shield className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold">AI Passport</h3>
+                      <p className="text-blue-100 text-sm">{passport?.level || user?.passportLevel || 'Verified Agent'}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="text-right">
+                    <div className="flex items-center space-x-1">
+                      <Star className="w-4 h-4 text-yellow-300" />
+                      <span className="text-lg font-bold">{passport?.trustScore || user?.trustScore || 95}%</span>
+                    </div>
+                    <p className="text-blue-100 text-xs">Trust Score</p>
+                  </div>
                 </div>
-                <div className="bg-white bg-opacity-15 rounded-lg p-3 text-center">
-                  <Database className="w-4 h-4 mx-auto mb-1 text-green-300" />
-                  <p className="text-sm font-bold">5</p>
-                  <p className="text-xs text-blue-100">Vaults</p>
+
+                {/* 사용자 정보 */}
+                <div className="text-center mb-6">
+                  <div className="w-20 h-20 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-3 backdrop-blur-sm">
+                    <User className="w-10 h-10" />
+                  </div>
+                  <h4 className="text-xl font-bold">{user?.username || 'Agent'}</h4>
+                  <p className="text-blue-100 text-sm">{user?.email || 'demo@cueprotocol.ai'}</p>
                 </div>
-                <div className="bg-white bg-opacity-15 rounded-lg p-3 text-center">
-                  <Globe className="w-4 h-4 mx-auto mb-1 text-purple-300" />
-                  <p className="text-sm font-bold">{passport.connectedPlatforms.length}</p>
-                  <p className="text-xs text-blue-100">Linked</p>
+                
+                {/* CUE 잔액과 통계 - 3열 그리드 */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-white bg-opacity-15 rounded-xl p-3 text-center backdrop-blur-sm">
+                    <Coins className="w-5 h-5 mx-auto mb-1 text-yellow-300" />
+                    <p className="text-lg font-bold">{cueBalance.toLocaleString()}</p>
+                    <p className="text-xs text-blue-100">CUE</p>
+                  </div>
+                  
+                  <div className="bg-white bg-opacity-15 rounded-xl p-3 text-center backdrop-blur-sm">
+                    <Activity className="w-5 h-5 mx-auto mb-1 text-green-300" />
+                    <p className="text-lg font-bold">{Math.floor((passport?.totalMined || 25430) / 1000)}K</p>
+                    <p className="text-xs text-blue-100">Mined</p>
+                  </div>
+                  
+                  <div className="bg-white bg-opacity-15 rounded-xl p-3 text-center backdrop-blur-sm">
+                    <Globe className="w-5 h-5 mx-auto mb-1 text-purple-300" />
+                    <p className="text-lg font-bold">{passport?.connectedPlatforms?.length || 3}</p>
+                    <p className="text-xs text-blue-100">Linked</p>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Scrollable Content */}
+          {/* 스크롤 가능한 콘텐츠 영역 */}
           <div className="flex-1 overflow-y-auto">
-            {/* DID Information */}
+            {/* DID 정보 */}
             <div className="p-6 border-b border-gray-200">
               <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
                 <Hash className="w-4 h-4 mr-2" />
-                Digital Identity
+                Digital Identity (영구 보존)
               </h4>
               <div className="space-y-3 text-sm">
                 <div>
                   <span className="text-gray-600">DID:</span>
                   <div className="flex items-center space-x-2 mt-1">
                     <p className="font-mono text-xs text-gray-800 bg-gray-100 px-2 py-1 rounded flex-1 truncate">
-                      {user.did}
+                      {user?.did || 'did:cue:unavailable'}
                     </p>
                     <button className="p-1 hover:bg-gray-200 rounded">
                       <Copy className="w-3 h-3 text-gray-500" />
@@ -475,299 +812,272 @@ const MainDashboard = ({
                   </div>
                 </div>
                 <div>
-                  <span className="text-gray-600">Created:</span>
+                  <span className="text-gray-600">Wallet:</span>
+                  <div className="flex items-center space-x-2 mt-1">
+                    <p className="font-mono text-xs text-gray-800 bg-gray-100 px-2 py-1 rounded flex-1 truncate">
+                      {user?.walletAddress || '0x...'}
+                    </p>
+                    <button className="p-1 hover:bg-gray-200 rounded">
+                      <Copy className="w-3 h-3 text-gray-500" />
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-gray-600">가입일:</span>
                   <p className="text-gray-800">
-                    {new Date(user.createdAt).toLocaleDateString()}
+                    {user?.registeredAt ? new Date(user.registeredAt).toLocaleDateString() : 'Today'}
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* RAG-DAG Learning Status */}
+            {/* 개성 프로필 */}
             <div className="p-6 border-b border-gray-200">
               <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
-                <Brain className="w-4 h-4 mr-2 text-purple-600" />
-                Learning Progress
-              </h4>
-              
-              <div className="space-y-4">
-                <div className="bg-purple-50 rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-gray-700">Personalization</span>
-                    <span className="text-sm font-bold text-purple-600">87%</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div className="bg-purple-500 h-2 rounded-full" style={{width: '87%'}}></div>
-                  </div>
-                  <p className="text-xs text-gray-600 mt-1">247 conversations analyzed</p>
-                </div>
-
-                <div className="space-y-2">
-                  <span className="text-xs text-gray-600 uppercase tracking-wide">Learned Concepts</span>
-                  <div className="flex flex-wrap gap-2">
-                    {['Web3 Dev', 'AI Ethics', 'Blockchain', 'UX Design'].map((concept, index) => (
-                      <span key={index} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
-                        {concept}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Personality Profile */}
-            <div className="p-6 border-b border-gray-200">
-              <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
-                <Heart className="w-4 h-4 mr-2" />
-                Personality
+                <Sparkles className="w-4 h-4 mr-2" />
+                Personality Profile
               </h4>
               <div className="space-y-3">
-                <div>
-                  <span className="text-xs text-gray-600 uppercase tracking-wide">Type</span>
-                  <p className="text-sm font-medium text-purple-600">{passport.personalityProfile.type}</p>
-                </div>
-                
-                <div>
-                  <span className="text-xs text-gray-600 uppercase tracking-wide">Traits</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {passport.personalityProfile.traits.map((trait, index) => (
-                      <span key={index} className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">
-                        {trait}
-                      </span>
-                    ))}
+                {passport?.personalityProfile?.traits && (
+                  <div>
+                    <span className="text-xs text-gray-600 uppercase tracking-wide">Traits</span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {passport.personalityProfile.traits.map((trait, index) => (
+                        <span
+                          key={index}
+                          className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded-full"
+                        >
+                          {trait}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
                 
-                <div>
-                  <span className="text-xs text-gray-600 uppercase tracking-wide">Expertise</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {passport.personalityProfile.expertise.map((skill, index) => (
-                      <span key={index} className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
-                        {skill}
-                      </span>
-                    ))}
+                {passport?.personalityProfile?.expertise && (
+                  <div>
+                    <span className="text-xs text-gray-600 uppercase tracking-wide">Expertise</span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {passport.personalityProfile.expertise.map((skill, index) => (
+                        <span
+                          key={index}
+                          className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
 
-            {/* Connected Platforms */}
-            <div className="p-6">
+            {/* 연결된 플랫폼 */}
+            <div className="p-6 border-b border-gray-200">
               <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
                 <Globe className="w-4 h-4 mr-2" />
                 Connected Platforms
               </h4>
               <div className="space-y-2">
-                {passport.connectedPlatforms.map((platform, index) => (
+                {passport?.connectedPlatforms?.map((platform, index) => (
                   <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
                     <span className="text-sm text-gray-700">{platform}</span>
                     <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                   </div>
-                ))}
+                )) || (
+                  <p className="text-sm text-gray-500">연결된 플랫폼이 없습니다</p>
+                )}
+              </div>
+            </div>
+
+            {/* 성취/업적 */}
+            <div className="p-6">
+              <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                <Star className="w-4 h-4 mr-2" />
+                Achievements
+              </h4>
+              <div className="space-y-2">
+                {passport?.achievements?.map((achievement, index) => (
+                  <div key={index} className={`flex items-center space-x-3 p-2 rounded-lg ${
+                    achievement.earned ? 'bg-green-50' : 'bg-gray-50'
+                  }`}>
+                    <span className="text-lg">{achievement.icon}</span>
+                    <div className="flex-1">
+                      <p className={`text-sm font-medium ${
+                        achievement.earned ? 'text-green-800' : 'text-gray-600'
+                      }`}>
+                        {achievement.name}
+                      </p>
+                    </div>
+                    {achievement.earned && (
+                      <CheckCircle className="w-4 h-4 text-green-600" />
+                    )}
+                  </div>
+                )) || (
+                  <p className="text-sm text-gray-500">업적을 달성하여 수집하세요</p>
+                )}
               </div>
             </div>
           </div>
         </aside>
 
-        {/* Main Content */}
+        {/* 오른쪽 메인 영역 - AI 채팅 (독립 스크롤) */}
         <main className="flex-1 flex flex-col overflow-hidden">
-          {/* View Tabs */}
-          <div className="bg-white border-b border-gray-200 px-4 py-2">
-            <div className="flex space-x-1 overflow-x-auto">
-              {views.map((view) => (
-                <button
-                  key={view.id}
-                  onClick={() => {
-                    setCurrentView(view.id);
-                    if (isMobile) setShowMobileSidebar(false);
-                  }}
-                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${
-                    currentView === view.id
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
+          {/* 채팅 메시지 영역 - 스크롤 가능 */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
+            {messages.length === 0 ? (
+              <div className="text-center py-16">
+                <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
+                  <MessageCircle className="w-8 h-8 text-white" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                  안녕하세요, {user?.username}님! 🌟
+                </h3>
+                <p className="text-gray-600 max-w-md mx-auto leading-relaxed">
+                  영구 데이터 보존 기능을 갖춘 CUE Protocol AI 에이전트입니다.<br />
+                  모든 대화와 데이터는 안전하게 저장되며 새로고침해도 유지됩니다.
+                </p>
+                
+                {/* 빠른 시작 버튼들 */}
+                <div className="flex flex-wrap gap-2 justify-center mt-6">
+                  {[
+                    "CUE Protocol에 대해 알려줘",
+                    "영구 데이터 보존은 어떻게 작동해?",
+                    "Web3와 AI의 융합",
+                    "블록체인 지갑 설명"
+                  ].map((prompt, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setNewMessage(prompt)}
+                      className="px-4 py-2 bg-white border border-gray-200 rounded-full text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              messages.map((message, index) => (
+                <div
+                  key={index}
+                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  <view.icon className="w-4 h-4" />
-                  <span className="text-sm font-medium">{view.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Content Area */}
-          <div className="flex-1 overflow-hidden">
-            {currentView === 'chat' && (
-              <div className="h-full flex flex-col">
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {messages.length === 0 ? (
-                    <div className="text-center py-12">
-                      <MessageCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">
-                        Hello, {user.username}!
-                      </h3>
-                      <p className="text-gray-600 max-w-md mx-auto">
-                        Start a conversation with your personalized AI. Every chat is learned and stored in your RAG-DAG system.
+                  <div
+                    className={`max-w-xs lg:max-w-2xl px-4 py-3 rounded-2xl ${
+                      message.role === 'user'
+                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
+                        : message.error
+                        ? 'bg-red-50 border border-red-200 text-red-800'
+                        : 'bg-white border border-gray-200 text-gray-900 shadow-sm'
+                    }`}
+                  >
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+                    
+                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-opacity-20">
+                      <p className="text-xs opacity-70">
+                        {new Date(message.timestamp).toLocaleTimeString()}
                       </p>
                       
-                      <div className="mt-6 flex flex-wrap gap-2 justify-center">
-                        {[
-                          "Analyze my learning patterns",
-                          "How does CUE Protocol work?",
-                          "What's RAG-DAG?",
-                          "Help me with coding"
-                        ].map((prompt, index) => (
-                          <button
-                            key={index}
-                            onClick={() => setNewMessage(prompt)}
-                            className="px-4 py-2 bg-white border border-gray-200 rounded-full text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300"
-                          >
-                            {prompt}
-                          </button>
-                        ))}
+                      <div className="flex items-center space-x-2">
+                        {message.model && (
+                          <span className="text-xs opacity-70">{message.model}</span>
+                        )}
+                        
+                        {message.cueReward && (
+                          <div className="flex items-center space-x-1">
+                            <Coins className="w-3 h-3 text-yellow-500" />
+                            <span className="text-xs text-yellow-600 font-medium">
+                              +{message.cueReward} CUE
+                            </span>
+                          </div>
+                        )}
+                        
+                        {message.trustScore && (
+                          <div className="flex items-center space-x-1">
+                            <Star className="w-3 h-3 text-blue-500" />
+                            <span className="text-xs text-blue-600 font-medium">
+                              {Math.round(message.trustScore * 100)}%
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  ) : (
-                    messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                      >
-                        <div
-                          className={`max-w-xs lg:max-w-2xl px-4 py-3 rounded-lg ${
-                            message.role === 'user'
-                              ? 'bg-blue-600 text-white'
-                              : 'bg-white border border-gray-200 text-gray-900'
-                          }`}
-                        >
-                          <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                            {message.content}
-                          </p>
-                          
-                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-opacity-20">
-                            <p className="text-xs opacity-70">
-                              {new Date(message.timestamp).toLocaleTimeString()}
-                            </p>
-                            
-                            <div className="flex items-center space-x-2">
-                              {message.model && (
-                                <span className="text-xs opacity-70">{message.model}</span>
-                              )}
-                              
-                              {message.cueTokensEarned && (
-                                <div className="flex items-center space-x-1">
-                                  <Coins className="w-3 h-3 text-yellow-500" />
-                                  <span className="text-xs text-yellow-600 font-medium">
-                                    +{message.cueTokensEarned}
-                                  </span>
-                                </div>
-                              )}
-                              
-                              {message.role === 'assistant' && (
-                                <div className="flex items-center space-x-1">
-                                  <Sparkles className="w-3 h-3 text-purple-500" />
-                                  <span className="text-xs text-purple-600">Learned</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                  
-                  {isTyping && (
-                    <div className="flex justify-start">
-                      <div className="bg-white border border-gray-200 rounded-lg px-4 py-3">
-                        <div className="flex items-center space-x-2">
-                          <div className="flex space-x-1">
-                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                          </div>
-                          <span className="text-xs text-gray-500">AI is responding...</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  
-                  <div ref={messagesEndRef} />
+                  </div>
                 </div>
-
-                {/* Message Input */}
-                <div className="border-t border-gray-200 p-4">
-                  <div className="flex items-end space-x-3">
-                    <div className="flex-1 relative">
-                      <textarea
-                        value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
-                        onKeyPress={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSendMessage();
-                          }
-                        }}
-                        placeholder="Message AI..."
-                        className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm"
-                        rows={1}
-                        style={{ minHeight: '48px', maxHeight: '120px' }}
-                        disabled={isTyping}
-                      />
-                      
-                      <button className="absolute right-3 bottom-3 p-1 text-gray-400 hover:text-gray-600">
-                        <Paperclip className="w-4 h-4" />
-                      </button>
+              ))
+            )}
+            
+            {/* 타이핑 인디케이터 */}
+            {isTyping && (
+              <div className="flex justify-start">
+                <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm">
+                  <div className="flex items-center space-x-2">
+                    <div className="flex space-x-1">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
                     </div>
-                    
-                    <button className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
-                      <Mic className="w-5 h-5" />
-                    </button>
-                    
-                    <button
-                      onClick={handleSendMessage}
-                      disabled={!newMessage.trim() || isTyping}
-                      className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
-                    >
-                      {isTyping ? (
-                        <LoadingSpinner size="sm" />
-                      ) : (
-                        <>
-                          <Send className="w-4 h-4" />
-                          <span className="hidden sm:inline">Send</span>
-                        </>
-                      )}
-                    </button>
+                    <span className="text-xs text-gray-500">AI가 응답하고 있습니다...</span>
                   </div>
                 </div>
               </div>
             )}
+            
+            <div ref={messagesEndRef} />
+          </div>
 
-            {/* Other Views */}
-            {currentView !== 'chat' && (
-              <div className="h-full overflow-y-auto p-6">
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center mx-auto mb-4">
-                    {currentView === 'passport' && <User className="w-8 h-8 text-gray-600" />}
-                    {currentView === 'vaults' && <Database className="w-8 h-8 text-gray-600" />}
-                    {currentView === 'analytics' && <BarChart3 className="w-8 h-8 text-gray-600" />}
-                  </div>
-                  <h2 className="text-xl font-semibold text-gray-900 mb-2">
-                    {currentView.charAt(0).toUpperCase() + currentView.slice(1)} View
-                  </h2>
-                  <p className="text-gray-600">
-                    {backendConnected 
-                      ? `${currentView} functionality with real backend integration.`
-                      : `Connect to backend for full ${currentView} functionality.`
-                    }
-                  </p>
-                </div>
+          {/* 메시지 입력창 - 고정 */}
+          <div className="border-t border-gray-200 bg-white p-4 flex-shrink-0">
+            <div className="flex items-end space-x-3 max-w-4xl mx-auto">
+              <div className="flex-1 relative">
+                <textarea
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  placeholder="영구 보존되는 AI 에이전트와 대화하기..."
+                  className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm"
+                  rows={newMessage.split('\n').length || 1}
+                  style={{ minHeight: '48px', maxHeight: '120px' }}
+                  disabled={isTyping}
+                />
+                
+                {/* 첨부파일 버튼 */}
+                <button className="absolute right-3 bottom-3 p-1 text-gray-400 hover:text-gray-600 transition-colors">
+                  <Paperclip className="w-4 h-4" />
+                </button>
               </div>
-            )}
+              
+              {/* 음성 입력 버튼 */}
+              <button className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-colors">
+                <Mic className="w-5 h-5" />
+              </button>
+              
+              {/* 전송 버튼 */}
+              <button
+                onClick={handleSendMessage}
+                disabled={!newMessage.trim() || isTyping}
+                className="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 transition-all duration-200 shadow-lg hover:shadow-xl"
+              >
+                {isTyping ? (
+                  <LoadingSpinner size="sm" />
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    <span className="hidden sm:inline font-medium">전송</span>
+                  </>
+                )}
+              </button>
+            </div>
+            
+            {/* 입력 도움말 */}
+            <div className="flex items-center justify-center mt-2 text-xs text-gray-500">
+              <span>Enter로 전송, Shift+Enter로 줄바꿈 | 모든 데이터는 영구 보존됩니다</span>
+            </div>
           </div>
         </main>
       </div>
 
-      {/* Mobile Overlay */}
+      {/* 모바일 오버레이 */}
       {isMobile && showMobileSidebar && (
         <div 
           className="fixed inset-0 bg-black bg-opacity-50 z-40"
@@ -778,28 +1088,80 @@ const MainDashboard = ({
   );
 };
 
-// Main App Component
-export default function CueProtocolApp() {
+// 메인 앱 컴포넌트
+export default function AIPassportSystem() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
-  const [registrationStep, setRegistrationStep] = useState<'waiting' | 'auth' | 'wallet' | 'passport' | 'complete'>('waiting');
+  const [registrationStep, setRegistrationStep] = useState('waiting');
   const [error, setError] = useState('');
-  const [user, setUser] = useState<User | null>(null);
-  const [passport, setPassport] = useState<AIPassport | null>(null);
-  const [backendConnected, setBackendConnected] = useState(false);
+  const [user, setUser] = useState(null);
+  const [passport, setPassport] = useState(null);
   
-  const api = new CueProtocolAPI();
+  // 시스템 상태
+  const [backendConnected, setBackendConnected] = useState(false);
+  const [backendMode, setBackendMode] = useState('checking');
+  const [isLibraryLoaded, setIsLibraryLoaded] = useState(false);
+  
+  // WebAuthn 지원 확인
+  const [webauthnSupport] = useState(() => checkWebAuthnSupport());
+  
+  // API 클라이언트
+  const [api] = useState(() => new PersistentDataAPIClient());
 
-  // Initialize system
+  // 🔧 초기화 및 세션 복원
   useEffect(() => {
     const initializeSystem = async () => {
       try {
-        const health = await api.healthCheck();
-        setBackendConnected(health.status === 'OK' || health.status === 'mock');
+        console.log('🚀 === 시스템 초기화 및 세션 복원 시작 ===');
+        
+        // 백엔드 연결 확인
+        const health = await api.checkHealth();
+        setBackendConnected(health.connected);
+        setBackendMode(health.mode || 'unknown');
+        
+        // WebAuthn 라이브러리 로드
+        if (webauthnSupport.supported) {
+          const loaded = await loadWebAuthn();
+          setIsLibraryLoaded(loaded);
+        }
+        
+        // 🔧 세션 복원 시도 (핵심!)
+        console.log('🔧 저장된 세션 복원 시도...');
+        const restoredSession = await api.restoreSession();
+        
+        if (restoredSession && restoredSession.success) {
+          console.log('✅ 세션 복원 성공! 자동 로그인 처리');
+          console.log('📊 복원된 데이터:', {
+            userId: restoredSession.user.id,
+            did: restoredSession.user.did,
+            wallet: restoredSession.user.walletAddress,
+            cue: restoredSession.user.cueBalance,
+            trust: restoredSession.user.trustScore
+          });
+          
+          setUser(restoredSession.user);
+          
+          // 패스포트 데이터 로드
+          if (restoredSession.user.did) {
+            try {
+              const passportData = await api.loadPassport(restoredSession.user.did);
+              setPassport(passportData);
+            } catch (error) {
+              console.warn('⚠️ 패스포트 로드 실패, 기본값 사용:', error.message);
+            }
+          }
+          
+          setIsAuthenticated(true);
+          console.log('🎉 자동 로그인 완료!');
+        } else {
+          console.log('❌ 저장된 세션 없음 또는 만료됨');
+        }
+        
         setIsInitialized(true);
+        console.log('✅ 시스템 초기화 완료');
       } catch (error) {
-        console.error('Initialization failed:', error);
+        console.error('❌ 초기화 실패:', error);
         setIsInitialized(true);
       }
     };
@@ -807,109 +1169,144 @@ export default function CueProtocolApp() {
     initializeSystem();
   }, []);
 
-  // Handle registration
-  const handleRegistration = async () => {
+  // 백엔드 재연결
+  const retryBackendConnection = useCallback(async () => {
+    const health = await api.checkHealth();
+    setBackendConnected(health.connected);
+    setBackendMode(health.mode || 'unknown');
+  }, [api]);
+
+  // 🔧 등록 핸들러 (세션 저장 포함)
+  const handleRegister = async () => {
     try {
+      console.log('🚀 === 등록 프로세스 시작 ===');
+      
       setError('');
       setIsRegistering(true);
       setRegistrationStep('auth');
 
-      // Step 1: WebAuthn authentication
-      const authResult = await api.startWebAuthnRegistration('demo@cueprotocol.ai');
+      // WebAuthn 등록 (내부에서 세션 ID 저장)
+      const result = await api.startWebAuthnRegistration();
       
-      // Step 2: Wallet generation
-      setRegistrationStep('wallet');
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Step 3: AI Passport creation
-      setRegistrationStep('passport');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      setRegistrationStep('complete');
-      
-      // Set user data
-      const userData: User = {
-        id: authResult.user?.id || `user_${Date.now()}`,
-        email: 'demo@cueprotocol.ai',
-        username: authResult.user?.username || `Agent${Math.floor(Math.random() * 10000)}`,
-        did: authResult.user?.did || `did:cue:${Date.now()}`,
-        walletAddress: authResult.user?.walletAddress || `0x${Math.random().toString(16).substr(2, 40)}`,
-        createdAt: new Date().toISOString()
-      };
-      
-      const passportData: AIPassport = {
-        trustScore: 95,
-        cueTokens: 15000,
-        level: 'Verified',
-        connectedPlatforms: ['ChatGPT', 'Claude'],
-        personalityProfile: {
-          type: 'INTJ-A',
-          traits: ['Analytical', 'Creative', 'Strategic'],
-          expertise: ['AI', 'Web3', 'Development']
+      if (!result.success || !result.user) {
+        throw new Error('등록 응답이 올바르지 않습니다');
+      }
+
+      // 🎯 기존 사용자 vs 신규 사용자 처리
+      if (result.isExistingUser) {
+        console.log('🔄 기존 사용자 데이터 복원 중...');
+        console.log('💎 유지된 데이터:', {
+          did: result.user.did,
+          wallet: result.user.walletAddress,
+          cue: result.user.cueBalance,
+          trust: result.user.trustScore
+        });
+        
+        // 기존 사용자는 바로 로그인 처리
+        setUser(result.user);
+        
+        if (result.user.did) {
+          const passportData = await api.loadPassport(result.user.did);
+          setPassport(passportData);
         }
-      };
-      
-      setUser(userData);
-      setPassport(passportData);
-      
-      await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        setRegistrationStep('complete');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+      } else {
+        console.log('🆕 신규 사용자 등록 처리');
+        
+        // 신규 사용자는 월렛 생성 단계 표시
+        setRegistrationStep('wallet');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        setRegistrationStep('passport');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        setUser(result.user);
+        
+        if (result.user.did) {
+          const passportData = await api.loadPassport(result.user.did);
+          setPassport(passportData);
+        }
+        
+        setRegistrationStep('complete');
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+
+      console.log('🎉 처리 완료! 메인 화면으로 전환...');
       setIsAuthenticated(true);
       setIsRegistering(false);
-      
-    } catch (error: any) {
-      console.error('Registration failed:', error);
+      setRegistrationStep('waiting');
+
+    } catch (error) {
+      console.error('💥 등록 실패:', error);
       setError(error.message);
       setIsRegistering(false);
       setRegistrationStep('waiting');
     }
   };
 
-  // Handle logout
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setUser(null);
-    setPassport(null);
-    setRegistrationStep('waiting');
-    setError('');
+  // 🔧 로그아웃 핸들러 (세션 무효화 포함)
+  const handleLogout = async () => {
+    console.log('🔧 === 로그아웃 프로세스 시작 ===');
+    
+    try {
+      // 서버 세션 무효화
+      await api.logout();
+      
+      // 상태 초기화
+      setIsAuthenticated(false);
+      setUser(null);
+      setPassport(null);
+      setRegistrationStep('waiting');
+      setError('');
+      
+      console.log('✅ 로그아웃 완료');
+    } catch (error) {
+      console.error('💥 로그아웃 오류:', error);
+      // 오류가 발생해도 프론트엔드 상태는 초기화
+      setIsAuthenticated(false);
+      setUser(null);
+      setPassport(null);
+    }
   };
 
-  // Retry backend connection
-  const retryBackendConnection = async () => {
-    const health = await api.healthCheck();
-    setBackendConnected(health.status === 'OK' || health.status === 'mock');
-  };
-
-  // Loading state
+  // 로딩 중
   if (!isInitialized) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
         <div className="text-center">
-          <LoadingSpinner size="lg" />
-          <p className="text-gray-600 mt-4">Initializing CUE Protocol...</p>
+          <LoadingSpinner size="lg" className="mx-auto mb-4" />
+          <p className="text-gray-600">CUE Protocol 초기화 및 세션 복원 중...</p>
         </div>
       </div>
     );
   }
 
-  // Main render
+  // 메인 렌더링
   if (!isAuthenticated) {
     return (
       <OnboardingFlow
         step={registrationStep}
         isLoading={isRegistering}
-        onStart={handleRegistration}
+        onStart={handleRegister}
         backendConnected={backendConnected}
+        backendMode={backendMode}
+        webauthnSupport={webauthnSupport}
         error={error}
+        onRetryConnection={retryBackendConnection}
       />
     );
   }
 
   return (
     <MainDashboard
-      user={user!}
-      passport={passport!}
+      user={user}
+      passport={passport}
       onLogout={handleLogout}
       backendConnected={backendConnected}
+      backendMode={backendMode}
       onRetryConnection={retryBackendConnection}
     />
   );
