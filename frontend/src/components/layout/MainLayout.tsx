@@ -654,113 +654,15 @@ export function MainLayout({
             </div>
           )}
           
-          {/* 사이드바 내용 - 독립적 스크롤 */}
-          <div
-            className="flex-1 overflow-y-auto p-4 space-y-4"
-            style={{ scrollbarWidth: 'thin' }}
-          >
-            {/* AI Passport 메인 카드 */}
-            <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-xl p-4 text-white relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-20 h-20 bg-white opacity-10 rounded-full -mr-10 -mt-10"></div>
-              
-              <div className="relative z-10">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-white bg-opacity-20 rounded-lg flex items-center justify-center">
-                      <Shield className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-sm">AI Passport</h3>
-                      <p className="text-blue-200 text-xs">{passport?.passportLevel || 'Verified Agent'}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-lg font-bold">{passport?.trustScore || 95}%</div>
-                    <div className="text-blue-200 text-xs">Trust</div>
-                  </div>
-                </div>
-
-                {/* DID 정보 */}
-                <div className="space-y-2 mb-4">
-                  <div className="text-blue-200 text-xs">Decentralized ID</div>
-                  <div className="font-mono text-xs bg-black bg-opacity-20 rounded-lg p-2 truncate">
-                    {passport?.did || 'did:cue:loading...'}
-                  </div>
-                </div>
-
-                {/* 주요 메트릭 */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="text-center bg-white bg-opacity-10 rounded p-2">
-                    <div className="text-sm font-bold">{Math.floor(cueBalance / 1000)}K</div>
-                    <div className="text-blue-200 text-xs">CUE</div>
-                  </div>
-                  <div className="text-center bg-white bg-opacity-10 rounded p-2">
-                    <div className="text-sm font-bold">{passport?.dataVaults?.length || 5}</div>
-                    <div className="text-blue-200 text-xs">Vaults</div>
-                  </div>
-                  <div className="text-center bg-white bg-opacity-10 rounded p-2">
-                    <div className="text-sm font-bold">{passport?.connectedPlatforms?.length || 4}</div>
-                    <div className="text-blue-200 text-xs">Links</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 오늘의 마이닝 */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-blue-50 border-blue-100 rounded-lg p-3 border">
-                <div className="flex items-center space-x-1 mb-1">
-                  <Star className="w-3 h-3 text-blue-600" />
-                  <span className="text-blue-800 text-xs font-medium">Mining</span>
-                </div>
-                <div className="text-blue-700 text-lg font-bold">+{todaysMining}</div>
-                <div className="text-blue-600 text-xs">Today</div>
-              </div>
-              
-              <div className="bg-green-50 border-green-100 rounded-lg p-3 border">
-                <div className="flex items-center space-x-1 mb-1">
-                  <Activity className="w-3 h-3 text-green-600" />
-                  <span className="text-green-800 text-xs font-medium">Chats</span>
-                </div>
-                <div className="text-green-700 text-lg font-bold">{messages.length}</div>
-                <div className="text-green-600 text-xs">Today</div>
-              </div>
-            </div>
-
-            {/* RAG-DAG 학습 현황 */}
-            <div className="space-y-2">
-              <h4 className="text-xs font-semibold text-gray-900 flex items-center">
-                <Brain className="w-3 h-3 mr-1 text-purple-600" />
-                RAG-DAG Learning
-              </h4>
-              
-              <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-gray-700">Progress</span>
-                  <span className="text-xs font-bold text-purple-600">
-                    {Math.round((passport?.ragDagStats?.contextualAccuracy || 0.94) * 100)}%
-                  </span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-1">
-                  <div 
-                    className="bg-gradient-to-r from-purple-500 to-blue-500 h-1 rounded-full" 
-                    style={{width: `${(passport?.ragDagStats?.contextualAccuracy || 0.94) * 100}%`}}
-                  ></div>
-                </div>
-                <p className="text-xs text-gray-600 mt-1">
-                  {passport?.ragDagStats?.learnedConcepts || 247} concepts learned
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-1">
-                {['Web3', 'AI', 'Protocol'].map((concept, index) => (
-                  <span key={index} className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded-full">
-                    {concept}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
+          {/* 사이드바 컴포넌트 사용 */}
+          <Sidebar
+            passport={passport}
+            currentView={currentView}
+            onViewChange={onViewChange}
+            backendConnected={backendConnected}
+            isMobile={isMobile}
+            showMobileSidebar={showMobileSidebar}
+          />
         </aside>
 
         {/* 오른쪽 메인 영역 - 독립적 스크롤 */}
