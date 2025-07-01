@@ -1,45 +1,60 @@
 // ============================================================================
 // 📁 src/components/ui/Button.tsx
-// 🔘 공통 버튼 컴포넌트
+// 🎯 버튼 컴포넌트 - CUE Protocol 색상 팔레트 적용
 // ============================================================================
 
 'use client';
 
 import React from 'react';
-
-type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
-type ButtonSize = 'sm' | 'md' | 'lg';
+import { LoadingSpinner } from './LoadingSpinner';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: ButtonVariant;
-  size?: ButtonSize;
+  variant?: 'primary' | 'secondary' | 'accent' | 'warning' | 'ghost' | 'danger';
+  size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
-  children: React.ReactNode;
+  leftIcon?: React.ReactNode;
+  rightIcon?: React.ReactNode;
+  fullWidth?: boolean;
 }
 
 export const Button: React.FC<ButtonProps> = ({
+  children,
   variant = 'primary',
   size = 'md',
   loading = false,
-  disabled,
+  leftIcon,
+  rightIcon,
+  fullWidth = false,
   className = '',
-  children,
+  disabled,
   ...props
 }) => {
-  const baseClasses = 'inline-flex items-center justify-center font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2';
-
-  const variantClasses = {
-    primary: 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 disabled:bg-blue-300',
-    secondary: 'bg-gray-600 text-white hover:bg-gray-700 focus:ring-gray-500 disabled:bg-gray-300',
-    outline: 'border border-gray-300 text-gray-700 hover:bg-gray-50 focus:ring-gray-500 disabled:bg-gray-50 disabled:text-gray-400',
-    ghost: 'text-gray-700 hover:bg-gray-100 focus:ring-gray-500 disabled:text-gray-400',
-    danger: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 disabled:bg-red-300'
+  const getVariantClasses = () => {
+    switch (variant) {
+      case 'primary':
+        return 'bg-[#3B74BF] hover:bg-[#2E5A9A] text-white border-transparent shadow-sm';
+      case 'secondary':
+        return 'bg-[#BF8034] hover:bg-[#A66D28] text-white border-transparent shadow-sm';
+      case 'accent':
+        return 'bg-[#EDF25E] hover:bg-[#E0F252] text-[#403F3D] border-transparent shadow-sm font-semibold';
+      case 'warning':
+        return 'bg-[#F2B84B] hover:bg-[#E8A432] text-white border-transparent shadow-sm';
+      case 'ghost':
+        return 'bg-transparent hover:bg-[#F2F2F2] text-[#403F3D] border-transparent';
+      case 'danger':
+        return 'bg-red-600 hover:bg-red-700 text-white border-transparent shadow-sm';
+    }
   };
 
-  const sizeClasses = {
-    sm: 'px-3 py-2 text-sm',
-    md: 'px-4 py-2 text-base',
-    lg: 'px-6 py-3 text-lg'
+  const getSizeClasses = () => {
+    switch (size) {
+      case 'sm':
+        return 'px-3 py-1.5 text-sm';
+      case 'md':
+        return 'px-4 py-2 text-sm';
+      case 'lg':
+        return 'px-6 py-3 text-base';
+    }
   };
 
   const isDisabled = disabled || loading;
@@ -47,19 +62,30 @@ export const Button: React.FC<ButtonProps> = ({
   return (
     <button
       className={`
-        ${baseClasses}
-        ${variantClasses[variant]}
-        ${sizeClasses[size]}
-        ${isDisabled ? 'cursor-not-allowed opacity-50' : ''}
+        inline-flex items-center justify-center space-x-2 
+        border rounded-lg font-medium transition-all duration-200
+        focus:outline-none focus:ring-2 focus:ring-[#3B74BF] focus:ring-offset-2
+        disabled:opacity-50 disabled:cursor-not-allowed
+        hover:transform hover:-translate-y-0.5 hover:shadow-lg
+        active:transform active:translate-y-0
+        ${getVariantClasses()}
+        ${getSizeClasses()}
+        ${fullWidth ? 'w-full' : ''}
         ${className}
       `}
       disabled={isDisabled}
       {...props}
     >
-      {loading && (
-        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-      )}
-      {children}
+      {loading ? (
+        <LoadingSpinner 
+          size={size === 'lg' ? 'md' : 'sm'} 
+          color={variant === 'accent' ? 'dark' : 'white'} 
+        />
+      ) : leftIcon}
+      
+      {children && <span>{children}</span>}
+      
+      {!loading && rightIcon}
     </button>
   );
 };

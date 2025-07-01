@@ -1,29 +1,19 @@
-// frontend/src/components/AIPassportSystem.tsx
-// ============================================================================ 
-// /frontend/src/components/AIPassportSystem.tsx
-// 🌐 AI Passport 시스템 컴포넌트
-// ============================================================================ 
-// 이 컴포넌트는 AI Passport 시스템의 전체 흐름을 관리합니다.   
-// 사용자 인증 상태에 따라 등록 흐름 또는 메인 대시보드를 렌더링합니다.
-// 등록 흐름은 WebAuthn을 사용하여 생체인증을 처리하고,
-// 블록체인 지갑과 DID를 생성합니다.
-// 메인 대시보드는 AI 채팅 인터페이스와 데이터 볼트 관리 기능을 포함합니다.
-// 이 컴포넌트는 클라이언트 측에서 동적으로 WebAuthn 라이브러리를 로드하여
-// 오류를 방지하고, 로딩 상태를 표시합니다.
-// 이 컴포넌트는 WebAuthn 등록 및 로그인, AI 채팅, CUE 마이닝,
-// 데이터 볼트 관리 등의 기능을 포함합니다.
-// 이 컴포넌트는 사용자 세션을 영구적으로 유지하고,   
-// 페이지 새로고침 시 세션을 복원합니다.  
-// ============================================================================
-
 'use client';
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Shield, Fingerprint, CheckCircle, AlertCircle, Database, 
-  Wifi, WifiOff,MessageCircle,User,Coins,Settings,LogOut,Loader2,
-  X,Menu, Send,Mic,Paperclip,Sparkles,Activity,BarChart3,Clock,Link,Star,Zap,Eye,
-  Copy,Key,Globe,ArrowUp,Hash
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { 
+  Shield, Fingerprint, CheckCircle, AlertCircle, Database, 
+  Wifi, WifiOff, MessageCircle, User, Coins, Settings, LogOut, 
+  Loader2, X, Menu, Send, Mic, Paperclip, Sparkles, Activity, 
+  BarChart3, Clock, Link, Star, Zap, Eye, Copy, Key, Globe, 
+  ArrowUp, Hash, Heart, ThumbsUp, TrendingUp, Calendar,
+  FileText, Image, VideoIcon, Music, Brain, Target,
+  Smartphone, Monitor, Tablet, Headphones, Camera
 } from 'lucide-react';
+
+// ============================================================================
+// 🔧 API 클라이언트 및 Mock 시스템
+// ============================================================================
 
 // WebAuthn 라이브러리 동적 로드
 let startRegistration = null;
@@ -44,34 +34,107 @@ const loadWebAuthn = async () => {
   return !!startRegistration;
 };
 
-// 🔧 완전한 데이터 유지 API 클라이언트
-class PersistentDataAPIClient {
+// 영구 데이터 보존 API 클라이언트
+class EnhancedAPIClient {
   constructor() {
-    this.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    this.baseURL = (typeof window !== 'undefined' && window.location.hostname === 'localhost') 
+      ? 'http://localhost:3001' 
+      : 'http://localhost:3001';
     this.websocket = null;
     this.listeners = new Map();
+    this.mockCredentialKey = 'cue_mock_credential';
+    this.storageKey = 'final0626_persistent_data';
   }
 
-  // WebSocket 연결
-  connectWebSocket() {
-    try {
-      this.websocket = new WebSocket(this.baseURL.replace('http', 'ws'));
-      this.websocket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        this.listeners.forEach(callback => callback(data));
+  // 영구 Mock 패스키 관리
+  getOrCreateMockCredential() {
+    if (typeof window === 'undefined') {
+      return {
+        id: 'temp_mock_credential',
+        type: 'public-key',
+        response: {
+          attestationObject: 'temp-attestation',
+          clientDataJSON: 'temp-client-data'
+        }
       };
+    }
+
+    try {
+      const existingCred = localStorage.getItem(this.mockCredentialKey);
+      if (existingCred) {
+        const parsed = JSON.parse(existingCred);
+        console.log('🔄 기존 Mock 패스키 재사용:', parsed.id);
+        return parsed;
+      }
+
+      // 디바이스 고유 특성 기반 ID 생성
+      const deviceFingerprint = [
+        navigator.userAgent,
+        navigator.platform,
+        window.screen.width,
+        window.screen.height,
+        navigator.language,
+        Intl.DateTimeFormat().resolvedOptions().timeZone
+      ].join('|');
+
+      let hash = 0;
+      for (let i = 0; i < deviceFingerprint.length; i++) {
+        const char = deviceFingerprint.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+      }
+      
+      const credentialId = `mock_passkey_${Math.abs(hash).toString(36)}`;
+      const newCredential = {
+        id: credentialId,
+        type: 'public-key',
+        response: {
+          attestationObject: 'mock-attestation-object',
+          clientDataJSON: 'mock-client-data-json'
+        }
+      };
+
+      localStorage.setItem(this.mockCredentialKey, JSON.stringify(newCredential));
+      console.log('🆕 새 Mock 패스키 생성 및 저장:', credentialId);
+      return newCredential;
+
     } catch (error) {
-      console.warn('WebSocket 연결 실패, HTTP 폴백 사용');
+      console.error('❌ Mock 패스키 관리 실패:', error);
+      return {
+        id: 'fallback_mock_credential',
+        type: 'public-key',
+        response: {
+          attestationObject: 'fallback-attestation',
+          clientDataJSON: 'fallback-client-data'
+        }
+      };
     }
   }
 
-  // 실시간 리스너 등록
-  onRealtimeUpdate(callback) {
-    const id = Math.random().toString(36);
-    this.listeners.set(id, callback);
-    return () => this.listeners.delete(id);
+  // 영구 데이터 저장/복원
+  saveToStorage(key, data) {
+    if (typeof window === 'undefined') return;
+    try {
+      const savedData = JSON.parse(localStorage.getItem(this.storageKey) || '{}');
+      savedData[key] = data;
+      localStorage.setItem(this.storageKey, JSON.stringify(savedData));
+    } catch (error) {
+      console.error('저장 실패:', error);
+    }
   }
 
+  loadFromStorage(key) {
+    if (typeof window === 'undefined') return null;
+    try {
+      const savedData = JSON.parse(localStorage.getItem(this.storageKey) || '{}');
+      return savedData[key] || null;
+    } catch (error) {
+      console.error('로드 실패:', error);
+      return null;
+    }
+  }
+
+  // API 요청
   async request(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`;
     
@@ -94,50 +157,61 @@ class PersistentDataAPIClient {
       return await response.json();
     } catch (error) {
       console.error(`API 요청 실패: ${url}`, error.message);
-      
-      // Mock 폴백 데이터
-      if (endpoint.includes('/health')) {
-        return { status: 'mock', mode: 'frontend-only', timestamp: new Date().toISOString() };
-      }
-      
-      if (endpoint.includes('register/start')) {
-        return {
-          success: true,
-          sessionId: `mock_${Date.now()}`,
-          options: { challenge: btoa(Math.random().toString()) }
-        };
-      }
-      
-      if (endpoint.includes('register/complete') || endpoint.includes('login/complete')) {
-        return {
-          success: true,
-          sessionId: `perm_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`, // 🔧 영구 세션 ID
-          user: {
-            id: `user_${Date.now()}`,
-            userName: `Agent${Math.floor(Math.random() * 10000)}`,
-            userEmail: 'demo@cueprotocol.ai',
-            did: `did:cue:${Date.now()}`,
-            walletAddress: `0x${Math.random().toString(16).substring(2, 42)}`,
-            cueBalance: 15428,
-            trustScore: 92.5,
-            passportLevel: 'Verified',
-            biometricVerified: true,
-            registeredAt: new Date().toISOString()
-          }
-        };
-      }
-      
-      throw error;
+      return this.getMockResponse(endpoint, options.method);
     }
   }
 
-  // 🔧 WebAuthn 등록 (세션 ID 저장 포함)
+  // Mock 응답 생성
+  getMockResponse(endpoint, method) {
+    if (endpoint.includes('/health')) {
+      return { status: 'mock', mode: 'frontend-only', timestamp: new Date().toISOString() };
+    }
+    
+    if (endpoint.includes('register/start')) {
+      return {
+        success: true,
+        sessionId: `mock_${Date.now()}`,
+        options: { challenge: btoa(Math.random().toString()) }
+      };
+    }
+    
+    if (endpoint.includes('register/complete') || endpoint.includes('login/complete')) {
+      const isExisting = Math.random() > 0.3;
+      
+      return {
+        success: true,
+        sessionId: `perm_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+        sessionToken: `token_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`,
+        isExistingUser: isExisting,
+        action: isExisting ? 'login' : 'register',
+        user: {
+          id: isExisting ? 'existing_user_123' : `user_${Date.now()}`,
+          username: isExisting ? 'ExistingAgent' : `Agent${Math.floor(Math.random() * 10000)}`,
+          userEmail: isExisting ? 'existing@cueprotocol.ai' : 'demo@cueprotocol.ai',
+          did: isExisting ? 'did:cue:existing:123' : `did:cue:${Date.now()}`,
+          walletAddress: isExisting ? '0x1234567890123456789012345678901234567890' : `0x${Math.random().toString(16).substring(2, 42)}`,
+          cueBalance: isExisting ? 8750 + Math.floor(Math.random() * 5000) : 15428,
+          trustScore: isExisting ? 88 + Math.floor(Math.random() * 12) : 85,
+          passportLevel: 'Verified',
+          biometricVerified: true,
+          registeredAt: isExisting 
+            ? new Date(Date.now() - 86400000 * 14).toISOString()
+            : new Date().toISOString()
+        },
+        message: isExisting 
+          ? '기존 계정으로 로그인되었습니다. 모든 데이터가 유지됩니다.'
+          : '새로운 AI Passport가 생성되었습니다!'
+      };
+    }
+    
+    throw new Error('Unknown endpoint');
+  }
+
+  // WebAuthn 등록 (통합 버전)
   async startWebAuthnRegistration() {
-    console.log('🆕 === WebAuthn 등록 시작 (데이터 영구 보존) ===');
+    console.log('🆕 === WebAuthn 등록 시작 (영구 패스키 지원) ===');
 
     try {
-      // Step 1: 등록 시작 요청
-      console.log('📞 1단계: /register/start 호출');
       const startResponse = await this.request('/api/auth/webauthn/register/start', {
         method: 'POST',
         body: JSON.stringify({
@@ -150,42 +224,36 @@ class PersistentDataAPIClient {
         })
       });
 
-      console.log('✅ 1단계 성공:', { 
-        success: startResponse.success, 
-        sessionId: startResponse.sessionId 
-      });
-
       if (!startResponse.success || !startResponse.options) {
         throw new Error('등록 시작 응답이 올바르지 않습니다');
       }
 
-      // Step 2: WebAuthn 라이브러리 확인
-      console.log('📦 2단계: WebAuthn 라이브러리 로드 확인');
       const loaded = await loadWebAuthn();
-      
       let credential;
       
       if (!loaded) {
-        console.warn('⚠️ WebAuthn 라이브러리 없음 - Mock 크리덴셜 사용');
-        
-        credential = {
-          id: `mock_cred_${Date.now()}`,
-          type: 'public-key',
-          response: {
-            attestationObject: 'mock-attestation',
-            clientDataJSON: 'mock-client-data'
-          }
-        };
-        
-        console.log('🎭 Mock 크리덴셜 생성:', credential.id);
+        console.warn('⚠️ WebAuthn 라이브러리 없음 - 영구 Mock 패스키 사용');
+        credential = this.getOrCreateMockCredential();
       } else {
-        console.log('👆 2단계: 생체인증 팝업 실행...');
-        credential = await startRegistration(startResponse.options);
-        console.log('✅ 생체인증 완료:', credential.id);
+        try {
+          try {
+            const authOptions = {
+              ...startResponse.options,
+              allowCredentials: []
+            };
+            credential = await startAuthentication(authOptions);
+            console.log('✅ 기존 패스키 인증 성공:', credential.id);
+          } catch (authError) {
+            console.log('🆕 기존 패스키 없음, 새 패스키 등록 중...');
+            credential = await startRegistration(startResponse.options);
+            console.log('✅ 새 패스키 등록 성공:', credential.id);
+          }
+        } catch (webauthnError) {
+          console.error('❌ WebAuthn 실행 실패:', webauthnError);
+          throw webauthnError;
+        }
       }
 
-      // Step 3: 등록 완료 요청
-      console.log('📞 3단계: /register/complete 호출');
       const completeResponse = await this.request('/api/auth/webauthn/register/complete', {
         method: 'POST',
         body: JSON.stringify({ 
@@ -194,13 +262,6 @@ class PersistentDataAPIClient {
         })
       });
 
-      console.log('✅ 3단계 완료:', { 
-        success: completeResponse.success,
-        hasUser: !!completeResponse.user,
-        sessionId: completeResponse.sessionId // 🔧 세션 ID 확인
-      });
-
-      // ✅ 응답 검증 강화
       if (!completeResponse.success) {
         throw new Error(completeResponse.message || '등록 완료 처리 실패');
       }
@@ -209,19 +270,17 @@ class PersistentDataAPIClient {
         throw new Error('사용자 정보가 응답에 포함되지 않았습니다');
       }
 
-      // 🔧 영구 세션 ID 저장 (핵심!)
+      if (completeResponse.sessionToken) {
+        localStorage.setItem('cue_session_token', completeResponse.sessionToken);
+      }
+      
       if (completeResponse.sessionId) {
-        console.log('💾 세션 ID localStorage 저장:', completeResponse.sessionId);
         localStorage.setItem('cue_session_id', completeResponse.sessionId);
       }
 
-      console.log('🎉 WebAuthn 등록 완료!', {
-        userId: completeResponse.user.id,
-        username: completeResponse.user.username,
-        did: completeResponse.user.did,
-        sessionId: completeResponse.sessionId,
-        isExisting: completeResponse.isExistingUser || false
-      });
+      // 영구 데이터 저장
+      this.saveToStorage('user', completeResponse.user);
+      this.saveToStorage('lastLogin', new Date().toISOString());
 
       return completeResponse;
 
@@ -231,73 +290,89 @@ class PersistentDataAPIClient {
     }
   }
 
-  // 🔧 세션 복원 (페이지 새로고침 시 자동 호출)
+  // 세션 복원
   async restoreSession() {
     console.log('🔧 === 세션 복원 시도 ===');
     
     try {
+      const sessionToken = localStorage.getItem('cue_session_token');
       const sessionId = localStorage.getItem('cue_session_id');
       
-      if (!sessionId) {
-        console.log('❌ 저장된 세션 ID 없음');
+      if (!sessionToken && !sessionId) {
+        console.log('❌ 저장된 세션 토큰/ID 없음');
+        // 로컬 저장소에서 복원 시도
+        const savedUser = this.loadFromStorage('user');
+        if (savedUser) {
+          console.log('💾 로컬 저장소에서 사용자 데이터 복원');
+          return { success: true, user: savedUser };
+        }
         return null;
       }
 
-      console.log('🔍 저장된 세션 ID 발견:', sessionId);
+      if (sessionToken) {
+        try {
+          const response = await this.request('/api/auth/session/restore', {
+            method: 'POST',
+            body: JSON.stringify({ sessionToken })
+          });
 
-      const response = await this.request('/api/auth/session/restore', {
-        method: 'POST',
-        body: JSON.stringify({ sessionId })
-      });
-
-      if (!response.success) {
-        console.log('❌ 세션 복원 실패, 로그인 필요');
-        localStorage.removeItem('cue_session_id'); // 무효한 세션 ID 삭제
-        return null;
+          if (response.success) {
+            console.log('✅ JWT 토큰 기반 세션 복원 성공!');
+            this.saveToStorage('user', response.user);
+            return response;
+          }
+        } catch (error) {
+          console.warn('⚠️ JWT 토큰 복원 실패, 로컬 데이터 사용:', error.message);
+          localStorage.removeItem('cue_session_token');
+        }
       }
 
-      console.log('✅ 세션 복원 성공!', {
-        userId: response.user.id,
-        username: response.user.username,
-        walletAddress: response.user.walletAddress,
-        cueBalance: response.user.cueBalance
-      });
+      // 로컬 저장소 폴백
+      const savedUser = this.loadFromStorage('user');
+      if (savedUser) {
+        console.log('💾 로컬 저장소 폴백 성공');
+        return { success: true, user: savedUser };
+      }
 
-      return response;
+      return null;
 
     } catch (error) {
       console.error('💥 세션 복원 오류:', error);
-      localStorage.removeItem('cue_session_id'); // 오류 발생 시 세션 ID 삭제
       return null;
     }
   }
 
-  // 🔧 로그아웃 (세션 무효화)
+  // 로그아웃
   async logout() {
     console.log('🔧 === 로그아웃 처리 ===');
     
     try {
+      const sessionToken = localStorage.getItem('cue_session_token');
       const sessionId = localStorage.getItem('cue_session_id');
       
-      if (sessionId) {
-        console.log('🗑️ 서버 세션 무효화:', sessionId);
-        
-        await this.request('/api/auth/session/logout', {
-          method: 'POST',
-          body: JSON.stringify({ sessionId })
-        });
+      if (sessionToken || sessionId) {
+        try {
+          await this.request('/api/auth/logout', {
+            method: 'POST',
+            body: JSON.stringify({ sessionToken, sessionId })
+          });
+        } catch (error) {
+          console.warn('⚠️ 서버 로그아웃 실패 (로컬 토큰은 삭제)', error);
+        }
       }
 
-      // 로컬 세션 ID 삭제
+      localStorage.removeItem('cue_session_token');
       localStorage.removeItem('cue_session_id');
+      localStorage.removeItem(this.storageKey);
       console.log('✅ 로그아웃 완료');
 
       return { success: true };
 
     } catch (error) {
       console.error('💥 로그아웃 오류:', error);
-      // 오류가 발생해도 로컬 세션은 삭제
+      localStorage.removeItem('cue_session_token');
       localStorage.removeItem('cue_session_id');
+      localStorage.removeItem(this.storageKey);
       return { success: false, error: error.message };
     }
   }
@@ -310,12 +385,11 @@ class PersistentDataAPIClient {
         body: JSON.stringify({ message, model, userDid })
       });
     } catch {
-      // 모의 AI 응답
       const responses = [
-        "안녕하세요! CUE Protocol에서 개인화된 AI 어시스턴트입니다. 어떻게 도와드릴까요?",
-        "흥미로운 질문이네요! 개인화 데이터를 기반으로 맞춤형 답변을 준비하고 있습니다.",
-        "데이터 볼트에서 관련 정보를 찾고 있습니다. 잠시만 기다려주세요.",
-        "WebAuthn 인증을 통해 안전하게 저장된 개인 정보를 활용하여 답변드리겠습니다."
+        "안녕하세요! Final0626 AI Passport 시스템입니다. 어떻게 도와드릴까요?",
+        "영구 데이터 보존 기능으로 모든 대화가 안전하게 저장됩니다.",
+        "WebAuthn 생체인증으로 보안이 강화된 개인화 AI 서비스입니다.",
+        "CUE 토큰 시스템을 통해 AI와의 상호작용이 보상으로 전환됩니다."
       ];
       
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -354,7 +428,7 @@ class PersistentDataAPIClient {
     } catch {
       return {
         did,
-        username: did.split(':').pop(),
+        username: did?.split(':').pop() || 'Agent',
         trustScore: 85 + Math.floor(Math.random() * 15),
         level: 'Verified Agent',
         cueBalance: 2500 + Math.floor(Math.random() * 3000),
@@ -385,18 +459,10 @@ class PersistentDataAPIClient {
   }
 }
 
-// WebAuthn 지원 확인
-const checkWebAuthnSupport = () => {
-  if (typeof window === 'undefined') {
-    return { supported: false, reason: 'Server-side rendering' };
-  }
-  if (!window.PublicKeyCredential) {
-    return { supported: false, reason: 'WebAuthn을 지원하지 않는 브라우저입니다.' };
-  }
-  return { supported: true };
-};
+// ============================================================================
+// 🔧 유틸리티 컴포넌트들
+// ============================================================================
 
-// 컴포넌트들
 const LoadingSpinner = ({ size = 'md', className = '' }) => (
   <Loader2 className={`animate-spin ${
     size === 'sm' ? 'w-4 h-4' : size === 'lg' ? 'w-8 h-8' : 'w-6 h-6'
@@ -412,7 +478,20 @@ const StatusIndicator = ({ connected, mode }) => (
   </div>
 );
 
-// 온보딩 플로우 (30초 목표)
+const checkWebAuthnSupport = () => {
+  if (typeof window === 'undefined') {
+    return { supported: false, reason: 'Server-side rendering' };
+  }
+  if (!window.PublicKeyCredential) {
+    return { supported: false, reason: 'WebAuthn을 지원하지 않는 브라우저입니다.' };
+  }
+  return { supported: true };
+};
+
+// ============================================================================
+// 🎨 온보딩 플로우 컴포넌트
+// ============================================================================
+
 const OnboardingFlow = ({ 
   step, 
   isLoading, 
@@ -421,7 +500,8 @@ const OnboardingFlow = ({
   backendMode,
   webauthnSupport,
   error,
-  onRetryConnection
+  onRetryConnection,
+  onDebugCredential
 }) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
@@ -437,7 +517,7 @@ const OnboardingFlow = ({
           </div>
           
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            {step === 'waiting' && 'CUE Protocol'}
+            {step === 'waiting' && 'Final0626 AI Passport'}
             {step === 'auth' && '🔐 생체인증 중...'}
             {step === 'wallet' && '🌐 DID 생성 중...'}
             {step === 'passport' && '🛡️ AI Passport 생성 중...'}
@@ -445,7 +525,7 @@ const OnboardingFlow = ({
           </h1>
           
           <p className="text-gray-600">
-            {step === 'waiting' && 'Web3 AI 개인화 플랫폼에 오신 것을 환영합니다'}
+            {step === 'waiting' && '영구 데이터 보존형 개인화 AI 플랫폼에 오신 것을 환영합니다'}
             {step === 'auth' && '생체인증을 완료해주세요'}
             {step === 'wallet' && '블록체인 지갑과 DID를 생성하고 있습니다'}
             {step === 'passport' && 'AI Passport를 초기화하고 있습니다'}
@@ -529,6 +609,15 @@ const OnboardingFlow = ({
                 </div>
               )}
             </button>
+
+            {onDebugCredential && (
+              <button
+                onClick={onDebugCredential}
+                className="w-full text-gray-500 hover:text-gray-700 text-sm underline"
+              >
+                🔍 Mock 패스키 디버그 정보 확인
+              </button>
+            )}
           </div>
         )}
 
@@ -550,7 +639,6 @@ const OnboardingFlow = ({
           </button>
         )}
 
-        {/* 백엔드 연결 재시도 */}
         {!backendConnected && (
           <button
             onClick={onRetryConnection}
@@ -564,12 +652,15 @@ const OnboardingFlow = ({
   );
 };
 
-// 메인 대시보드 (로그인 후)
+// ============================================================================
+// 🎨 메인 대시보드 컴포넌트 (독립 스크롤 구현)
+// ============================================================================
+
 const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode, onRetryConnection }) => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [api] = useState(() => new PersistentDataAPIClient());
+  const [api] = useState(() => new EnhancedAPIClient());
   const [showMobileSidebar, setShowMobileSidebar] = useState(false);
   const [currentView, setCurrentView] = useState('chat');
   const [cueBalance, setCueBalance] = useState(passport?.cueBalance || user?.cueBalance || 0);
@@ -589,15 +680,30 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 실시간 업데이트 설정
+  // 영구 데이터 자동 저장
   useEffect(() => {
-    api.connectWebSocket();
-    const unsubscribe = api.onRealtimeUpdate((data) => {
-      if (data.type === 'cue_update') {
-        setCueBalance(data.balance);
-      }
-    });
-    return unsubscribe;
+    if (messages.length > 0) {
+      api.saveToStorage('messages', messages);
+    }
+  }, [messages, api]);
+
+  useEffect(() => {
+    if (cueBalance) {
+      api.saveToStorage('cueBalance', cueBalance);
+    }
+  }, [cueBalance, api]);
+
+  // 초기 데이터 로드
+  useEffect(() => {
+    const savedMessages = api.loadFromStorage('messages');
+    const savedBalance = api.loadFromStorage('cueBalance');
+    
+    if (savedMessages) {
+      setMessages(savedMessages);
+    }
+    if (savedBalance) {
+      setCueBalance(savedBalance);
+    }
   }, [api]);
 
   // 메시지 전송
@@ -607,7 +713,8 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
     const userMessage = {
       role: 'user',
       content: newMessage,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      id: Date.now()
     };
     
     setMessages(prev => [...prev, userMessage]);
@@ -623,7 +730,8 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
         timestamp: new Date().toISOString(),
         model: response.model,
         cueReward: response.cueReward,
-        trustScore: response.trustScore
+        trustScore: response.trustScore,
+        id: Date.now() + 1
       };
       
       setMessages(prev => [...prev, aiMessage]);
@@ -640,7 +748,8 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
         role: 'assistant',
         content: '죄송합니다. 메시지 전송 중 오류가 발생했습니다.',
         timestamp: new Date().toISOString(),
-        error: true
+        error: true,
+        id: Date.now() + 1
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {
@@ -648,7 +757,6 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
     }
   };
 
-  // 키보드 단축키
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -657,7 +765,7 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
   };
 
   return (
-    <div className="h-screen bg-gray-50 flex flex-col">
+    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       {/* 헤더 - 고정 */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex-shrink-0 shadow-sm">
         <div className="flex items-center justify-between">
@@ -676,7 +784,7 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
                 <Shield className="w-4 h-4 text-white" />
               </div>
               <div>
-                <h1 className="text-lg font-bold text-gray-900">CUE Protocol</h1>
+                <h1 className="text-lg font-bold text-gray-900">Final0626 AI Passport</h1>
                 <p className="text-xs text-gray-600">영구 데이터 보존 AI 에이전트</p>
               </div>
             </div>
@@ -685,7 +793,6 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
           <div className="flex items-center space-x-3">
             <StatusIndicator connected={backendConnected} mode={backendMode} />
             
-            {/* CUE 잔액 표시 */}
             <div className="hidden sm:flex items-center space-x-2 px-3 py-1 bg-gradient-to-r from-yellow-100 to-orange-100 rounded-full">
               <Coins className="w-4 h-4 text-yellow-600" />
               <span className="text-sm font-medium text-yellow-800">{cueBalance.toLocaleString()} CUE</span>
@@ -702,7 +809,7 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
         </div>
       </header>
 
-      {/* 메인 콘텐츠 */}
+      {/* 메인 콘텐츠 - 좌우 분할 (독립 스크롤) */}
       <div className="flex flex-1 overflow-hidden">
         {/* 왼쪽 사이드바 - AI Passport Zone (독립 스크롤) */}
         <aside className={`
@@ -711,7 +818,7 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
         `}>
           {/* 모바일 헤더 */}
           {isMobile && showMobileSidebar && (
-            <div className="flex justify-between items-center p-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50">
+            <div className="flex justify-between items-center p-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50 flex-shrink-0">
               <div className="flex items-center space-x-2">
                 <div className="w-6 h-6 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
                   <Shield className="w-3 h-3 text-white" />
@@ -730,14 +837,12 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
           {/* AI Passport 메인 카드 - 고정 위치 */}
           <div className="p-6 border-b border-gray-200 flex-shrink-0">
             <div className="bg-gradient-to-br from-blue-600 via-purple-600 to-indigo-700 rounded-2xl p-6 text-white relative overflow-hidden shadow-xl">
-              {/* 배경 패턴 */}
               <div className="absolute inset-0 bg-white opacity-5">
                 <div className="absolute top-0 right-0 w-32 h-32 rounded-full -mr-16 -mt-16"></div>
                 <div className="absolute bottom-0 left-0 w-24 h-24 rounded-full -ml-12 -mb-12"></div>
               </div>
               
               <div className="relative z-10">
-                {/* AI Passport 헤더 */}
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center space-x-3">
                     <div className="w-12 h-12 bg-white bg-opacity-20 rounded-xl flex items-center justify-center backdrop-blur-sm">
@@ -758,16 +863,14 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
                   </div>
                 </div>
 
-                {/* 사용자 정보 */}
                 <div className="text-center mb-6">
                   <div className="w-20 h-20 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-3 backdrop-blur-sm">
                     <User className="w-10 h-10" />
                   </div>
                   <h4 className="text-xl font-bold">{user?.username || 'Agent'}</h4>
-                  <p className="text-blue-100 text-sm">{user?.email || 'demo@cueprotocol.ai'}</p>
+                  <p className="text-blue-100 text-sm">{user?.userEmail || user?.email || 'demo@cueprotocol.ai'}</p>
                 </div>
                 
-                {/* CUE 잔액과 통계 - 3열 그리드 */}
                 <div className="grid grid-cols-3 gap-3">
                   <div className="bg-white bg-opacity-15 rounded-xl p-3 text-center backdrop-blur-sm">
                     <Coins className="w-5 h-5 mx-auto mb-1 text-yellow-300" />
@@ -791,7 +894,7 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
             </div>
           </div>
 
-          {/* 스크롤 가능한 콘텐츠 영역 */}
+          {/* 스크롤 가능한 콘텐츠 영역 - 독립 스크롤 */}
           <div className="flex-1 overflow-y-auto">
             {/* DID 정보 */}
             <div className="p-6 border-b border-gray-200">
@@ -834,41 +937,37 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
             {/* 개성 프로필 */}
             <div className="p-6 border-b border-gray-200">
               <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
-                <Sparkles className="w-4 h-4 mr-2" />
+                <Brain className="w-4 h-4 mr-2" />
                 Personality Profile
               </h4>
               <div className="space-y-3">
-                {passport?.personalityProfile?.traits && (
-                  <div>
-                    <span className="text-xs text-gray-600 uppercase tracking-wide">Traits</span>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {passport.personalityProfile.traits.map((trait, index) => (
-                        <span
-                          key={index}
-                          className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded-full"
-                        >
-                          {trait}
-                        </span>
-                      ))}
-                    </div>
+                <div>
+                  <span className="text-xs text-gray-600 uppercase tracking-wide">Traits</span>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {['창의적', '분석적', '신뢰할 수 있는'].map((trait, index) => (
+                      <span
+                        key={index}
+                        className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded-full"
+                      >
+                        {trait}
+                      </span>
+                    ))}
                   </div>
-                )}
+                </div>
                 
-                {passport?.personalityProfile?.expertise && (
-                  <div>
-                    <span className="text-xs text-gray-600 uppercase tracking-wide">Expertise</span>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {passport.personalityProfile.expertise.map((skill, index) => (
-                        <span
-                          key={index}
-                          className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full"
-                        >
-                          {skill}
-                        </span>
-                      ))}
-                    </div>
+                <div>
+                  <span className="text-xs text-gray-600 uppercase tracking-wide">Expertise</span>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {['AI', 'Web3', 'Protocol Design'].map((skill, index) => (
+                      <span
+                        key={index}
+                        className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full"
+                      >
+                        {skill}
+                      </span>
+                    ))}
                   </div>
-                )}
+                </div>
               </div>
             </div>
 
@@ -879,14 +978,12 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
                 Connected Platforms
               </h4>
               <div className="space-y-2">
-                {passport?.connectedPlatforms?.map((platform, index) => (
+                {['ChatGPT', 'Claude', 'Discord'].map((platform, index) => (
                   <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
                     <span className="text-sm text-gray-700">{platform}</span>
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <div className={`w-2 h-2 ${backendConnected ? 'bg-green-500' : 'bg-yellow-500'} rounded-full`}></div>
                   </div>
-                )) || (
-                  <p className="text-sm text-gray-500">연결된 플랫폼이 없습니다</p>
-                )}
+                ))}
               </div>
             </div>
 
@@ -897,7 +994,11 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
                 Achievements
               </h4>
               <div className="space-y-2">
-                {passport?.achievements?.map((achievement, index) => (
+                {[
+                  { name: 'First Login', icon: '🎯', earned: true },
+                  { name: 'AI Chat Master', icon: '🤖', earned: true },
+                  { name: 'CUE Collector', icon: '💰', earned: false }
+                ].map((achievement, index) => (
                   <div key={index} className={`flex items-center space-x-3 p-2 rounded-lg ${
                     achievement.earned ? 'bg-green-50' : 'bg-gray-50'
                   }`}>
@@ -913,18 +1014,16 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
                       <CheckCircle className="w-4 h-4 text-green-600" />
                     )}
                   </div>
-                )) || (
-                  <p className="text-sm text-gray-500">업적을 달성하여 수집하세요</p>
-                )}
+                ))}
               </div>
             </div>
           </div>
         </aside>
 
         {/* 오른쪽 메인 영역 - AI 채팅 (독립 스크롤) */}
-        <main className="flex-1 flex flex-col overflow-hidden">
-          {/* 채팅 메시지 영역 - 스크롤 가능 */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
+        <main className="flex-1 flex flex-col overflow-hidden bg-yellow-50">
+          {/* 채팅 메시지 영역 - 독립 스크롤 */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {messages.length === 0 ? (
               <div className="text-center py-16">
                 <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
@@ -934,14 +1033,13 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
                   안녕하세요, {user?.username}님! 🌟
                 </h3>
                 <p className="text-gray-600 max-w-md mx-auto leading-relaxed">
-                  영구 데이터 보존 기능을 갖춘 CUE Protocol AI 에이전트입니다.<br />
+                  영구 데이터 보존 기능을 갖춘 Final0626 AI 에이전트입니다.<br />
                   모든 대화와 데이터는 안전하게 저장되며 새로고침해도 유지됩니다.
                 </p>
                 
-                {/* 빠른 시작 버튼들 */}
                 <div className="flex flex-wrap gap-2 justify-center mt-6">
                   {[
-                    "CUE Protocol에 대해 알려줘",
+                    "Final0626 시스템에 대해 알려줘",
                     "영구 데이터 보존은 어떻게 작동해?",
                     "Web3와 AI의 융합",
                     "블록체인 지갑 설명"
@@ -955,11 +1053,20 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
                     </button>
                   ))}
                 </div>
+
+                {!backendConnected && (
+                  <div className="mt-6 p-4 bg-yellow-100 border border-yellow-200 rounded-xl">
+                    <p className="text-sm text-yellow-800">
+                      ⚠️ 백엔드 서버에 연결할 수 없어 Mock 모드로 실행됩니다.<br />
+                      실제 AI 응답을 받으려면 백엔드 서버를 실행해주세요.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               messages.map((message, index) => (
                 <div
-                  key={index}
+                  key={message.id || index}
                   className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
@@ -1041,18 +1148,15 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
                   disabled={isTyping}
                 />
                 
-                {/* 첨부파일 버튼 */}
                 <button className="absolute right-3 bottom-3 p-1 text-gray-400 hover:text-gray-600 transition-colors">
                   <Paperclip className="w-4 h-4" />
                 </button>
               </div>
               
-              {/* 음성 입력 버튼 */}
               <button className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-colors">
                 <Mic className="w-5 h-5" />
               </button>
               
-              {/* 전송 버튼 */}
               <button
                 onClick={handleSendMessage}
                 disabled={!newMessage.trim() || isTyping}
@@ -1069,7 +1173,6 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
               </button>
             </div>
             
-            {/* 입력 도움말 */}
             <div className="flex items-center justify-center mt-2 text-xs text-gray-500">
               <span>Enter로 전송, Shift+Enter로 줄바꿈 | 모든 데이터는 영구 보존됩니다</span>
             </div>
@@ -1088,8 +1191,11 @@ const MainDashboard = ({ user, passport, onLogout, backendConnected, backendMode
   );
 };
 
-// 메인 앱 컴포넌트
-export default function AIPassportSystem() {
+// ============================================================================
+// 🚀 메인 앱 컴포넌트
+// ============================================================================
+
+export default function Final0626AIPassportSystem() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -1101,44 +1207,38 @@ export default function AIPassportSystem() {
   // 시스템 상태
   const [backendConnected, setBackendConnected] = useState(false);
   const [backendMode, setBackendMode] = useState('checking');
-  const [isLibraryLoaded, setIsLibraryLoaded] = useState(false);
   
   // WebAuthn 지원 확인
   const [webauthnSupport] = useState(() => checkWebAuthnSupport());
   
   // API 클라이언트
-  const [api] = useState(() => new PersistentDataAPIClient());
+  const [api] = useState(() => new EnhancedAPIClient());
 
-  // 🔧 초기화 및 세션 복원
+  // 상태 업데이트 헬퍼
+  const updateState = useCallback((updates) => {
+    if (updates.user) setUser(updates.user);
+    if (updates.passport) setPassport(updates.passport);
+    if (updates.isAuthenticated !== undefined) setIsAuthenticated(updates.isAuthenticated);
+    if (updates.error !== undefined) setError(updates.error);
+  }, []);
+
+  // 초기화 및 세션 복원
   useEffect(() => {
     const initializeSystem = async () => {
       try {
-        console.log('🚀 === 시스템 초기화 및 세션 복원 시작 ===');
+        console.log('🚀 === Final0626 시스템 초기화 및 세션 복원 시작 ===');
         
         // 백엔드 연결 확인
         const health = await api.checkHealth();
         setBackendConnected(health.connected);
         setBackendMode(health.mode || 'unknown');
         
-        // WebAuthn 라이브러리 로드
-        if (webauthnSupport.supported) {
-          const loaded = await loadWebAuthn();
-          setIsLibraryLoaded(loaded);
-        }
-        
-        // 🔧 세션 복원 시도 (핵심!)
+        // 세션 복원 시도
         console.log('🔧 저장된 세션 복원 시도...');
         const restoredSession = await api.restoreSession();
         
         if (restoredSession && restoredSession.success) {
           console.log('✅ 세션 복원 성공! 자동 로그인 처리');
-          console.log('📊 복원된 데이터:', {
-            userId: restoredSession.user.id,
-            did: restoredSession.user.did,
-            wallet: restoredSession.user.walletAddress,
-            cue: restoredSession.user.cueBalance,
-            trust: restoredSession.user.trustScore
-          });
           
           setUser(restoredSession.user);
           
@@ -1159,7 +1259,7 @@ export default function AIPassportSystem() {
         }
         
         setIsInitialized(true);
-        console.log('✅ 시스템 초기화 완료');
+        console.log('✅ Final0626 시스템 초기화 완료');
       } catch (error) {
         console.error('❌ 초기화 실패:', error);
         setIsInitialized(true);
@@ -1167,7 +1267,7 @@ export default function AIPassportSystem() {
     };
     
     initializeSystem();
-  }, []);
+  }, [api]);
 
   // 백엔드 재연결
   const retryBackendConnection = useCallback(async () => {
@@ -1176,24 +1276,30 @@ export default function AIPassportSystem() {
     setBackendMode(health.mode || 'unknown');
   }, [api]);
 
-  // 🔧 등록 핸들러 (세션 저장 포함)
+  // 등록 핸들러
   const handleRegister = async () => {
     try {
-      console.log('🚀 === 등록 프로세스 시작 ===');
+      console.log('🚀 === Final0626 등록 프로세스 시작 ===');
       
       setError('');
       setIsRegistering(true);
       setRegistrationStep('auth');
 
-      // WebAuthn 등록 (내부에서 세션 ID 저장)
+      // WebAuthn 등록
       const result = await api.startWebAuthnRegistration();
       
       if (!result.success || !result.user) {
         throw new Error('등록 응답이 올바르지 않습니다');
       }
 
-      // 🎯 기존 사용자 vs 신규 사용자 처리
-      if (result.isExistingUser) {
+      console.log('✅ WebAuthn 등록 성공:', {
+        action: result.action,
+        isExisting: result.isExistingUser,
+        userId: result.user.id
+      });
+
+      // 기존 사용자 vs 신규 사용자 처리
+      if (result.isExistingUser || result.action === 'login') {
         console.log('🔄 기존 사용자 데이터 복원 중...');
         console.log('💎 유지된 데이터:', {
           did: result.user.did,
@@ -1206,8 +1312,12 @@ export default function AIPassportSystem() {
         setUser(result.user);
         
         if (result.user.did) {
-          const passportData = await api.loadPassport(result.user.did);
-          setPassport(passportData);
+          try {
+            const passportData = await api.loadPassport(result.user.did);
+            setPassport(passportData);
+          } catch (error) {
+            console.warn('패스포트 로드 실패, 기본값 사용');
+          }
         }
         
         setRegistrationStep('complete');
@@ -1226,8 +1336,12 @@ export default function AIPassportSystem() {
         setUser(result.user);
         
         if (result.user.did) {
-          const passportData = await api.loadPassport(result.user.did);
-          setPassport(passportData);
+          try {
+            const passportData = await api.loadPassport(result.user.did);
+            setPassport(passportData);
+          } catch (error) {
+            console.warn('패스포트 로드 실패, 기본값 사용');
+          }
         }
         
         setRegistrationStep('complete');
@@ -1241,21 +1355,32 @@ export default function AIPassportSystem() {
 
     } catch (error) {
       console.error('💥 등록 실패:', error);
-      setError(error.message);
+      
+      // 사용자 친화적 에러 메시지
+      let errorMessage = error.message;
+      if (error.message.includes('취소')) {
+        errorMessage = '생체인증이 취소되었습니다. 다시 시도해주세요.';
+      } else if (error.message.includes('지원하지 않')) {
+        errorMessage = '이 기기는 생체인증을 지원하지 않습니다. 다른 기기를 사용해주세요.';
+      } else if (error.message.includes('백엔드')) {
+        errorMessage = '서버 연결에 문제가 있습니다. 잠시 후 다시 시도해주세요.';
+      }
+      
+      setError(errorMessage);
       setIsRegistering(false);
       setRegistrationStep('waiting');
     }
   };
 
-  // 🔧 로그아웃 핸들러 (세션 무효화 포함)
+  // 로그아웃 핸들러
   const handleLogout = async () => {
-    console.log('🔧 === 로그아웃 프로세스 시작 ===');
+    console.log('🔧 === Final0626 로그아웃 프로세스 시작 ===');
     
     try {
       // 서버 세션 무효화
       await api.logout();
       
-      // 상태 초기화
+      // 상태 완전 초기화
       setIsAuthenticated(false);
       setUser(null);
       setPassport(null);
@@ -1272,13 +1397,37 @@ export default function AIPassportSystem() {
     }
   };
 
+  // Mock 패스키 디버깅 (테스트용)
+  const handleDebugCredential = useCallback(() => {
+    const mockCredential = api.getOrCreateMockCredential();
+    const sessionInfo = {
+      sessionToken: localStorage.getItem('cue_session_token'),
+      sessionId: localStorage.getItem('cue_session_id'),
+      savedUser: api.loadFromStorage('user'),
+      timestamp: new Date().toISOString()
+    };
+    
+    console.log('🔍 Final0626 디버그 정보:', {
+      mockCredential,
+      sessionInfo,
+      webauthnSupported: webauthnSupport.supported,
+      backendConnected,
+      backendMode
+    });
+    
+    alert(`Final0626 디버그 정보:\nMock 패스키 ID: ${mockCredential.id}\n세션 토큰: ${sessionInfo.sessionToken ? '있음' : '없음'}\n세션 ID: ${sessionInfo.sessionId ? '있음' : '없음'}\n저장된 사용자: ${sessionInfo.savedUser ? '있음' : '없음'}\nWebAuthn 지원: ${webauthnSupport.supported ? '예' : '아니오'}\n백엔드 연결: ${backendConnected ? '연결됨' : '연결 안됨'} (${backendMode})`);
+  }, [api, webauthnSupport, backendConnected, backendMode]);
+
   // 로딩 중
   if (!isInitialized) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
         <div className="text-center">
           <LoadingSpinner size="lg" className="mx-auto mb-4" />
-          <p className="text-gray-600">CUE Protocol 초기화 및 세션 복원 중...</p>
+          <p className="text-gray-600">Final0626 AI Passport 초기화 및 세션 복원 중...</p>
+          <p className="text-sm text-gray-500 mt-2">
+            백엔드 연결 확인 및 저장된 세션 복원을 진행하고 있습니다
+          </p>
         </div>
       </div>
     );
@@ -1296,6 +1445,7 @@ export default function AIPassportSystem() {
         webauthnSupport={webauthnSupport}
         error={error}
         onRetryConnection={retryBackendConnection}
+        onDebugCredential={handleDebugCredential}
       />
     );
   }

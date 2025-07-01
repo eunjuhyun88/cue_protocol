@@ -1,79 +1,117 @@
 // ============================================================================
 // 📁 src/components/ui/BackendStatus.tsx
-// 🌐 백엔드 연결 상태 표시 컴포넌트
-// ============================================================================
-// 이 컴포넌트는 백엔드 서버의 연결 상태를 시각적으로
-// 표시합니다. 사용자가 백엔드 연결 상태를 쉽게 확인할 수 있도록
-// 다양한 상태(연결됨, 확인 중, 연결 실패)에 따라 다른 아이콘과   
+// 🔗 백엔드 상태 컴포넌트 - CUE Protocol 색상 팔레트 적용
 // ============================================================================
 
 'use client';
 
 import React from 'react';
-import { Cloud, CloudOff, RefreshCw } from 'lucide-react';
-import type { ConnectionStatus } from '../../types/auth.types';
+import { Wifi, WifiOff, RefreshCw, CheckCircle, AlertCircle, XCircle } from 'lucide-react';
 
 interface BackendStatusProps {
-  status: ConnectionStatus;
-  onRetry: () => void;
-  connectionDetails?: any;
+  status: 'connected' | 'disconnected' | 'connecting' | 'error';
+  onRetry?: () => void;
+  connectionDetails?: {
+    latency?: number;
+    lastSync?: string;
+    mode?: string;
+  };
+  className?: string;
+  showDetails?: boolean;
 }
 
-export const BackendStatus: React.FC<BackendStatusProps> = ({ 
-  status, 
+export const BackendStatus: React.FC<BackendStatusProps> = ({
+  status,
   onRetry,
-  connectionDetails
+  connectionDetails,
+  className = '',
+  showDetails = false
 }) => {
   const getStatusConfig = () => {
     switch (status) {
       case 'connected':
         return {
-          bgColor: 'bg-green-50',
-          textColor: 'text-green-700',
-          icon: <Cloud className="w-4 h-4" />,
-          title: '백엔드 연결됨',
-          subtitle: `서비스: ${connectionDetails?.service || 'Unknown'}`,
+          icon: CheckCircle,
+          text: 'Connected',
+          bgColor: 'bg-[#E0F252]',
+          textColor: 'text-[#403F3D]',
+          iconColor: 'text-[#3B74BF]',
+          borderColor: 'border-[#EDF25E]'
         };
-      case 'checking':
+      case 'connecting':
         return {
-          bgColor: 'bg-yellow-50',
-          textColor: 'text-yellow-700',
-          icon: <RefreshCw className="w-4 h-4 animate-spin" />,
-          title: '연결 확인 중...',
-          subtitle: '잠시만 기다려주세요',
+          icon: RefreshCw,
+          text: 'Connecting...',
+          bgColor: 'bg-[#F0F2AC]',
+          textColor: 'text-[#BF8034]',
+          iconColor: 'text-[#F2B84B]',
+          borderColor: 'border-[#F2B84B]'
         };
-      case 'disconnected':
-      default:
+      case 'error':
         return {
+          icon: XCircle,
+          text: 'Error',
           bgColor: 'bg-red-50',
           textColor: 'text-red-700',
-          icon: <CloudOff className="w-4 h-4" />,
-          title: '백엔드 연결 실패',
-          subtitle: 'localhost:3001 확인 필요',
+          iconColor: 'text-red-600',
+          borderColor: 'border-red-200'
+        };
+      default:
+        return {
+          icon: WifiOff,
+          text: 'Mock Mode',
+          bgColor: 'bg-[#F2F2F2]',
+          textColor: 'text-[#8C8C8C]',
+          iconColor: 'text-[#BF8034]',
+          borderColor: 'border-[#BFBFBF]'
         };
     }
   };
 
   const config = getStatusConfig();
+  const IconComponent = config.icon;
 
   return (
-    <div className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-sm ${config.bgColor} ${config.textColor}`}>
-      {config.icon}
-      
-      <div className="flex-1">
-        <span className="font-medium">{config.title}</span>
-        <div className="text-xs opacity-75 mt-1">
-          {config.subtitle}
-        </div>
+    <div className={`inline-flex items-center space-x-2 ${className}`}>
+      <div className={`
+        flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border
+        transition-all duration-200 hover:shadow-sm
+        ${config.bgColor} ${config.textColor} ${config.borderColor}
+      `}>
+        <IconComponent 
+          className={`w-3 h-3 ${config.iconColor} ${status === 'connecting' ? 'animate-spin' : ''}`} 
+        />
+        <span className="font-semibold">{config.text}</span>
+        
+        {connectionDetails?.mode && (
+          <span className="text-xs opacity-75 font-normal">
+            ({connectionDetails.mode})
+          </span>
+        )}
+        
+        {status === 'disconnected' && onRetry && (
+          <button 
+            onClick={onRetry} 
+            className="ml-1 text-[#3B74BF] hover:text-[#2E5A9A] underline font-medium transition-colors"
+          >
+            재시도
+          </button>
+        )}
       </div>
-      
-      {status === 'disconnected' && (
-        <button 
-          onClick={onRetry}
-          className="ml-2 px-2 py-1 bg-red-100 hover:bg-red-200 rounded text-xs font-medium transition-colors"
-        >
-          재시도
-        </button>
+
+      {/* 상세 정보 표시 */}
+      {showDetails && connectionDetails && (
+        <div className={`
+          text-xs space-x-2 px-2 py-1 rounded border
+          bg-[#F2F2F2] text-[#8C8C8C] border-[#D9D9D9]
+        `}>
+          {connectionDetails.latency && (
+            <span>⚡ {connectionDetails.latency}ms</span>
+          )}
+          {connectionDetails.lastSync && (
+            <span>🔄 {new Date(connectionDetails.lastSync).toLocaleTimeString()}</span>
+          )}
+        </div>
       )}
     </div>
   );
