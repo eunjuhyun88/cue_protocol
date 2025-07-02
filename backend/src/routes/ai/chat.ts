@@ -4,7 +4,7 @@
 // 용도: AI 채팅, 개인화, CUE 마이닝 통합 API
 // 수정사항: 메서드 통일, 오류 처리 개선, DatabaseService와 SupabaseService 호환
 // ============================================================================
-
+import { ollamaService } from '../../services/ollama';
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from '../../services/database/DatabaseService';
@@ -100,6 +100,24 @@ async function getAnthropicClient() {
 // 🤖 AI 채팅 엔드포인트 (수정됨)
 // ============================================================================
 router.post('/chat', asyncHandler(async (req, res) => {
+  console.log('🎯 === AI CHAT 라우트 시작 ===');
+  console.log('📝 Request body:', req.body);
+  
+  const { message, model = 'personalized-agent', conversationId, userId, passportData } = req.body;
+  
+  console.log('🔍 추출된 값들:', {
+    message: message?.slice(0, 50),
+    model,
+    userId,
+    hasPassportData: !!passportData
+  });
+   const userDid = (req as any).user?.did || 
+                  (passportData?.did) || 
+                  (userId ? `did:final0626:${userId}` : null);
+
+  console.log(`🎯 AI Chat Request: ${model} for user ${userDid?.slice(0, 20)}...`);
+  
+router.post('/chat', asyncHandler(async (req, res) => {
   const { message, model = 'personalized-agent', conversationId, userId, passportData } = req.body;
   
   // 사용자 정보 확인 (req.user 또는 body에서)
@@ -183,22 +201,39 @@ router.post('/chat', asyncHandler(async (req, res) => {
     let aiResult;
 
     switch (model) {
-      case 'gpt-4o':
-      case 'gpt-4':
-        aiResult = await generateGPTResponse(message, personalContext);
-        break;
-      case 'claude-3.5-sonnet':
-      case 'claude-sonnet':
-        aiResult = await generateClaudeResponse(message, personalContext);
-        break;
-      case 'gemini-pro':
-        aiResult = await generateGeminiResponse(message, personalContext);
-        break;
-      case 'personalized-agent':
-      default:
-        aiResult = await generatePersonalizedResponse(message, personalContext, userDid);
-        break;
+  case 'gpt-4o':
+  case 'gpt-4':
+    aiResult = await generateGPTResponse(message, personalContext);
+    break;
+  case 'claude-3.5-sonnet':
+  case 'claude-sonnet':
+    aiResult = await generateClaudeResponse(message, personalContext);
+    break;
+  case 'gemini-pro':
+    aiResult = await generateGeminiResponse(message, personalContext);
+    break;
+  
+  // 🦙 Ollama 로컬 모델들 추가
+  case 'llama3.2:3b':
+  case 'llama3.2:1b':
+  case 'llama3.1:8b':
+  case 'gemma2:2b':
+  case 'qwen2.5:3b':
+  case 'qwen2.5:1.5b':
+    aiResult = await generateOllamaResponse(message, personalContext, model);
+    break;
+  
+  // 기본 모델명으로 Ollama 모델 감지
+  default:
+    if (model.startsWith('llama') || model.startsWith('gemma') || model.startsWith('qwen') || model.startsWith('phi') || model.startsWith('mistral')) {
+      aiResult = await generateOllamaResponse(message, personalContext, model);
+    } else {
+      // 기존 개인화 에이전트
+      aiResult = await generatePersonalizedResponse(message, personalContext, userDid);
     }
+    break;
+}
+
 
     const responseTime = Date.now() - startTime;
 
@@ -446,9 +481,66 @@ async function generateClaudeResponse(message: string, context: any) {
   }
 }
 
-async function generateGeminiResponse(message: string, context: any) {
-  console.log('➡️ Gemini API not implemented, using enhanced mock');
-  return generateEnhancedMockResponse(message, context, 'Gemini Pro');
+async function generatePersonalizedResponse(message: string, context: any, userDid: string) {
+  console.log('🧠 Generating personalized response...');
+  
+  const personalityType = context.personalityProfile?.type || '';
+  
+  // 성격 타입에 따른 모델 선택
+  if (personalityType.includes('Technical') || personalityType.includes('INTJ')) {
+    return await generateClaudeResponse(message, context);
+  } else {
+    return await generateGPTResponse(message, context);
+  }
+}
+
+async function generateOllamaResponse(message: string, context: any, model: string = 'llama3.2:3b') {
+  console.log(`🦙 Generating Ollama response with ${model}...`);
+  
+  try {
+    // Ollama 연결 확인
+    const isConnected = await ollamaService.checkConnection();
+    if (!isConnected) {
+      console.log('➡️ Ollama unavailable, using enhanced mock');
+      return generateEnhancedMockResponse(message, context, `${model} (Local)`);
+    }
+
+    // 개인화된 시스템 프롬프트 생성
+    const systemPrompt = createPersonalizedSystemPrompt(context);
+    
+    // Ollama 메시지 형식으로 변환
+    const messages = [
+      {
+        role: 'system' as const,
+        content: `${systemPrompt}
+
+당신은 CUE Protocol의 개인화된 AI 어시스턴트입니다. 
+사용자의 개인 정보와 컨텍스트를 바탕으로 친근하고 도움이 되는 한국어 응답을 제공해주세요.
+로컬 AI 모델로서 사용자의 프라이버시를 완전히 보호하며 빠른 응답을 제공합니다.`
+      },
+      {
+        role: 'user' as const,
+        content: message
+      }
+    ];
+
+    // Ollama API 호출
+    const response = await ollamaService.chat(model, messages, false);
+    
+    console.log(`✅ Ollama ${model} response generated successfully`);
+    return {
+      response: response,
+      tokensUsed: Math.floor(response.length / 4), // 대략적인 토큰 수 계산
+      usedData: extractUsedData(context),
+      model: model,
+      provider: 'ollama',
+      local: true
+    };
+
+  } catch (error: any) {
+    console.error(`❌ Ollama ${model} error:`, error.message);
+    return generateEnhancedMockResponse(message, context, `${model} (Local Error)`);
+  }
 }
 
 async function generatePersonalizedResponse(message: string, context: any, userDid: string) {
@@ -731,18 +823,188 @@ router.get('/health', (req, res) => {
   });
 });
 
-router.get('/models', (req, res) => {
-  res.json({
-    success: true,
-    models: [
-      { id: 'personalized-agent', name: 'Personalized Agent', available: true, recommended: true },
-      { id: 'gpt-4o', name: 'GPT-4o', available: !!process.env.OPENAI_API_KEY },
-      { id: 'claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', available: !!process.env.ANTHROPIC_API_KEY },
-      { id: 'gemini-pro', name: 'Gemini Pro', available: false }
-    ]
-  });
-});
+router.get('/models', asyncHandler(async (req, res) => {
+  try {
+    // Ollama 연결 상태 확인
+    const ollamaConnected = await ollamaService.checkConnection();
+    let ollamaModels: string[] = [];
+    
+    if (ollamaConnected) {
+      try {
+        ollamaModels = await ollamaService.getModels();
+      } catch (error) {
+        console.error('Failed to get Ollama models:', error);
+      }
+    }
 
+    const baseModels = [
+      { 
+        id: 'personalized-agent', 
+        name: 'Personalized Agent', 
+        available: true, 
+        recommended: true,
+        type: 'hybrid',
+        description: 'AI Passport 기반 개인화 모델'
+      },
+      { 
+        id: 'gpt-4o', 
+        name: 'GPT-4o', 
+        available: !!process.env.OPENAI_API_KEY,
+        type: 'cloud',
+        description: 'OpenAI 최고 성능 모델'
+      },
+      { 
+        id: 'claude-3.5-sonnet', 
+        name: 'Claude 3.5 Sonnet', 
+        available: !!process.env.ANTHROPIC_API_KEY,
+        type: 'cloud',
+        description: 'Anthropic 고품질 모델'
+      },
+      { 
+        id: 'gemini-pro', 
+        name: 'Gemini Pro', 
+        available: false,
+        type: 'cloud',
+        description: 'Google AI 모델 (준비 중)'
+      }
+    ];
+
+    // Ollama 모델들을 목록에 추가
+    const ollamaModelEntries = ollamaModels.map(modelName => {
+      const isRecommended = ['llama3.2:3b', 'llama3.2:1b'].includes(modelName);
+      const size = modelName.includes(':1b') ? '1B' : 
+                   modelName.includes(':2b') ? '2B' :
+                   modelName.includes(':3b') ? '3B' :
+                   modelName.includes(':7b') ? '7B' :
+                   modelName.includes(':8b') ? '8B' : 'Unknown';
+      
+      return {
+        id: modelName,
+        name: `${modelName.split(':')[0].toUpperCase()} (${size})`,
+        available: true,
+        recommended: isRecommended,
+        type: 'local',
+        provider: 'ollama',
+        description: `로컬 AI 모델 - 완전한 프라이버시 보장`,
+        speed: modelName.includes(':1b') ? 'very-fast' :
+               modelName.includes(':3b') ? 'fast' : 'moderate'
+      };
+    });
+
+    res.json({
+      success: true,
+      ollama: {
+        connected: ollamaConnected,
+        models: ollamaModels.length
+      },
+      models: [...baseModels, ...ollamaModelEntries]
+    });
+
+  } catch (error) {
+    console.error('Error getting models:', error);
+    res.json({
+      success: false,
+      error: 'Failed to retrieve models',
+      models: [
+        { id: 'personalized-agent', name: 'Personalized Agent', available: true, recommended: true }
+      ]
+    });
+  }
+}));
+
+router.get('/ollama/health', asyncHandler(async (req, res) => {
+  try {
+    const isConnected = await ollamaService.checkConnection();
+    const models = isConnected ? await ollamaService.getModels() : [];
+    
+    res.json({
+      success: true,
+      connected: isConnected,
+      url: process.env.OLLAMA_URL || 'http://localhost:11434',
+      models: models,
+      modelCount: models.length,
+      recommendedModels: ['llama3.2:3b', 'llama3.2:1b', 'gemma2:2b'],
+      status: isConnected ? 'ready' : 'disconnected'
+    });
+  } catch (error: any) {
+    res.json({
+      success: false,
+      connected: false,
+      error: error.message,
+      status: 'error'
+    });
+  }
+}));
+console.log(`🔍 디버그: 받은 모델명 = "${model}"`);
+
+switch (model) {
+  case 'gpt-4o':
+  case 'gpt-4':
+    console.log('📍 GPT 케이스 실행');
+    aiResult = await generateGPTResponse(message, personalContext);
+    break;
+  case 'claude-3.5-sonnet':
+  case 'claude-sonnet':
+    console.log('📍 Claude 케이스 실행');
+    aiResult = await generateClaudeResponse(message, personalContext);
+    break;
+  case 'gemini-pro':
+    console.log('📍 Gemini 케이스 실행');
+    aiResult = await generateGeminiResponse(message, personalContext);
+    break;
+  
+  // 🦙 Ollama 로컬 모델들 추가
+  case 'llama3.2:3b':
+  case 'llama3.2:1b':
+  case 'llama3.1:8b':
+  case 'gemma2:2b':
+  case 'qwen2.5:3b':
+  case 'qwen2.5:1.5b':
+    console.log('📍 Ollama 특정 케이스 실행:', model);
+    aiResult = await generateOllamaResponse(message, personalContext, model);
+    break;
+  
+  // 기본 모델명으로 Ollama 모델 감지
+  default:
+    console.log('📍 Default 케이스 실행:', model);
+    if (model.startsWith('llama') || model.startsWith('gemma') || model.startsWith('qwen') || model.startsWith('phi') || model.startsWith('mistral')) {
+      console.log('📍 Default에서 Ollama 모델 감지:', model);
+      aiResult = await generateOllamaResponse(message, personalContext, model);
+    } else {
+      console.log('📍 개인화 에이전트 실행');
+      aiResult = await generatePersonalizedResponse(message, personalContext, userDid);
+    }
+    break;
+}
+// 7. Ollama 모델 다운로드 엔드포인트 추가
+router.post('/ollama/pull', asyncHandler(async (req, res) => {
+  const { model } = req.body;
+  
+  if (!model) {
+    return res.status(400).json({
+      success: false,
+      error: 'Model name is required'
+    });
+  }
+
+  try {
+    console.log(`🦙 Downloading Ollama model: ${model}`);
+    await ollamaService.pullModel(model);
+    
+    res.json({
+      success: true,
+      message: `Model ${model} download started`,
+      model: model
+    });
+  } catch (error: any) {
+    console.error(`Failed to pull model ${model}:`, error);
+    res.status(500).json({
+      success: false,
+      error: `Failed to download model: ${error.message}`,
+      model: model
+    });
+  }
+}));
 // 전체 히스토리 (conversationId 없이)
 router.get('/history', asyncHandler(async (req: express.Request, res: express.Response) => {
   const userDid = (req as any).user?.did;
