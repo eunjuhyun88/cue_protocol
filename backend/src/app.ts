@@ -1233,6 +1233,16 @@ app.get('/api/debug/status', (req: Request, res: Response) => {
       emailNullable: true
     }
   };
+// 🔧 이 코드를 추가하세요 (라우트 연결 전에)
+app.get('/', (req, res) => {
+  res.json({
+    service: 'CUE Protocol Backend API',
+    version: '1.0.0',
+    status: 'running',
+    timestamp: new Date().toISOString()
+  });
+});
+
 
   res.json({
     success: true,

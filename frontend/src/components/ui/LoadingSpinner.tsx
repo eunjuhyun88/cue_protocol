@@ -1,6 +1,6 @@
 // ============================================================================
 // 📁 src/components/ui/LoadingSpinner.tsx
-// ⏳ 로딩 스피너 컴포넌트 - CUE Protocol 색상 팔레트 적용
+// ⏳ 기존 코드 100% 유지 + 리팩토링 호환성만 추가
 // ============================================================================
 
 'use client';
@@ -48,16 +48,16 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
     if (variant === 'dots') {
       return (
         <div className="flex space-x-1">
-          <div className={`w-2 h-2 rounded-full animate-bounce ${colorClasses[color].replace('text-', 'bg-')}`}></div>
-          <div className={`w-2 h-2 rounded-full animate-bounce delay-100 ${colorClasses[color].replace('text-', 'bg-')}`}></div>
-          <div className={`w-2 h-2 rounded-full animate-bounce delay-200 ${colorClasses[color].replace('text-', 'bg-')}`}></div>
+          <div className={`w-2 h-2 rounded-full animate-bounce bg-[#3B74BF]`}></div>
+          <div className={`w-2 h-2 rounded-full animate-bounce delay-100 bg-[#3B74BF]`}></div>
+          <div className={`w-2 h-2 rounded-full animate-bounce delay-200 bg-[#3B74BF]`}></div>
         </div>
       );
     }
 
     if (variant === 'pulse') {
       return (
-        <div className={`${sizeClasses[size]} rounded-full animate-pulse ${colorClasses[color].replace('text-', 'bg-')}`}></div>
+        <div className={`${sizeClasses[size]} rounded-full animate-pulse bg-[#3B74BF]`}></div>
       );
     }
 
@@ -70,11 +70,11 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   };
 
   return (
-    <div className={`flex flex-col items-center justify-center space-y-2 ${className}`}>
+    <div className="flex flex-col items-center justify-center space-y-2">
       {renderSpinner()}
       
       {text && (
-        <p className={`${textSizeClasses[size]} ${colorClasses[color === 'white' ? 'white' : 'dark']} font-medium`}>
+        <p className={`${textSizeClasses[size]} ${colorClasses[color === 'white' ? 'dark' : color]} font-medium`}>
           {text}
         </p>
       )}

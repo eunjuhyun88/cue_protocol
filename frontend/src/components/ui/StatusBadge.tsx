@@ -1,6 +1,6 @@
 // ============================================================================
 // 📁 src/components/ui/StatusBadge.tsx
-// 🏷️ 상태 표시 배지 컴포넌트
+// 🏷️ 기존 상태 배지 디자인 유지 + 기능 확장
 // ============================================================================
 
 'use client';
@@ -15,14 +15,17 @@ interface StatusBadgeProps {
   size?: BadgeSize;
   children: React.ReactNode;
   className?: string;
+  pulse?: boolean; // 새로 추가된 기능
 }
 
 export const StatusBadge: React.FC<StatusBadgeProps> = ({
   variant,
   size = 'md',
   children,
-  className = ''
+  className = '',
+  pulse = false
 }) => {
+  // 기존 색상 조합 그대로 유지
   const variantClasses = {
     success: 'bg-green-100 text-green-800 border-green-200',
     warning: 'bg-yellow-100 text-yellow-800 border-yellow-200',
@@ -44,6 +47,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
         ${sizeClasses[size]}
         ${variantClasses[variant]}
         border rounded-full font-medium
+        ${pulse ? 'animate-pulse' : ''}
         ${className}
       `}
     >

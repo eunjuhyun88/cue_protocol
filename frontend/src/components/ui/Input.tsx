@@ -1,11 +1,12 @@
+
 // ============================================================================
 // 📁 src/components/ui/Input.tsx
-// 📝 입력 컴포넌트 - CUE Protocol 색상 팔레트 적용
+// 📝 기존 CUE Protocol 입력 디자인 유지 + 리팩토링 호환성
 // ============================================================================
 
 'use client';
 
-import React from 'react';
+import React, { forwardRef } from 'react';
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -17,7 +18,7 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   variant?: 'default' | 'accent' | 'minimal';
 }
 
-export const Input: React.FC<InputProps> = ({
+export const Input = forwardRef<HTMLInputElement, InputProps>(({
   label,
   error,
   hint,
@@ -27,7 +28,8 @@ export const Input: React.FC<InputProps> = ({
   variant = 'default',
   className = '',
   ...props
-}) => {
+}, ref) => {
+  // 🎨 기존 CUE Protocol 색상 조합 유지
   const getVariantClasses = () => {
     switch (variant) {
       case 'accent':
@@ -69,6 +71,7 @@ export const Input: React.FC<InputProps> = ({
         )}
         
         <input
+          ref={ref}
           className={`
             block w-full px-4 py-3 border rounded-lg
             text-[#403F3D] font-medium
@@ -105,4 +108,7 @@ export const Input: React.FC<InputProps> = ({
       )}
     </div>
   );
-};
+});
+
+Input.displayName = 'Input';
+

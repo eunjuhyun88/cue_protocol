@@ -1,6 +1,6 @@
 // ============================================================================
 // 📁 src/components/ui/Card.tsx
-// 🃏 카드 컴포넌트 - CUE Protocol 색상 팔레트 적용
+// 🃏 기존 CUE Protocol 카드 디자인 유지 + 리팩토링 호환성
 // ============================================================================
 
 'use client';
@@ -39,6 +39,7 @@ export const Card: React.FC<CardProps> = ({
     }
   };
 
+  // 🎨 기존 CUE Protocol 색상 조합 유지
   const getVariantClasses = () => {
     if (gradient) {
       switch (variant) {
@@ -99,3 +100,4 @@ export const Card: React.FC<CardProps> = ({
     </div>
   );
 };
+

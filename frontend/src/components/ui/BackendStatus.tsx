@@ -1,117 +1,104 @@
 // ============================================================================
 // 📁 src/components/ui/BackendStatus.tsx
-// 🔗 백엔드 상태 컴포넌트 - CUE Protocol 색상 팔레트 적용
+// 📊 기존 백엔드 상태 컴포넌트 100% 복원
 // ============================================================================
 
 'use client';
 
 import React from 'react';
-import { Wifi, WifiOff, RefreshCw, CheckCircle, AlertCircle, XCircle } from 'lucide-react';
+import { Wifi, WifiOff } from 'lucide-react';
 
 interface BackendStatusProps {
-  status: 'connected' | 'disconnected' | 'connecting' | 'error';
-  onRetry?: () => void;
-  connectionDetails?: {
-    latency?: number;
-    lastSync?: string;
-    mode?: string;
-  };
+  connected: boolean;
+  mode: string;
   className?: string;
-  showDetails?: boolean;
+  showIcon?: boolean;
+  showText?: boolean;
+  size?: 'sm' | 'md' | 'lg';
+  variant?: 'badge' | 'indicator' | 'detailed';
 }
 
 export const BackendStatus: React.FC<BackendStatusProps> = ({
-  status,
-  onRetry,
-  connectionDetails,
+  connected,
+  mode,
   className = '',
-  showDetails = false
+  showIcon = true,
+  showText = true,
+  size = 'md',
+  variant = 'badge'
 }) => {
-  const getStatusConfig = () => {
-    switch (status) {
-      case 'connected':
-        return {
-          icon: CheckCircle,
-          text: 'Connected',
-          bgColor: 'bg-[#E0F252]',
-          textColor: 'text-[#403F3D]',
-          iconColor: 'text-[#3B74BF]',
-          borderColor: 'border-[#EDF25E]'
-        };
-      case 'connecting':
-        return {
-          icon: RefreshCw,
-          text: 'Connecting...',
-          bgColor: 'bg-[#F0F2AC]',
-          textColor: 'text-[#BF8034]',
-          iconColor: 'text-[#F2B84B]',
-          borderColor: 'border-[#F2B84B]'
-        };
-      case 'error':
-        return {
-          icon: XCircle,
-          text: 'Error',
-          bgColor: 'bg-red-50',
-          textColor: 'text-red-700',
-          iconColor: 'text-red-600',
-          borderColor: 'border-red-200'
-        };
-      default:
-        return {
-          icon: WifiOff,
-          text: 'Mock Mode',
-          bgColor: 'bg-[#F2F2F2]',
-          textColor: 'text-[#8C8C8C]',
-          iconColor: 'text-[#BF8034]',
-          borderColor: 'border-[#BFBFBF]'
-        };
-    }
+  const sizeClasses = {
+    sm: 'text-xs px-2 py-1',
+    md: 'text-xs px-3 py-1',
+    lg: 'text-sm px-4 py-2'
   };
 
-  const config = getStatusConfig();
-  const IconComponent = config.icon;
+  const iconSizes = {
+    sm: 'w-3 h-3',
+    md: 'w-4 h-4',
+    lg: 'w-5 h-5'
+  };
 
-  return (
-    <div className={`inline-flex items-center space-x-2 ${className}`}>
-      <div className={`
-        flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border
-        transition-all duration-200 hover:shadow-sm
-        ${config.bgColor} ${config.textColor} ${config.borderColor}
-      `}>
-        <IconComponent 
-          className={`w-3 h-3 ${config.iconColor} ${status === 'connecting' ? 'animate-spin' : ''}`} 
-        />
-        <span className="font-semibold">{config.text}</span>
-        
-        {connectionDetails?.mode && (
-          <span className="text-xs opacity-75 font-normal">
-            ({connectionDetails.mode})
+  if (variant === 'indicator') {
+    return (
+      <div className={`flex items-center space-x-2 ${className}`}>
+        {showIcon && (
+          <div className={`${connected ? 'text-green-500' : 'text-yellow-500'}`}>
+            {connected ? <Wifi className={iconSizes[size]} /> : <WifiOff className={iconSizes[size]} />}
+          </div>
+        )}
+        {showText && (
+          <span className={`text-${size === 'sm' ? 'xs' : 'sm'} ${connected ? 'text-green-700' : 'text-yellow-700'}`}>
+            {connected ? `Live (${mode})` : 'Mock Mode'}
           </span>
         )}
-        
-        {status === 'disconnected' && onRetry && (
-          <button 
-            onClick={onRetry} 
-            className="ml-1 text-[#3B74BF] hover:text-[#2E5A9A] underline font-medium transition-colors"
-          >
-            재시도
-          </button>
-        )}
       </div>
+    );
+  }
 
-      {/* 상세 정보 표시 */}
-      {showDetails && connectionDetails && (
-        <div className={`
-          text-xs space-x-2 px-2 py-1 rounded border
-          bg-[#F2F2F2] text-[#8C8C8C] border-[#D9D9D9]
-        `}>
-          {connectionDetails.latency && (
-            <span>⚡ {connectionDetails.latency}ms</span>
-          )}
-          {connectionDetails.lastSync && (
-            <span>🔄 {new Date(connectionDetails.lastSync).toLocaleTimeString()}</span>
-          )}
+  if (variant === 'detailed') {
+    return (
+      <div className={`bg-white rounded-lg border p-3 ${className}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            {showIcon && (
+              <div className={`${connected ? 'text-green-500' : 'text-yellow-500'}`}>
+                {connected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+              </div>
+            )}
+            <div>
+              <p className={`font-medium text-sm ${connected ? 'text-green-700' : 'text-yellow-700'}`}>
+                {connected ? 'Backend Connected' : 'Mock Mode Active'}
+              </p>
+              <p className="text-xs text-gray-500">Mode: {mode}</p>
+            </div>
+          </div>
+          <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
         </div>
+      </div>
+    );
+  }
+
+  // 기본 배지 스타일
+  return (
+    <div className={`
+      flex items-center space-x-2 rounded-full font-medium
+      ${sizeClasses[size]}
+      ${connected 
+        ? 'bg-green-100 text-green-700 border border-green-200' 
+        : 'bg-yellow-100 text-yellow-700 border border-yellow-200'
+      }
+      ${className}
+    `}>
+      {showIcon && (
+        <div>
+          {connected ? <Wifi className={iconSizes[size]} /> : <WifiOff className={iconSizes[size]} />}
+        </div>
+      )}
+      {showText && (
+        <span>
+          {connected ? `Real (${mode})` : 'Mock Mode'}
+        </span>
       )}
     </div>
   );

@@ -1,155 +1,391 @@
 // ============================================================================
 // 📁 src/services/api/ChatAPI.ts
-// 💬 AI 채팅 API 서비스
+// 💬 채팅 API 클라이언트 (변수명 충돌 해결)
 // ============================================================================
 
-import { BackendAPIClient } from './BackendAPIClient';
-import type { ChatResponse } from '../../types/chat.types';
-import type { UnifiedAIPassport } from '../../types/passport.types';
+import { PersistentDataAPIClient } from './PersistentDataAPIClient';
 
-export class ChatAPI extends BackendAPIClient {
-  /**
-   * AI 채팅 메시지 전송
-   */
-  async sendChatMessage(
+export interface ChatMessage {
+  id: string;
+  type: 'user' | 'ai';
+  content: string;
+  timestamp: string;
+  model?: string;
+  cueReward?: number;
+  trustScore?: number;
+  contextLearned?: boolean;
+  qualityScore?: number;
+  attachments?: File[];
+  metadata?: any;
+}
+
+export interface ChatResponse {
+  response: string;
+  model: string;
+  timestamp: string;
+  cueReward?: number;
+  trustScore?: number;
+  contextLearned?: boolean;
+  qualityScore?: number;
+  processingTime?: number;
+  tokensUsed?: number;
+}
+
+export class ChatAPI {
+  private persistentClient: PersistentDataAPIClient;
+
+  constructor() {
+    this.persistentClient = new PersistentDataAPIClient();
+  }
+
+  // 기본 채팅 메시지 전송
+  async sendMessage(message: string, model: string = 'gpt-4o', userDid?: string): Promise<ChatResponse> {
+    return this.persistentClient.sendChatMessage(message, model, userDid);
+  }
+
+  // 고급 채팅 (파일 첨부 지원)
+  async sendAdvancedMessage(
     message: string,
-    model: string,
-    passportData?: UnifiedAIPassport
+    options: {
+      model?: string;
+      userDid?: string;
+      attachments?: File[];
+      context?: any;
+      personalizations?: string[];
+    } = {}
   ): Promise<ChatResponse> {
     try {
-      const response = await this.post('/api/ai/chat', {
+      const {
+        model = 'gpt-4o',
+        userDid,
+        attachments = [],
+        context,
+        personalizations = []
+      } = options;
+
+      // 파일 첨부가 있는 경우 먼저 업로드
+      let uploadedFiles = [];
+      if (attachments.length > 0) {
+        uploadedFiles = await this.uploadAttachments(attachments, userDid);
+      }
+
+      const requestData = {
         message,
         model,
-        passportData,
-        userId: passportData?.did || 'anonymous',
-        timestamp: new Date().toISOString(),
+        userDid,
+        attachments: uploadedFiles,
+        context,
+        personalizations,
+        timestamp: new Date().toISOString()
+      };
+
+      return await this.persistentClient.request('/api/ai/chat/advanced', {
+        method: 'POST',
+        body: JSON.stringify(requestData)
       });
 
-      return response;
     } catch (error) {
-      console.error('채팅 메시지 전송 실패:', error);
-      throw error;
+      console.warn('고급 채팅 실패, 기본 채팅으로 fallback');
+      return this.sendMessage(message, options.model, options.userDid);
     }
   }
 
-  /**
-   * 채팅 히스토리 조회
-   */
-  async getChatHistory(userDid: string): Promise<any[]> {
-    try {
-      return await this.get(`/api/ai/chat/history/${userDid}`);
-    } catch (error) {
-      console.error('채팅 히스토리 조회 실패:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * 사용 가능한 AI 모델 목록 조회
-   */
-  async getAvailableModels(): Promise<string[]> {
-    try {
-      const response = await this.get('/api/ai/models');
-      return response.models || [];
-    } catch (error) {
-      console.warn('모델 목록 조회 실패, 기본 모델 사용:', error);
-      return ['gpt-4', 'claude-3', 'gemini-pro'];
-    }
-  }
-
-  /**
-   * Mock AI 응답 생성
-   */
-  generateMockResponse(
+  // 스트리밍 채팅 (실시간 응답)
+  async sendStreamingMessage(
     message: string,
-    model: string,
-    personalityProfile?: any,
-    cues: any[] = [],
-    behaviorPatterns: string[] = []
-  ): ChatResponse {
-    // 메시지 타입 분석
-    const isQuestion = /\?|how|what|why|when|where|어떻게|무엇|왜|언제|어디/.test(message.toLowerCase());
-    const isTechnical = /code|api|algorithm|system|data|programming|개발|시스템|알고리즘/.test(message.toLowerCase());
-    const isHelp = /help|도움|지원|support/.test(message.toLowerCase());
-    const isGreeting = /hello|hi|hey|안녕|안녕하세요/.test(message.toLowerCase());
+    options: {
+      model?: string;
+      userDid?: string;
+      onChunk?: (chunk: string) => void;
+      onComplete?: (response: ChatResponse) => void;
+    } = {}
+  ): Promise<ChatResponse> {
+    try {
+      const { model = 'gpt-4o', userDid, onChunk, onComplete } = options;
 
-    let responseType: 'greeting' | 'question' | 'technical' | 'help' | 'general' = 'general';
-    if (isGreeting) responseType = 'greeting';
-    else if (isQuestion) responseType = 'question';
-    else if (isTechnical) responseType = 'technical';
-    else if (isHelp) responseType = 'help';
+      // WebSocket 스트리밍 시도
+      if (this.persistentClient.websocket?.readyState === WebSocket.OPEN) {
+        return this.handleWebSocketStreaming(message, { model, userDid, onChunk, onComplete });
+      }
 
-    const modelName = model === 'gpt-4' ? 'GPT-4' : 
-                     model === 'claude-3' ? 'Claude 3' : 
-                     model === 'gemini-pro' ? 'Gemini Pro' : 'AI Assistant';
+      // HTTP 스트리밍 fallback
+      return this.handleHttpStreaming(message, { model, userDid, onChunk, onComplete });
 
-    const responses = {
-      greeting: `**${modelName}** 안녕하세요! 👋
+    } catch (error) {
+      console.warn('스트리밍 실패, 기본 채팅으로 fallback');
+      return this.sendMessage(message, options.model, options.userDid);
+    }
+  }
 
-반갑습니다! AI Passport 시스템의 개인화된 어시스턴트입니다.
+  // WebSocket 스트리밍 처리
+  private async handleWebSocketStreaming(
+    message: string,
+    options: any
+  ): Promise<ChatResponse> {
+    return new Promise((resolve, reject) => {
+      const { model, userDid, onChunk, onComplete } = options;
+      let fullResponse = '';
+      let startTime = Date.now();
 
-**당신의 프로필:**
-• **성격 유형**: ${personalityProfile?.type || 'Learning...'}
-• **소통 스타일**: ${personalityProfile?.communicationStyle || 'Adaptive'}
-• **개인 컨텍스트**: ${cues.length}개 활용 가능
+      const messageId = `stream_${Date.now()}`;
+      
+      // 메시지 전송
+      this.persistentClient.websocket?.send(JSON.stringify({
+        type: 'chat_stream',
+        messageId,
+        message,
+        model,
+        userDid
+      }));
 
-궁금한 것이 있으시면 언제든 말씀해주세요!`,
+      // 응답 리스너
+      const listener = (data: any) => {
+        if (data.messageId === messageId) {
+          if (data.type === 'chunk') {
+            fullResponse += data.content;
+            onChunk?.(data.content);
+          } else if (data.type === 'complete') {
+            const chatResponse: ChatResponse = {
+              response: fullResponse,
+              model: data.model || model,
+              timestamp: new Date().toISOString(),
+              cueReward: data.cueReward,
+              trustScore: data.trustScore,
+              processingTime: Date.now() - startTime
+            };
+            
+            onComplete?.(chatResponse);
+            resolve(chatResponse);
+          } else if (data.type === 'error') {
+            reject(new Error(data.error));
+          }
+        }
+      };
 
-      question: `**${modelName}** 질문 응답 🤔
+      // 리스너 등록
+      const unsubscribe = this.persistentClient.onRealtimeUpdate(listener);
 
-"${message}"
+      // 타임아웃 처리
+      setTimeout(() => {
+        unsubscribe();
+        if (fullResponse) {
+          resolve({
+            response: fullResponse,
+            model,
+            timestamp: new Date().toISOString(),
+            processingTime: Date.now() - startTime
+          });
+        } else {
+          reject(new Error('WebSocket streaming timeout'));
+        }
+      }, 30000);
+    });
+  }
 
-이 질문에 대해 당신의 **${personalityProfile?.type || 'Adaptive'}** 성격과 학습 패턴을 고려하여 답변드리겠습니다.
+  // HTTP 스트리밍 처리 (변수명 충돌 해결)
+  private async handleHttpStreaming(
+    message: string,
+    options: any
+  ): Promise<ChatResponse> {
+    const { model, userDid, onChunk, onComplete } = options;
+    
+    try {
+      const httpResponse = await fetch(`${this.persistentClient.baseURL}/api/ai/chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('cue_session_token')}`
+        },
+        body: JSON.stringify({ message, model, userDid })
+      });
 
-**개인화 적용:**
-• **학습 방식**: ${personalityProfile?.learningPattern || 'Visual'} 
-• **의사결정**: ${personalityProfile?.decisionMaking || 'Analytical'}
-• **관련 컨텍스트**: ${cues.length}개 활용
+      if (!httpResponse.body) {
+        throw new Error('스트리밍 응답 없음');
+      }
 
-더 구체적인 정보가 필요하시면 언제든 추가 질문해주세요!`,
+      const reader = httpResponse.body.getReader();
+      const decoder = new TextDecoder();
+      let fullResponse = '';
+      let startTime = Date.now();
 
-      technical: `**${modelName}** 기술 분석 🔧
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter(line => line.trim());
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              const finalResponse: ChatResponse = {
+                response: fullResponse,
+                model,
+                timestamp: new Date().toISOString(),
+                processingTime: Date.now() - startTime
+              };
+              onComplete?.(finalResponse);
+              return finalResponse;
+            }
+            
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) {
+                fullResponse += parsed.content;
+                onChunk?.(parsed.content);
+              }
+            } catch (e) {
+              console.warn('스트리밍 파싱 오류:', e);
+            }
+          }
+        }
+      }
 
-**분석 대상:** "${message}"
+      const streamResponse: ChatResponse = {
+        response: fullResponse,
+        model,
+        timestamp: new Date().toISOString(),
+        processingTime: Date.now() - startTime
+      };
+      
+      return streamResponse;
 
-**개인화된 기술 접근:**
-• **기술 성향**: ${personalityProfile?.type?.includes('Technical') ? 'High (상세 분석)' : 'Moderate (이해 중심)'}
-• **학습 패턴**: ${personalityProfile?.learningPattern || 'Visual'} 방식 적용
-• **응답 선호도**: ${personalityProfile?.responsePreference || 'Balanced'}
+    } catch (error) {
+      throw new Error(`HTTP 스트리밍 실패: ${error}`);
+    }
+  }
 
-더 구체적인 기술적 질문이나 코드 예제가 필요하시면 말씀해주세요!`,
+  // 파일 첨부 업로드
+  private async uploadAttachments(files: File[], userDid?: string): Promise<any[]> {
+    try {
+      const uploads = files.map(async (file) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        if (userDid) formData.append('userDid', userDid);
 
-      help: `**${modelName}** 맞춤형 지원 🆘
+        const uploadResponse = await this.persistentClient.request('/api/files/upload', {
+          method: 'POST',
+          body: formData,
+          headers: {} // FormData는 Content-Type 자동 설정
+        });
 
-"${message}"에 대한 도움을 요청하셨습니다.
+        return {
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          url: uploadResponse.url,
+          id: uploadResponse.id
+        };
+      });
 
-**당신의 프로필 기반 지원 전략:**
-• **성격 유형**: ${personalityProfile?.type || 'Adaptive'} - 맞춤형 접근
-• **소통 방식**: ${personalityProfile?.communicationStyle || 'Balanced'}
-• **작업 스타일**: ${personalityProfile?.workingStyle || 'Flexible'}
+      return await Promise.all(uploads);
+    } catch (error) {
+      console.warn('파일 업로드 실패:', error);
+      return files.map(file => ({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        error: 'Upload failed'
+      }));
+    }
+  }
 
-어떤 구체적인 도움이 필요하신지 알려주시면 더 정확한 지원을 제공하겠습니다!`,
+  // 채팅 기록 조회
+  async getHistory(userDid: string, limit: number = 50, offset: number = 0): Promise<ChatMessage[]> {
+    try {
+      const historyResponse = await this.persistentClient.request(
+        `/api/chat/history/${userDid}?limit=${limit}&offset=${offset}`
+      );
+      return historyResponse.messages || [];
+    } catch (error) {
+      // Mock 채팅 기록
+      return this.generateMockHistory(limit);
+    }
+  }
 
-      general: `**${modelName}** 응답 💭
+  // 채팅 저장
+  async saveMessage(userDid: string, message: ChatMessage): Promise<boolean> {
+    try {
+      const saveResponse = await this.persistentClient.request('/api/chat/save', {
+        method: 'POST',
+        body: JSON.stringify({
+          userDid,
+          ...message
+        })
+      });
+      return saveResponse.success;
+    } catch (error) {
+      console.warn('메시지 저장 실패:', error);
+      return false;
+    }
+  }
 
-"${message}"
+  // 채팅 컨텍스트 분석
+  async analyzeContext(userDid: string, recentMessages: ChatMessage[]): Promise<any> {
+    try {
+      return await this.persistentClient.request('/api/chat/analyze', {
+        method: 'POST',
+        body: JSON.stringify({
+          userDid,
+          messages: recentMessages
+        })
+      });
+    } catch (error) {
+      return {
+        topics: ['AI', 'Protocol', 'Web3'],
+        sentiment: 'positive',
+        complexity: 'medium',
+        personalizations: ['기술적 관심', '혁신적 사고'],
+        fallback: true
+      };
+    }
+  }
 
-당신의 개인화 프로필을 기반으로 응답드리겠습니다.
+  // 모델 목록 조회
+  async getAvailableModels(): Promise<any[]> {
+    try {
+      const modelsResponse = await this.persistentClient.request('/api/ai/models');
+      return modelsResponse.models || [];
+    } catch (error) {
+      return [
+        { id: 'personalized-agent', name: 'Personal Agent', description: 'AI Passport 기반' },
+        { id: 'llama3.2:3b', name: '🦙 Llama 3.2 (3B)', description: '로컬 고속' },
+        { id: 'llama3.2:1b', name: '🦙 Llama 3.2 (1B)', description: '로컬 초고속' },
+        { id: 'qwen2.5:3b', name: '🇰🇷 Qwen 2.5 (3B)', description: '한국어 우수' },
+        { id: 'gemma2:2b', name: '🤖 Gemma 2 (2B)', description: 'Google 로컬' },
+        { id: 'gpt-4o', name: '☁️ GPT-4o', description: 'OpenAI 클라우드' },
+        { id: 'claude-3.5-sonnet', name: '☁️ Claude 3.5', description: 'Anthropic 클라우드' },
+        { id: 'gemini-pro', name: '☁️ Gemini Pro', description: 'Google 클라우드' }
+      ];
+    }
+  }
 
-**적용된 개인화:**
-• **성격**: ${personalityProfile?.type || 'Adaptive'}
-• **컨텍스트**: ${cues.length}개 데이터 활용
-• **패턴**: ${behaviorPatterns?.slice(0, 2).join(', ') || '분석 중...'}
+  // Mock 채팅 기록 생성
+  private generateMockHistory(limit: number): ChatMessage[] {
+    const messages: ChatMessage[] = [];
+    const sampleMessages = [
+      { type: 'user', content: 'CUE Protocol에 대해 설명해줘' },
+      { type: 'ai', content: 'CUE Protocol은 AI 개인화를 위한 혁신적인 블록체인 플랫폼입니다...', cueReward: 5 },
+      { type: 'user', content: 'RAG-DAG가 뭐야?' },
+      { type: 'ai', content: 'RAG-DAG는 Retrieval-Augmented Generation with Directed Acyclic Graph의 줄임말로...', cueReward: 8 }
+    ];
 
-추가 질문이나 더 자세한 설명이 필요하시면 언제든 말씀해주세요!`
-    };
+    for (let i = 0; i < Math.min(limit, sampleMessages.length * 2); i++) {
+      const sample = sampleMessages[i % sampleMessages.length];
+      messages.push({
+        id: `mock_${i}`,
+        type: sample.type as 'user' | 'ai',
+        content: sample.content,
+        timestamp: new Date(Date.now() - (limit - i) * 60000).toISOString(),
+        cueReward: sample.cueReward,
+        trustScore: sample.type === 'ai' ? 0.85 + Math.random() * 0.15 : undefined
+      });
+    }
 
-    return {
-      message: responses[responseType],
-      model: modelName,
-      tokensUsed: Math.floor(Math.random() * 500) + 100,
-      cueEarned: Math.floor(Math.random() * 5) + 1,
-      processingTime: Math.floor(Math.random() * 2000) + 500,
-    };
+    return messages;
   }
 }
+
+export default ChatAPI;

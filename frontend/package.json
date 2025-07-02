@@ -10,15 +10,21 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@radix-ui/react-toast": "^1.2.14",
     "@simplewebauthn/browser": "^9.0.1",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/socket.io-client": "^1.4.36",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "framer-motion": "^12.22.0",
     "lucide-react": "^0.263.1",
     "next": "^14.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-dropzone": "^14.3.8",
+    "recharts": "^3.0.2",
+    "socket.io-client": "^4.8.1",
     "tailwind-merge": "^3.3.1",
     "typescript": "^5.0.0"
   },
