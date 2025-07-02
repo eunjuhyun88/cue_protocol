@@ -1,5 +1,5 @@
 // ============================================================================
-// 📁 backend/src/config/auth.ts (간단하고 실용적인 버전)
+// 📁 backend/src/config/auth.ts (즉시 도입용 간단 버전)
 // ============================================================================
 
 export class AuthConfig {
@@ -15,7 +15,6 @@ export class AuthConfig {
     console.log(`🌐 RP ID: ${this.WEBAUTHN_RP_ID}`);
     console.log(`🔗 Origin: ${this.WEBAUTHN_ORIGIN}`);
     
-    // JWT 시크릿 길이 검증
     if (this.JWT_SECRET.length < 32) {
       console.warn('⚠️ JWT_SECRET이 32자보다 짧습니다. 보안상 위험할 수 있습니다.');
     }
@@ -35,7 +34,8 @@ export class AuthConfig {
       rpName: this.WEBAUTHN_RP_NAME,
       rpID: this.WEBAUTHN_RP_ID,
       origin: this.WEBAUTHN_ORIGIN,
-      timeout: 60000
+      timeout: 60000,
+      userVerification: 'preferred' as const
     };
   }
 
@@ -48,7 +48,15 @@ export class AuthConfig {
     };
   }
 
-  // 설정 검증
+  static getDatabaseConfig() {
+    return {
+      useSupabase: process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('dummy'),
+      supabaseUrl: process.env.SUPABASE_URL,
+      supabaseKey: process.env.SUPABASE_ANON_KEY,
+      fallbackToMock: true
+    };
+  }
+
   static validate(): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
     

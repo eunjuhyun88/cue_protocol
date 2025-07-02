@@ -1,6 +1,6 @@
 // ============================================================================
 // 📁 backend/src/types/auth.types.ts
-// 완전한 인증 관련 타입 정의
+// 완전한 인증 관련 타입 정의 (업로드된 paste.txt 기반)
 // ============================================================================
 
 // ============================================================================
@@ -38,8 +38,8 @@ export interface PersonalityProfile {
 
 export interface SessionData {
   id: string;
-  userId: string;
-  credentialId: string;
+  userId?: string;
+  credentialId?: string;
   challenge?: string;
   type: 'registration' | 'authentication' | 'unified' | 'session';
   deviceInfo: any;
@@ -49,6 +49,7 @@ export interface SessionData {
   created: string;
   lastAccess: string;
   isActive: boolean;
+  expiresAt?: number;
 }
 
 export interface SessionTokenPayload {
@@ -122,8 +123,40 @@ export interface WebAuthnLoginOptions {
 }
 
 // ============================================================================
-// 📡 API 응답 타입
+// 📡 API 요청/응답 타입
 // ============================================================================
+
+export interface WebAuthnStartRequest {
+  deviceInfo?: {
+    userAgent?: string;
+    platform?: string;
+    timestamp?: string;
+    [key: string]: any;
+  };
+  userEmail?: string;
+}
+
+export interface WebAuthnCompleteRequest {
+  credential: {
+    id: string;
+    rawId: string;
+    response: {
+      clientDataJSON: string;
+      attestationObject?: string;
+      authenticatorData?: string;
+      signature?: string;
+      userHandle?: string;
+    };
+    type: string;
+    clientExtensionResults?: any;
+    authenticatorAttachment?: string;
+  };
+  sessionId: string;
+}
+
+export interface SessionRestoreRequest {
+  sessionToken: string;
+}
 
 export interface WebAuthnStartResponse {
   success: boolean;
@@ -152,6 +185,20 @@ export interface WebAuthnCompleteResponse {
   message?: string;
   error?: string;
   debug?: any;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  action?: 'login' | 'register';
+  sessionToken?: string;
+  user?: User;
+  isExistingUser?: boolean;
+  rewards?: {
+    welcomeCUE?: number;
+  };
+  message: string;
+  error?: string;
+  details?: string;
 }
 
 // ============================================================================
@@ -316,6 +363,20 @@ export interface SecurityMetrics {
   suspiciousActivity: number;
   rateLimitHits: number;
   lastSecurityScan: string;
+}
+
+export interface SystemStatus {
+  authService: {
+    initialized: boolean;
+    databaseConnected: boolean;
+    webauthnConfigured: boolean;
+  };
+  sessionService: {
+    initialized: boolean;
+    activeSessions: number;
+    jwtConfigured: boolean;
+  };
+  timestamp: string;
 }
 
 // ============================================================================
