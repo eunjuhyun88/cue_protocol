@@ -10,7 +10,7 @@ export { StatusBadge } from './StatusBadge';
 export { BackendStatus } from './BackendStatus';
 export { Input } from './Input';
 export { Button } from './Button';
-export { Card } from './Card';
+export { Card } from './card';
 export { ProgressBar } from './ProgressBar';
 export { Badge } from './Badge';
 

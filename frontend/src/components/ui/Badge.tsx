@@ -1,7 +1,6 @@
-
 // ============================================================================
-// 📁 src/components/ui/Badge.tsx
-// 🏷️ 기존에 있던 일반 배지 컴포넌트 복원
+// 📁 frontend/src/components/ui/Badge.tsx
+// 🏷️ 일반 배지 컴포넌트 - StatusBadge와 구분됨
 // ============================================================================
 
 'use client';
@@ -13,13 +12,17 @@ interface BadgeProps {
   variant?: 'default' | 'success' | 'warning' | 'error' | 'info';
   size?: 'sm' | 'md' | 'lg';
   className?: string;
+  onClick?: () => void; // 클릭 가능한 배지
+  disabled?: boolean;
 }
 
 export const Badge: React.FC<BadgeProps> = ({
   children,
   variant = 'default',
   size = 'md',
-  className = ''
+  className = '',
+  onClick,
+  disabled = false
 }) => {
   const variantClasses = {
     default: 'bg-[#F2F2F2] text-[#403F3D] border-[#BFBFBF]',
@@ -35,14 +38,32 @@ export const Badge: React.FC<BadgeProps> = ({
     lg: 'px-3 py-1 text-base'
   };
 
+  // 클릭 가능한 배지인 경우 추가 스타일
+  const interactiveClasses = onClick && !disabled 
+    ? 'cursor-pointer hover:opacity-80 transition-opacity' 
+    : '';
+
+  const disabledClasses = disabled 
+    ? 'opacity-50 cursor-not-allowed' 
+    : '';
+
+  const Component = onClick ? 'button' : 'span';
+
   return (
-    <span className={`
-      inline-flex items-center font-medium rounded-full border
-      ${variantClasses[variant]}
-      ${sizeClasses[size]}
-      ${className}
-    `}>
+    <Component 
+      className={`
+        inline-flex items-center font-medium rounded-full border
+        ${variantClasses[variant]}
+        ${sizeClasses[size]}
+        ${interactiveClasses}
+        ${disabledClasses}
+        ${className}
+      `.trim()}
+      onClick={onClick && !disabled ? onClick : undefined}
+      disabled={disabled}
+      type={onClick ? 'button' : undefined}
+    >
       {children}
-    </span>
+    </Component>
   );
 };
