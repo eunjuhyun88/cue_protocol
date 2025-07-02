@@ -1,1015 +1,423 @@
-// backend/src/app.ts
-// 🚀 Final0626 완전한 백엔드 서버 v3.0 (업로드 파일 최적화)
+// ============================================================================
+// 🚀 Final0626 완전히 리팩토링된 백엔드 서버 v4.0
+// 구조: Clean Architecture + 모듈화 + 서비스 분리
 // ============================================================================
 
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import crypto from 'crypto';
-import jwt from 'jsonwebtoken';
-import { createClient } from '@supabase/supabase-js';
+import { Server } from 'http';
 
+// ============================================================================
+// 📁 라우트 임포트 (분리된 모듈들)
+// ============================================================================
+import authRoutes from './routes/auth/webauthn';
+import aiRoutes from './routes/ai/chat';
+import cueRoutes from './routes/cue/index';
+import passportRoutes from './routes/passport/index';
+import vaultRoutes from './routes/vault/index';
+import platformRoutes from './routes/platform/index';
+
+// ============================================================================
+// 🔧 미들웨어 임포트 (분리된 미들웨어들)
+// ============================================================================
+import { errorHandler } from './middleware/errorHandler';
+import { loggingMiddleware } from './middleware/loggingMiddleware';
+import { authMiddleware } from './middleware/authMiddleware';
+
+// ============================================================================
+// 🗄️ 서비스 임포트 (비즈니스 로직 분리)
+// ============================================================================
+import { DatabaseService } from './services/database/DatabaseService';
+import { SupabaseService } from './services/database/SupabaseService';
+import { CryptoService } from './services/encryption/CryptoService';
+import { SocketService } from './services/socket/SocketService';
+
+// ============================================================================
+// 📋 타입 정의 임포트
+// ============================================================================
+import { User, UserSession } from './types/database.types';
+
+// 환경변수 로드
 dotenv.config();
 
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-console.log('🚀 Final0626 백엔드 서버 v3.0 초기화 중...');
-
-// ============================================================================
-// 🔧 환경 설정 및 초기화
-// ============================================================================
-
-const JWT_SECRET = process.env.JWT_SECRET || 'final0626-development-secret-key';
-
-// Supabase 설정
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-let supabase = null;
-let useDatabase = false;
-
-if (supabaseUrl && supabaseKey && !supabaseUrl.includes('dummy')) {
-  try {
-    supabase = createClient(supabaseUrl, supabaseKey);
-    useDatabase = true;
-    console.log('✅ Supabase 클라이언트 초기화 성공');
-  } catch (error) {
-    console.warn('⚠️ Supabase 초기화 실패, Mock 데이터베이스 사용:', error.message);
-  }
-} else {
-  console.warn('⚠️ Supabase 환경변수 없음, Mock 데이터베이스 사용');
-}
-
-// ============================================================================
-// 🔧 유틸리티 함수들
-// ============================================================================
-
-function base64urlEncode(buffer: Buffer): string {
-  return buffer.toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-}
-
-// WebAuthn 설정
-const sessionStore = new Map<string, any>();
-const rpName = process.env.WEBAUTHN_RP_NAME || 'Final0626 AI Passport';
-const rpID = process.env.WEBAUTHN_RP_ID || 'localhost';
-
-// ============================================================================
-// 🔧 세션 관리자 클래스
-// ============================================================================
-class SessionManager {
-  private sessions = new Map<string, any>();
+class Application {
+  private app: Application;
+  private server: Server | null = null;
+  private port: number;
+  private socketService: SocketService | null = null;
   
-  generateSessionToken(userId: string, credentialId: string): string {
-    const payload = {
-      userId,
-      credentialId,
-      type: 'session',
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60) // 30일
-    };
-    return jwt.sign(payload, JWT_SECRET);
+  // 서비스 인스턴스들
+  private databaseService: DatabaseService;
+  private supabaseService: SupabaseService;
+  private cryptoService: CryptoService;
+
+  constructor() {
+    this.app = express();
+    this.port = parseInt(process.env.PORT || '3001');
+    
+    // 서비스 초기화
+    this.initializeServices();
+    
+    // 미들웨어 설정
+    this.setupMiddleware();
+    
+    // 라우트 설정
+    this.setupRoutes();
+    
+    // 에러 핸들링 설정
+    this.setupErrorHandling();
+    
+    console.log('🚀 Final0626 백엔드 서버 v4.0 초기화 완료');
   }
-  
-  verifySessionToken(token: string): any {
+
+  // ============================================================================
+  // 🔧 서비스 초기화
+  // ============================================================================
+  private initializeServices(): void {
     try {
-      return jwt.verify(token, JWT_SECRET);
+      // 데이터베이스 서비스 초기화
+      this.supabaseService = SupabaseService.getInstance();
+      this.databaseService = DatabaseService.getInstance();
+      
+      // 암호화 서비스 초기화
+      this.cryptoService = CryptoService.getInstance();
+      
+      console.log('✅ 모든 서비스 초기화 성공');
     } catch (error) {
-      console.error('❌ 세션 토큰 검증 실패:', error.message);
-      return null;
+      console.error('❌ 서비스 초기화 실패:', error);
+      process.exit(1);
     }
   }
-  
-  async findUserByCredentialId(credentialId: string): Promise<any> {
-    if (useDatabase && supabase) {
-      try {
-        console.log('🔍 DB에서 credential_id로 사용자 검색:', credentialId);
-        
-        const { data, error } = await supabase
-          .from('webauthn_credentials')
-          .select(`
-            *,
-            users (*)
-          `)
-          .eq('credential_id', credentialId)
-          .eq('is_active', true)
-          .single();
-          
-        if (error || !data) {
-          console.log('🆕 신규 credential_id:', credentialId);
-          return null;
-        }
-        
-        console.log('🔄 기존 사용자 발견!', {
-          userId: data.users.id,
-          username: data.users.username,
-          cueTokens: data.users.cue_tokens
-        });
-        
-        return data.users;
-      } catch (error) {
-        console.error('❌ credential_id 조회 실패:', error);
-        return null;
-      }
-    }
+
+  // ============================================================================
+  // ⚙️ 미들웨어 설정
+  // ============================================================================
+  private setupMiddleware(): void {
+    // CORS 설정
+    this.app.use(cors({
+      origin: [
+        "http://localhost:3000",
+        "http://localhost:3001", 
+        process.env.FRONTEND_URL || "http://localhost:3000"
+      ],
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    }));
+
+    // 보안 미들웨어
+    this.app.use(helmet({
+      crossOriginEmbedderPolicy: false,
+      contentSecurityPolicy: false
+    }));
+
+    // Body 파싱 미들웨어
+    this.app.use(express.json({ limit: '10mb' }));
+    this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+    // 로깅 미들웨어
+    this.app.use(morgan('combined'));
+    this.app.use(loggingMiddleware);
+
+    console.log('✅ 미들웨어 설정 완료');
+  }
+
+  // ============================================================================
+  // 🛣️ 라우트 설정
+  // ============================================================================
+  private setupRoutes(): void {
+    // 기본 라우트
+    this.app.get('/', this.handleRootRoute.bind(this));
     
-    // Mock 데이터에서 검색
-    for (const [sessionId, sessionData] of sessionStore.entries()) {
-      if (sessionData.credentialId === credentialId) {
-        console.log('🔄 Mock에서 기존 사용자 발견:', sessionData.userId);
-        return sessionData.mockUser;
-      }
-    }
+    // 헬스 체크
+    this.app.get('/health', this.handleHealthCheck.bind(this));
     
-    return null;
+    // favicon 처리
+    this.app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+    // API 라우트들 (모듈화된 라우터 사용)
+    this.app.use('/api/auth', authRoutes);
+    this.app.use('/api/ai', aiRoutes);
+    this.app.use('/api/cue', cueRoutes);
+    this.app.use('/api/passport', passportRoutes);
+    this.app.use('/api/vault', vaultRoutes);
+    this.app.use('/api/platform', platformRoutes);
+
+    // 404 핸들러
+    this.app.use('*', this.handle404.bind(this));
+
+    console.log('✅ 라우트 설정 완료');
   }
 
-  async getUserBySession(sessionToken: string): Promise<any> {
-    const decoded = this.verifySessionToken(sessionToken);
-    if (!decoded) return null;
+  // ============================================================================
+  // 🚫 에러 핸들링 설정
+  // ============================================================================
+  private setupErrorHandling(): void {
+    // 전역 에러 핸들러
+    this.app.use(errorHandler);
+
+    console.log('✅ 에러 핸들링 설정 완료');
+  }
+
+  // ============================================================================
+  // 📍 기본 라우트 핸들러들
+  // ============================================================================
+  private handleRootRoute(req: Request, res: Response): void {
+    res.json({
+      service: 'CUE Protocol Backend API',
+      version: '4.0.0',
+      status: 'running',
+      timestamp: new Date().toISOString(),
+      endpoints: {
+        health: '/health',
+        auth: '/api/auth/*',
+        ai: '/api/ai/*',
+        cue: '/api/cue/*',
+        passport: '/api/passport/*',
+        vault: '/api/vault/*',
+        platform: '/api/platform/*'
+      }
+    });
+  }
+
+  private async handleHealthCheck(req: Request, res: Response): Promise<void> {
+    console.log('🏥 Health Check 요청 받음');
     
-    if (useDatabase && supabase) {
-      try {
-        const { data: user, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', decoded.userId)
-          .single();
-          
-        if (error || !user) {
-          console.log('❌ 세션 사용자 조회 실패');
-          return null;
-        }
-        
-        return user;
-      } catch (error) {
-        console.error('❌ 세션 사용자 조회 실패:', error);
-      }
-    }
-    
-    // Mock 폴백
-    return {
-      id: decoded.userId,
-      username: 'MockUser',
-      email: null,
-      cue_tokens: 15428,
-      trust_score: 85
-    };
-  }
-}
+    try {
+      // 서비스 상태 체크
+      const databaseStatus = await this.checkDatabaseHealth();
+      const serviceStatus = this.checkServicesHealth();
+      
+      const healthData = {
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        version: '4.0.0',
+        environment: process.env.NODE_ENV || 'development',
+        services: {
+          database: databaseStatus,
+          ...serviceStatus
+        },
+        uptime: process.uptime(),
+        memory: process.memoryUsage()
+      };
 
-const sessionManager = new SessionManager();
-
-// ============================================================================
-// 📊 데이터베이스 서비스 클래스
-// ============================================================================
-class DatabaseService {
-  private mockUsers = new Map();
-  private mockCredentials = new Map();
-  private mockTransactions = new Map();
-
-  async findUserByCredentialId(credentialId: string): Promise<any> {
-    return await sessionManager.findUserByCredentialId(credentialId);
-  }
-
-  async createUser(userData: any): Promise<any> {
-    if (useDatabase && supabase) {
-      try {
-        const userToInsert = {
-          ...userData,
-          email: userData.email || null
-        };
-        
-        const { data, error } = await supabase
-          .from('users')
-          .insert([userToInsert])
-          .select()
-          .single();
-
-        if (error) {
-          console.error('❌ Supabase 사용자 생성 오류:', error);
-          throw error;
-        }
-
-        console.log('✅ Supabase 사용자 생성 성공:', data.id);
-        return data;
-      } catch (error) {
-        console.error('❌ 데이터베이스 오류, Mock으로 fallback:', error.message);
-        return this.createUserMock(userData);
-      }
-    } else {
-      return this.createUserMock(userData);
-    }
-  }
-
-  private createUserMock(userData: any): any {
-    this.mockUsers.set(userData.id, userData);
-    console.log('📝 Mock 사용자 생성:', userData.id);
-    return userData;
-  }
-
-  async saveWebAuthnCredential(credData: any): Promise<any> {
-    if (useDatabase && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('webauthn_credentials')
-          .insert([credData])
-          .select()
-          .single();
-
-        if (error) {
-          console.error('❌ WebAuthn 자격증명 저장 오류:', error);
-          throw error;
-        }
-
-        console.log('✅ WebAuthn 자격증명 저장 성공');
-        return data;
-      } catch (error) {
-        console.error('❌ 자격증명 저장 실패, Mock으로 fallback:', error.message);
-        this.mockCredentials.set(credData.credential_id, { 
-          ...credData, 
-          user: this.mockUsers.get(credData.user_id) 
-        });
-        return credData;
-      }
-    } else {
-      this.mockCredentials.set(credData.credential_id, { 
-        ...credData, 
-        user: this.mockUsers.get(credData.user_id) 
+      console.log('✅ Health Check 응답 전송');
+      res.json(healthData);
+    } catch (error) {
+      console.error('❌ Health Check 실패:', error);
+      res.status(500).json({
+        status: 'unhealthy',
+        timestamp: new Date().toISOString(),
+        error: error.message
       });
-      console.log('📝 Mock 자격증명 저장');
-      return credData;
     }
   }
 
-  async createCUETransaction(txData: any): Promise<any> {
-    if (useDatabase && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('cue_transactions')
-          .insert([txData])
-          .select()
-          .single();
+  private handle404(req: Request, res: Response): void {
+    console.log(`❌ 404 - 찾을 수 없는 경로: ${req.method} ${req.originalUrl}`);
 
-        if (error) throw error;
+    res.status(404).json({
+      success: false,
+      error: 'API endpoint not found',
+      method: req.method,
+      path: req.originalUrl,
+      timestamp: new Date().toISOString(),
+      availableEndpoints: [
+        'GET /health',
+        'POST /api/auth/webauthn/*',
+        'POST /api/ai/chat',
+        'GET /api/cue/balance/:did',
+        'GET /api/passport/:did',
+        'POST /api/vault/save',
+        'GET /api/platform/connections'
+      ]
+    });
+  }
 
-        console.log('✅ CUE 거래 기록 저장 성공');
-        return data;
-      } catch (error) {
-        console.error('❌ CUE 거래 저장 실패:', error.message);
-        this.mockTransactions.set(Date.now(), txData);
-        return txData;
-      }
-    } else {
-      this.mockTransactions.set(Date.now(), txData);
-      console.log('📝 Mock CUE 거래 기록');
-      return txData;
+  // ============================================================================
+  // 🔍 헬스 체크 유틸리티 메서드들
+  // ============================================================================
+  private async checkDatabaseHealth(): Promise<any> {
+    try {
+      const supabaseConnected = await this.supabaseService.healthCheck();
+      const databaseConnected = await this.databaseService.healthCheck();
+      
+      return {
+        supabase: supabaseConnected,
+        database: databaseConnected,
+        connected: supabaseConnected && databaseConnected
+      };
+    } catch (error) {
+      return {
+        supabase: false,
+        database: false,
+        connected: false,
+        error: error.message
+      };
     }
   }
-}
 
-const db = new DatabaseService();
-
-// ============================================================================
-// ⚙️ 미들웨어 설정
-// ============================================================================
-
-app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "http://localhost:3001", 
-    process.env.FRONTEND_URL || "http://localhost:3000"
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
-
-app.use(helmet({
-  crossOriginEmbedderPolicy: false,
-  contentSecurityPolicy: false
-}));
-
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(morgan('combined'));
-
-// 디버깅 미들웨어
-app.use((req: Request, res: Response, next: NextFunction) => {
-  console.log(`🌐 [${new Date().toISOString()}] ${req.method} ${req.path}`);
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log('📝 Body keys:', Object.keys(req.body));
-  }
-  next();
-});
-
-// ============================================================================
-// 🏥 헬스 체크
-// ============================================================================
-
-app.get('/health', (req: Request, res: Response) => {
-  console.log('🏥 Health Check 요청 받음');
-  
-  const healthData = {
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    version: '3.0.0',
-    environment: process.env.NODE_ENV || 'development',
-    database: useDatabase ? 'supabase' : 'mock',
-    supabaseConnected: !!supabase,
-    services: {
+  private checkServicesHealth(): any {
+    return {
       webauthn: true,
       ai: !!process.env.OPENAI_API_KEY || !!process.env.ANTHROPIC_API_KEY,
       cue: true,
       vault: true,
-      session: true
-    },
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    sessionCount: sessionStore.size
-  };
-
-  console.log('✅ Health Check 응답 전송');
-  res.json(healthData);
-});
-
-// Root endpoint
-app.get('/', (req: Request, res: Response) => {
-  res.json({
-    service: 'CUE Protocol Backend API',
-    version: '3.0.0',
-    status: 'running',
-    timestamp: new Date().toISOString(),
-    endpoints: {
-      health: '/health',
-      unifiedAuth: '/api/auth/webauthn/*',
-      chat: '/api/ai/chat',
-      cue: '/api/cue/*',
-      passport: '/api/passport/*'
-    }
-  });
-});
-
-// ============================================================================
-// 🔐 통합 패스키 인증 시작
-// ============================================================================
-
-app.post('/api/auth/webauthn/start', async (req: Request, res: Response) => {
-  console.log('🔍 === 통합 패스키 인증 시작 ===');
-  
-  try {
-    const { deviceInfo } = req.body;
-    
-    const options = {
-      challenge: base64urlEncode(Buffer.from(`challenge_${Date.now()}_${Math.random()}`)),
-      timeout: 60000,
-      rpId: rpID,
-      allowCredentials: [],
-      userVerification: "preferred" as const
+      crypto: this.cryptoService.isInitialized(),
+      socket: !!this.socketService
     };
-
-    const sessionId = `unified_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    sessionStore.set(sessionId, {
-      challenge: options.challenge,
-      timestamp: Date.now(),
-      type: 'unified',
-      deviceInfo: deviceInfo || {}
-    });
-
-    console.log('✅ 통합 인증 옵션 생성 완료:', sessionId);
-
-    res.json({
-      success: true,
-      options,
-      sessionId,
-      message: '패스키를 사용하여 인증해주세요'
-    });
-  } catch (error) {
-    console.error('❌ 통합 인증 시작 오류:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Authentication start failed',
-      message: error.message
-    });
   }
-});
 
-// ============================================================================
-// ✅ 통합 패스키 인증 완료
-// ============================================================================
+  // ============================================================================
+  // 🌐 소켓 서비스 초기화 (선택적)
+  // ============================================================================
+  private initializeSocketService(): void {
+    if (this.server) {
+      this.socketService = new SocketService(this.server);
+      console.log('✅ 소켓 서비스 초기화 성공');
+    }
+  }
 
-app.post('/api/auth/webauthn/complete', async (req: Request, res: Response) => {
-  console.log('✅ === 통합 패스키 인증 완료 ===');
-  
-  try {
-    const { credential, sessionId } = req.body;
-    
-    if (!credential || !sessionId) {
-      return res.status(400).json({
-        success: false,
-        error: 'credential과 sessionId가 필요합니다'
+  // ============================================================================
+  // 🚀 서버 시작
+  // ============================================================================
+  public async start(): Promise<void> {
+    try {
+      this.server = this.app.listen(this.port, () => {
+        console.log('🚀 ================================');
+        console.log('🚀 Final0626 백엔드 서버 v4.0 시작됨');
+        console.log('🚀 ================================');
+        console.log(`📍 서버: http://localhost:${this.port}`);
+        console.log(`🏥 헬스체크: http://localhost:${this.port}/health`);
+        console.log('🗄️ 데이터베이스: Supabase + Local Fallback');
+        console.log('📋 주요 기능:');
+        console.log('  🔐 WebAuthn 패스키 인증');
+        console.log('  🤖 AI 채팅 시스템');
+        console.log('  💰 CUE 토큰 마이닝');
+        console.log('  🎫 AI Passport 관리');
+        console.log('  🗄️ 데이터 볼트 시스템');
+        console.log('  🌐 플랫폼 연동');
+        console.log('📋 API 엔드포인트:');
+        console.log('  🔐 Auth: /api/auth/*');
+        console.log('  🤖 AI: /api/ai/*');
+        console.log('  💎 CUE: /api/cue/*');
+        console.log('  🎫 Passport: /api/passport/*');
+        console.log('  🗄️ Vault: /api/vault/*');
+        console.log('  🌐 Platform: /api/platform/*');
+        console.log('🚀 ================================');
       });
-    }
-    
-    const sessionData = sessionStore.get(sessionId);
-    if (!sessionData) {
-      return res.status(400).json({
-        success: false,
-        error: '유효하지 않거나 만료된 세션입니다'
-      });
-    }
-    
-    console.log('✅ 임시 세션 검증 완료');
-    
-    // 🔍 STEP 1: credential.id로 기존 사용자 확인
-    console.log('🔍 기존 사용자 확인 중... credential_id:', credential.id);
-    
-    const existingUser = await db.findUserByCredentialId(credential.id);
-    
-    if (existingUser) {
-      // 🔑 기존 사용자 - 자동 로그인
-      console.log('🎉 기존 사용자 자동 로그인!', {
-        id: existingUser.id,
-        username: existingUser.username,
-        cueTokens: existingUser.cue_tokens,
-        trustScore: existingUser.trust_score
-      });
-      
-      const sessionToken = sessionManager.generateSessionToken(
-        existingUser.id, 
-        credential.id
-      );
-      
-      // 마지막 사용 시간 업데이트
-      if (useDatabase && supabase) {
-        try {
-          await supabase
-            .from('webauthn_credentials')
-            .update({ last_used_at: new Date().toISOString() })
-            .eq('credential_id', credential.id);
-        } catch (error) {
-          console.warn('⚠️ 마지막 사용 시간 업데이트 실패:', error);
-        }
+
+      // 소켓 서비스 초기화 (필요한 경우)
+      if (process.env.ENABLE_WEBSOCKET === 'true') {
+        this.initializeSocketService();
       }
-      
-      sessionStore.delete(sessionId);
-      
-      return res.json({
-        success: true,
-        action: 'login',
-        sessionToken,
-        user: {
-          id: existingUser.id,
-          username: existingUser.username,
-          email: existingUser.email,
-          did: existingUser.did,
-          wallet_address: existingUser.wallet_address,
-          walletAddress: existingUser.wallet_address,
-          cue_tokens: existingUser.cue_tokens,
-          cueBalance: existingUser.cue_tokens,
-          trust_score: existingUser.trust_score,
-          trustScore: existingUser.trust_score,
-          passport_level: existingUser.passport_level,
-          passportLevel: existingUser.passport_level,
-          biometric_verified: existingUser.biometric_verified,
-          biometricVerified: existingUser.biometric_verified,
-          created_at: existingUser.created_at,
-          registeredAt: existingUser.created_at
-        },
-        isExistingUser: true,
-        message: '환영합니다! 기존 계정으로 로그인되었습니다.'
-      });
+
+      // 우아한 종료 핸들러 설정
+      this.setupGracefulShutdown();
+
+    } catch (error) {
+      console.error('💥 서버 시작 실패:', error);
+      process.exit(1);
     }
-    
-    // 🆕 STEP 2: 신규 사용자 - 회원가입 진행
-    console.log('🆕 신규 사용자 회원가입 진행');
-    
-    const userId = crypto.randomUUID();
-    const username = `PassKey_User_${Date.now()}`;
-    
-    // 신규 사용자 데이터 생성
-    const userData = {
-      id: userId,
-      username,
-      email: null,
-      display_name: `AI Passport User ${username}`,
-      did: `did:final0626:${userId}`,
-      wallet_address: `0x${Math.random().toString(16).substring(2, 42)}`,
-      trust_score: 85.0,
-      passport_level: 'Basic',
-      biometric_verified: true,
-      auth_method: 'passkey',
-      cue_tokens: 15428,
-      created_at: new Date().toISOString()
+  }
+
+  // ============================================================================
+  // 🛑 우아한 종료 처리
+  // ============================================================================
+  private setupGracefulShutdown(): void {
+    const gracefulShutdown = (signal: string) => {
+      console.log(`\n🛑 ${signal} 신호 받음 - 서버 종료 중...`);
+      
+      if (this.server) {
+        this.server.close(async () => {
+          console.log('📡 HTTP 서버 종료 완료');
+          
+          // 서비스들 정리
+          try {
+            if (this.socketService) {
+              await this.socketService.close();
+              console.log('🌐 소켓 서비스 종료 완료');
+            }
+            
+            await this.databaseService.close();
+            console.log('🗄️ 데이터베이스 연결 종료 완료');
+            
+            console.log('✅ 모든 서비스 정리 완료');
+            process.exit(0);
+          } catch (error) {
+            console.error('❌ 서비스 정리 중 오류:', error);
+            process.exit(1);
+          }
+        });
+      } else {
+        process.exit(0);
+      }
     };
 
-    console.log('📝 신규 사용자 데이터 준비:', {
-      id: userData.id,
-      username: userData.username,
-      did: userData.did
+    // 시그널 핸들러 등록
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+    // 예외 처리
+    process.on('uncaughtException', (error) => {
+      console.error('💥 처리되지 않은 예외:', error);
+      gracefulShutdown('UNCAUGHT_EXCEPTION');
     });
 
-    // 사용자 DB 저장
-    let user = await db.createUser(userData);
-
-    // WebAuthn credential 저장
-    const credentialData = {
-      id: crypto.randomUUID(),
-      user_id: userId,
-      credential_id: credential.id,
-      public_key: Buffer.from('mock-public-key-data').toString('base64'),
-      counter: 0,
-      device_type: 'platform',
-      user_agent: req.get('User-Agent') || '',
-      backup_eligible: false,
-      backup_state: false,
-      is_active: true,
-      device_fingerprint: {
-        primary: JSON.stringify(sessionData.deviceInfo || {}),
-        platform: 'web',
-        confidence: 0.9
-      },
-      created_at: new Date().toISOString(),
-      last_used_at: new Date().toISOString()
-    };
-
-    console.log('🔑 자격증명 데이터 준비:', {
-      id: credentialData.id,
-      user_id: credentialData.user_id,
-      credential_id: credentialData.credential_id
-    });
-
-    await db.saveWebAuthnCredential(credentialData);
-
-    // CUE 거래 저장
-    const transactionData = {
-      user_id: userId,
-      transaction_type: 'registration_bonus',
-      amount: 15428,
-      balance_after: 15428,
-      description: 'Welcome bonus for new user registration',
-      source_platform: 'system',
-      metadata: {
-        registration_id: userId,
-        device_info: sessionData.deviceInfo,
-        registration_time: new Date().toISOString()
-      },
-      created_at: new Date().toISOString()
-    };
-
-    await db.createCUETransaction(transactionData);
-
-    // 세션 토큰 생성
-    const sessionToken = sessionManager.generateSessionToken(userId, credential.id);
-    
-    sessionStore.delete(sessionId);
-    
-    console.log('🎉 신규 사용자 등록 완료!');
-    
-    return res.json({
-      success: true,
-      action: 'register',
-      sessionToken,
-      user: {
-        id: user.id,
-        did: user.did,
-        username: user.username,
-        email: user.email,
-        wallet_address: user.wallet_address,
-        walletAddress: user.wallet_address,
-        cue_tokens: user.cue_tokens || 15428,
-        cueBalance: user.cue_tokens || 15428,
-        trust_score: user.trust_score || 85.0,
-        trustScore: user.trust_score || 85.0,
-        passport_level: user.passport_level || 'Basic',
-        passportLevel: user.passport_level || 'Basic',
-        biometric_verified: user.biometric_verified || true,
-        biometricVerified: user.biometric_verified || true,
-        created_at: user.created_at,
-        registeredAt: user.created_at
-      },
-      isExistingUser: false,
-      rewards: { welcomeCUE: 15428 },
-      message: '🎉 새로운 AI Passport가 생성되었습니다!'
-    });
-
-  } catch (error) {
-    console.error('💥 통합 인증 오류:', error);
-    
-    res.status(500).json({
-      success: false,
-      error: 'Authentication failed',
-      message: error.message
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('💥 처리되지 않은 Promise 거부:', reason);
+      gracefulShutdown('UNHANDLED_REJECTION');
     });
   }
-});
 
-// ============================================================================
-// 🔧 세션 관리 API들
-// ============================================================================
-
-app.post('/api/auth/session/restore', async (req: Request, res: Response) => {
-  console.log('🔧 === 세션 복원 API ===');
-  
-  try {
-    const { sessionToken } = req.body;
-    
-    if (!sessionToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'sessionToken이 필요합니다'
-      });
-    }
-    
-    const user = await sessionManager.getUserBySession(sessionToken);
-    
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        error: '유효하지 않거나 만료된 세션입니다'
-      });
-    }
-    
-    console.log('✅ 세션 복원 성공:', user.username || user.id);
-    
-    res.json({
-      success: true,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        did: user.did,
-        wallet_address: user.wallet_address,
-        walletAddress: user.wallet_address,
-        cue_tokens: user.cue_tokens,
-        cueBalance: user.cue_tokens,
-        trust_score: user.trust_score,
-        trustScore: user.trust_score,
-        passport_level: user.passport_level,
-        passportLevel: user.passport_level,
-        biometric_verified: user.biometric_verified,
-        biometricVerified: user.biometric_verified,
-        created_at: user.created_at,
-        registeredAt: user.created_at
-      },
-      message: '세션이 복원되었습니다'
-    });
-    
-  } catch (error) {
-    console.error('💥 세션 복원 오류:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Session restore failed',
-      message: error.message
-    });
+  // ============================================================================
+  // 🔧 공개 유틸리티 메서드들
+  // ============================================================================
+  public getApp(): Application {
+    return this.app;
   }
-});
 
-// ============================================================================
-// 🔐 인증 미들웨어
-// ============================================================================
+  public getServer(): Server | null {
+    return this.server;
+  }
 
-async function authenticateSession(req: Request, res: Response, next: NextFunction) {
-  try {
-    const authHeader = req.headers.authorization;
-    const sessionToken = authHeader?.replace('Bearer ', '');
-    
-    if (!sessionToken) {
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication required'
-      });
-    }
-    
-    const user = await sessionManager.getUserBySession(sessionToken);
-    
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid or expired session'
-      });
-    }
-    
-    req.user = user;
-    next();
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Authentication failed'
-    });
+  public getDatabaseService(): DatabaseService {
+    return this.databaseService;
+  }
+
+  public getSupabaseService(): SupabaseService {
+    return this.supabaseService;
+  }
+
+  public getCryptoService(): CryptoService {
+    return this.cryptoService;
+  }
+
+  public getSocketService(): SocketService | null {
+    return this.socketService;
   }
 }
 
 // ============================================================================
-// 🤖 AI 채팅 API
+// 🎯 애플리케이션 시작점
 // ============================================================================
-
-app.post('/api/ai/chat', authenticateSession, async (req: Request, res: Response) => {
+async function main() {
   try {
-    const { message, model } = req.body;
-    const user = req.user;
-    
-    if (!message || !user) {
-      return res.status(400).json({
-        success: false,
-        error: 'Message and user required'
-      });
-    }
-
-    // AI 응답 생성
-    const aiResponse = `안녕하세요 ${user.username}님! "${message}"에 대한 개인화된 응답입니다.\n\n실제 백엔드가 작동하고 있으며, 세션이 유지되고 있습니다. 🎉`;
-    const cueEarned = Math.round((2.0 + Math.random() * 3.0) * 100) / 100;
-
-    // CUE 잔액 업데이트
-    if (useDatabase && supabase) {
-      try {
-        await supabase
-          .from('users')
-          .update({ 
-            cue_tokens: user.cue_tokens + cueEarned 
-          })
-          .eq('id', user.id);
-          
-        // CUE 거래 기록
-        await supabase
-          .from('cue_transactions')
-          .insert([{
-            user_id: user.id,
-            transaction_type: 'chat_reward',
-            amount: cueEarned,
-            balance_after: user.cue_tokens + cueEarned,
-            description: `AI chat interaction reward`,
-            source_platform: 'chat',
-            metadata: {
-              message_length: message.length,
-              model: model || 'gpt-4o',
-              timestamp: new Date().toISOString()
-            },
-            created_at: new Date().toISOString()
-          }]);
-      } catch (error) {
-        console.error('CUE 업데이트 실패:', error);
-      }
-    }
-
-    res.json({
-      success: true,
-      response: aiResponse,
-      cueReward: cueEarned,
-      model: model || 'gpt-4o',
-      timestamp: new Date().toISOString()
-    });
-
+    const application = new Application();
+    await application.start();
   } catch (error) {
-    console.error('❌ AI 채팅 오류:', error);
-    res.status(500).json({
-      success: false,
-      error: 'AI chat failed'
-    });
+    console.error('💥 애플리케이션 시작 실패:', error);
+    process.exit(1);
   }
-});
+}
 
-// ============================================================================
-// 💎 CUE 토큰 API들
-// ============================================================================
+// 직접 실행되는 경우에만 서버 시작
+if (require.main === module) {
+  main();
+}
 
-app.get('/api/cue/balance/:did', async (req: Request, res: Response) => {
-  try {
-    const { did } = req.params;
-    
-    if (useDatabase && supabase) {
-      try {
-        const { data: user, error } = await supabase
-          .from('users')
-          .select('cue_tokens')
-          .eq('did', did)
-          .single();
-          
-        if (user) {
-          return res.json({
-            success: true,
-            balance: user.cue_tokens,
-            did,
-            timestamp: new Date().toISOString()
-          });
-        }
-      } catch (error) {
-        console.error('CUE 잔액 조회 실패:', error);
-      }
-    }
-    
-    // Mock 폴백
-    const balance = 15428 + Math.floor(Math.random() * 5000);
-    res.json({
-      success: true,
-      balance,
-      did,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get CUE balance'
-    });
-  }
-});
-
-app.post('/api/cue/mine', authenticateSession, async (req: Request, res: Response) => {
-  try {
-    const { activity, amount } = req.body;
-    const user = req.user;
-    
-    const mineAmount = amount || Math.floor(Math.random() * 10) + 1;
-    
-    // CUE 마이닝 기록
-    if (useDatabase && supabase) {
-      try {
-        await supabase
-          .from('cue_transactions')
-          .insert([{
-            user_id: user.id,
-            transaction_type: 'mining',
-            amount: mineAmount,
-            balance_after: user.cue_tokens + mineAmount,
-            description: `CUE mining from ${activity}`,
-            source_platform: 'system',
-            metadata: {
-              activity,
-              mining_time: new Date().toISOString()
-            },
-            created_at: new Date().toISOString()
-          }]);
-      } catch (error) {
-        console.error('CUE 마이닝 기록 실패:', error);
-      }
-    }
-    
-    res.json({
-      success: true,
-      amount: mineAmount,
-      totalBalance: user.cue_tokens + mineAmount,
-      activity,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'CUE mining failed'
-    });
-  }
-});
-
-// ============================================================================
-// 🎫 패스포트 API
-// ============================================================================
-
-app.get('/api/passport/:did', async (req: Request, res: Response) => {
-  try {
-    const { did } = req.params;
-    
-    if (useDatabase && supabase) {
-      try {
-        const { data: user, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('did', did)
-          .single();
-          
-        if (user) {
-          return res.json({
-            success: true,
-            passport: {
-              did: user.did,
-              username: user.username,
-              trustScore: user.trust_score,
-              level: user.passport_level,
-              cueBalance: user.cue_tokens,
-              totalMined: user.cue_tokens,
-              personalityProfile: user.personality || {
-                traits: ['AI 사용자', '탐험가'],
-                communicationStyle: 'friendly',
-                expertise: ['AI', 'Web3']
-              },
-              connectedPlatforms: ['ChatGPT', 'Claude', 'Discord'],
-              achievements: [
-                { name: 'First Login', icon: '🎯', earned: true },
-                { name: 'AI Chat Master', icon: '🤖', earned: true },
-                { name: 'CUE Collector', icon: '💰', earned: user.cue_tokens > 1000 }
-              ],
-              createdAt: user.created_at
-            }
-          });
-        }
-      } catch (error) {
-        console.error('패스포트 조회 실패:', error);
-      }
-    }
-    
-    // Mock 폴백
-    const passport = {
-      did,
-      username: did?.split(':').pop() || 'Agent',
-      trustScore: 85 + Math.floor(Math.random() * 15),
-      level: 'Verified Agent',
-      cueBalance: 2500 + Math.floor(Math.random() * 3000),
-      totalMined: 25000 + Math.floor(Math.random() * 50000),
-      personalityProfile: {
-        traits: ['창의적', '분석적', '신뢰할 수 있는'],
-        communicationStyle: 'friendly',
-        expertise: ['AI', 'Web3', 'Protocol Design']
-      },
-      connectedPlatforms: ['ChatGPT', 'Claude', 'Discord'],
-      achievements: [
-        { name: 'First CUE', icon: '🎯', earned: true },
-        { name: 'Trusted Agent', icon: '🛡️', earned: true },
-        { name: 'Platform Master', icon: '🌐', earned: false }
-      ],
-      createdAt: new Date().toISOString()
-    };
-
-    res.json({
-      success: true,
-      passport,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get passport'
-    });
-  }
-});
-
-// ============================================================================
-// 🚫 404 및 에러 핸들링
-// ============================================================================
-
-app.use('*', (req: Request, res: Response) => {
-  console.log(`❌ 404 - 찾을 수 없는 경로: ${req.method} ${req.originalUrl}`);
-
-  res.status(404).json({
-    success: false,
-    error: 'API endpoint not found',
-    method: req.method,
-    path: req.originalUrl,
-    timestamp: new Date().toISOString(),
-    availableEndpoints: [
-      'GET /health',
-      'POST /api/auth/webauthn/start',
-      'POST /api/auth/webauthn/complete',
-      'POST /api/auth/session/restore',
-      'POST /api/ai/chat',
-      'POST /api/cue/mine',
-      'GET /api/cue/balance/:did',
-      'GET /api/passport/:did'
-    ]
-  });
-});
-
-app.use((error: any, req: Request, res: Response, next: NextFunction) => {
-  console.error('❌ 서버 에러:', error);
-
-  res.status(error.status || 500).json({
-    success: false,
-    error: process.env.NODE_ENV === 'production' 
-      ? 'Internal server error' 
-      : error.message,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// ============================================================================
-// 🚀 서버 시작
-// ============================================================================
-
-const server = app.listen(PORT, () => {
-  console.log('🚀 ================================');
-  console.log('🚀 Final0626 백엔드 서버 v3.0 시작됨');
-  console.log('🚀 ================================');
-  console.log(`📍 서버: http://localhost:${PORT}`);
-  console.log(`🏥 헬스체크: http://localhost:${PORT}/health`);
-  console.log(`🗄️ 데이터베이스: ${useDatabase ? 'Supabase' : 'Mock'}`);
-  console.log('📋 주요 기능:');
-  console.log('  🔥 통합 패스키 인증: 로그인/가입 자동 판별');
-  console.log('  💾 영구 세션 관리: 30일간 자동 로그인');
-  console.log('  🔄 자동 기존사용자 감지: 데이터 보존');
-  console.log('  🤖 AI 채팅: 인증된 사용자 전용');
-  console.log('  💰 CUE 마이닝: 실시간 토큰 적립');
-  console.log('🚀 ================================');
-});
-
-// 우아한 종료 처리
-process.on('SIGINT', () => {
-  console.log('\n🛑 서버 종료 중...');
-  server.close(() => {
-    console.log('✅ 서버 종료 완료');
-    process.exit(0);
-  });
-});
-
-export default app;
+// 테스트나 다른 모듈에서 사용할 수 있도록 export
+export default Application;

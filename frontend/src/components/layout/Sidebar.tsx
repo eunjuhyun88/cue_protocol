@@ -29,7 +29,7 @@ import {
   Star, TrendingUp, Shield, Wallet, Calendar,
   ChevronRight, Activity, BarChart3
 } from 'lucide-react';
-import { PassportCard } from '../passport/PassportCard';
+import { AIPassportCard } from '../passport/PassportCard';
 import { StatusBadge } from '../ui/StatusBadge';
 import type { UnifiedAIPassport } from '../../types/passport.types';
 

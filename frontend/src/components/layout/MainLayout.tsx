@@ -135,7 +135,7 @@ interface AIPassport {
 }
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error';
-type ViewType = 'chat' | 'dashboard' | 'passport' | 'vaults' | 'platforms' | 'analytics';
+type ViewType = 'chat' | 'dashboard' | 'passport' | 'vaults' | 'platforms' | 'analytics' | 'settings';
 
 interface MainLayoutProps {
   passport?: AIPassport;
@@ -196,7 +196,57 @@ const BackendStatus = ({
 // ============================================================================
 // 🎨 대시보드 뷰 컴포넌트 (완전히 개선됨)
 // ============================================================================
+// ============================================================================
+// 📁 frontend/src/components/layout/MainLayout.tsx (수정됨)
+// MainLayout 컴포넌트에 로컬 AI 채팅 버튼 추가
+// ============================================================================
 
+// 기존 MainLayout 컴포넌트에서 적절한 위치에 추가:
+
+// 예시: 상단 헤더나 사이드바 메뉴에 추가
+const ChatNavigationButton = () => (
+  <div className="mt-6 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
+    <div className="flex items-center justify-between">
+      <div className="flex-1">
+        <div className="flex items-center space-x-2 mb-2">
+          <div className="w-8 h-8 bg-gradient-to-r from-green-500 to-blue-500 rounded-full flex items-center justify-center">
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+          </div>
+          <h3 className="font-semibold text-gray-900">🦙 로컬 AI 채팅</h3>
+        </div>
+        <p className="text-sm text-gray-600 mb-3">
+          프라이버시를 보장하는 로컬 Ollama AI와 대화해보세요
+        </p>
+        <div className="flex items-center space-x-4 text-xs text-gray-500">
+          <div className="flex items-center space-x-1">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span>완전한 프라이버시</span>
+          </div>
+          <div className="flex items-center space-x-1">
+            <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+            <span>무료 사용</span>
+          </div>
+        </div>
+      </div>
+      
+      <div className="ml-4">
+        <a 
+          href="/chat"
+          className="px-4 py-2 bg-gradient-to-r from-green-600 to-blue-600 text-white rounded-lg hover:from-green-700 hover:to-blue-700 transition-all duration-200 flex items-center space-x-2 shadow-sm hover:shadow-md transform hover:-translate-y-0.5"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          <span className="font-medium">채팅 시작</span>
+        </a>
+      </div>
+    </div>
+  </div>
+);
+
+// MainLayout 컴포넌트 내부에서 적절한 위치에 <ChatNavigationButton /> 추가
 const DashboardView = ({ passport, cueBalance, todaysMining, messages }: { 
   passport?: AIPassport; 
   cueBalance: number; 
@@ -641,7 +691,7 @@ const PassportView = ({ passport }: { passport?: AIPassport }) => {
                 </h4>
                 <p className="text-sm text-gray-600 mb-3">{achievement.description}</p>
                 {achievement.earned ? (
-                  <div className="flex items-center justify-center space-x-1 text-green-600">
+                  <div className="flex items-center justify-center space-x-0.5 text-green-600">
                     <CheckCircle className="w-4 h-4" />
                     <span className="text-xs">완료됨</span>
                   </div>
@@ -780,6 +830,216 @@ const PlatformsView = ({ passport }: { passport?: AIPassport }) => (
   </div>
 );
 
+
+// ============================================================================
+// 🎨 설정 뷰 컴포넌트 (MainLayout.tsx에 추가)
+// ============================================================================
+
+const SettingsView = ({ 
+  passport, 
+  backendConnected, 
+  onLogout 
+}: { 
+  passport?: AIPassport; 
+  backendConnected: boolean;
+  onLogout: () => void;
+}) => {
+  const [activeSection, setActiveSection] = useState('account');
+
+  const sections = [
+    { id: 'account', label: '계정 설정', icon: User },
+    { id: 'privacy', label: '개인정보', icon: Lock },
+    { id: 'notifications', label: '알림', icon: AlertCircle },
+    { id: 'advanced', label: '고급 설정', icon: Settings }
+  ];
+
+  return (
+    <div className="p-6 space-y-6 h-full overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">환경설정</h2>
+        <div className="flex items-center space-x-2">
+          <div className={`w-2 h-2 rounded-full ${backendConnected ? 'bg-green-500' : 'bg-yellow-500'}`}></div>
+          <span className="text-sm text-gray-600">
+            {backendConnected ? '실시간 동기화' : '로컬 모드'}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* 설정 메뉴 */}
+        <div className="lg:col-span-1">
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <nav className="space-y-2">
+              {sections.map(section => (
+                <button
+                  key={section.id}
+                  onClick={() => setActiveSection(section.id)}
+                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                    activeSection === section.id
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <section.icon className="w-4 h-4" />
+                  <span className="text-sm font-medium">{section.label}</span>
+                </button>
+              ))}
+            </nav>
+          </div>
+        </div>
+
+        {/* 설정 내용 */}
+        <div className="lg:col-span-3">
+          <div className="bg-white border border-gray-200 rounded-xl p-6">
+            
+            {/* 계정 설정 */}
+            {activeSection === 'account' && (
+              <div className="space-y-6">
+                <h3 className="text-lg font-semibold text-gray-900">계정 설정</h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      사용자명
+                    </label>
+                    <input
+                      type="text"
+                      value={passport?.username || ''}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="사용자명을 입력하세요"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      DID (변경 불가)
+                    </label>
+                    <input
+                      type="text"
+                      value={passport?.did || ''}
+                      disabled
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-gray-200">
+                  <button
+                    onClick={onLogout}
+                    className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span>로그아웃</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 개인정보 설정 */}
+            {activeSection === 'privacy' && (
+              <div className="space-y-6">
+                <h3 className="text-lg font-semibold text-gray-900">개인정보 설정</h3>
+                
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">데이터 수집 허용</p>
+                      <p className="text-xs text-gray-500">AI 개인화를 위한 데이터 수집을 허용합니다</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" defaultChecked />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">익명화 데이터 공유</p>
+                      <p className="text-xs text-gray-500">연구 목적으로 익명화된 데이터를 공유합니다</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 알림 설정 */}
+            {activeSection === 'notifications' && (
+              <div className="space-y-6">
+                <h3 className="text-lg font-semibold text-gray-900">알림 설정</h3>
+                
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">CUE 마이닝 알림</p>
+                      <p className="text-xs text-gray-500">토큰 마이닝 시 알림을 받습니다</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" defaultChecked />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">시스템 업데이트</p>
+                      <p className="text-xs text-gray-500">새로운 기능 및 업데이트 알림</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" defaultChecked />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 고급 설정 */}
+            {activeSection === 'advanced' && (
+              <div className="space-y-6">
+                <h3 className="text-lg font-semibold text-gray-900">고급 설정</h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      백엔드 URL
+                    </label>
+                    <input
+                      type="text"
+                      value="http://localhost:3001"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="백엔드 서버 URL"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      개발자 모드
+                    </label>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" className="sr-only peer" />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+
+                  <div className="pt-4 border-t border-gray-200">
+                    <button className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
+                      캐시 삭제
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AnalyticsView = ({ passport, cueBalance, todaysMining, messages }: {
   passport?: AIPassport;
   cueBalance: number;
@@ -876,14 +1136,41 @@ export function MainLayout({
   }, []);
 
   // 뷰 탭 목록
+ // 뷰 탭 목록 (설정 탭 추가)
   const viewTabs = [
     { id: 'chat', label: 'AI Chat', icon: MessageCircle },
     { id: 'dashboard', label: 'Dashboard', icon: Activity },
     { id: 'passport', label: 'AI Passport', icon: Fingerprint },
     { id: 'vaults', label: 'Data Vaults', icon: Database },
     { id: 'platforms', label: 'Platforms', icon: Globe },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 }
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'settings', label: 'Settings', icon: Settings }
   ];
+
+          {/* 탭 네비게이션 (컴팩트하게 수정) */}
+          <div className="bg-white border-b border-gray-200 px-4 md:px-6 py-2 flex-shrink-0">
+            <div className="flex space-x-0.5 overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
+              {viewTabs.map(view => (
+                <button
+                  key={view.id}
+                  onClick={() => {
+                    onViewChange(view.id as ViewType);
+                    if (isMobile) setShowMobileSidebar(false);
+                  }}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap text-sm ${
+                    currentView === view.id 
+                      ? 'bg-blue-100 text-blue-700 font-medium' 
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <view.icon className="w-4 h-4" />
+                  <span className="text-xs font-medium">
+                    {isMobile ? view.label.split(' ')[0] : view.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
 
   // 메시지 전송 핸들러
   const handleSendMessage = async (message: string, model: string) => {
@@ -900,6 +1187,7 @@ export function MainLayout({
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* ⭐️ 상단 헤더 (완전 고정) */}
+     {/* ⭐️ 상단 헤더 (완전 고정) */}
       <header className="bg-white border-b border-gray-200 px-4 lg:px-6 py-3 flex-shrink-0 z-20">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
@@ -924,17 +1212,46 @@ export function MainLayout({
           </div>
           
           <div className="flex items-center space-x-3">
+            {/* CUE 잔액 */}
             <div className="hidden sm:flex items-center space-x-2 px-3 py-2 bg-gradient-to-r from-yellow-50 to-orange-50 rounded-lg border border-yellow-200">
               <Coins className="w-4 h-4 text-yellow-600" />
               <span className="text-sm font-medium text-yellow-800">{cueBalance.toLocaleString()}</span>
             </div>
             
-            <BackendStatus 
-              status={connectionStatus} 
-              onRetry={onRetryConnection}
-              connectionDetails={connectionDetails}
-            />
+            {/* 백엔드 상태 (초록색 줄 제거된 버전) */}
+            <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+              backendConnected ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
+            }`}>
+              {backendConnected ? (
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+              ) : (
+                <div className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce"></div>
+              )}
+              <span>{backendConnected ? 'Live Backend' : 'Mock Mode'}</span>
+              {connectionDetails?.version && (
+                <span className="opacity-75">v{connectionDetails.version}</span>
+              )}
+              {!backendConnected && (
+                <button onClick={onRetryConnection} className="underline hover:no-underline ml-1 transition-colors">
+                  재시도
+                </button>
+              )}
+            </div>
             
+            {/* 환경설정 버튼 추가 */}
+            <button 
+              onClick={() => {
+                onViewChange('settings' as ViewType);
+                if (isMobile) setShowMobileSidebar(false);
+              }}
+              className="flex items-center space-x-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              title="환경설정"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="hidden sm:inline text-sm">설정</span>
+            </button>
+            
+            {/* 로그아웃 버튼 */}
             <button 
               onClick={onLogout}
               className="flex items-center space-x-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
@@ -1003,8 +1320,8 @@ export function MainLayout({
           }}
         >
           {/* 탭 네비게이션 (고정) */}
-          <div className="bg-white border-b border-gray-200 px-4 md:px-6 py-3 flex-shrink-0">
-            <div className="flex space-x-1 overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
+          <div className="bg-white border-b border-gray-200 px-4 md:px-6 py-2 flex-shrink-0">
+            <div className="flex space-x-0.5 overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
               {viewTabs.map(view => (
                 <button
                   key={view.id}
@@ -1012,7 +1329,7 @@ export function MainLayout({
                     onViewChange(view.id as ViewType);
                     if (isMobile) setShowMobileSidebar(false);
                   }}
-                  className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${
+                  className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
                     currentView === view.id 
                       ? 'bg-blue-100 text-blue-700' 
                       : 'text-gray-600 hover:bg-gray-100'
@@ -1072,6 +1389,14 @@ export function MainLayout({
                 cueBalance={cueBalance} 
                 todaysMining={todaysMining} 
                 messages={messages} 
+              />
+            )}
+            {/* 설정 뷰 추가 */}
+            {currentView === 'settings' && (
+              <SettingsView 
+                passport={passport} 
+                backendConnected={backendConnected}
+                onLogout={onLogout}
               />
             )}
           </div>

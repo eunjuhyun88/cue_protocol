@@ -18,6 +18,8 @@ interface SessionData {
   expiresAt: number;
 }
 
+
+
 export class SessionService {
   private readonly JWT_SECRET: string;
   private readonly SESSION_DURATION: number;

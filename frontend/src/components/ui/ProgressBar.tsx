@@ -1,35 +1,30 @@
-
 // ============================================================================
-// 📁 src/components/ui/Progress.tsx
-// 📊 진행률 표시 컴포넌트 (새로 추가)
+// 📁 src/components/ui/ProgressBar.tsx
+// 📊 기존에 있던 프로그레스 바 컴포넌트 복원
 // ============================================================================
 
 'use client';
 
 import React from 'react';
 
-export interface ProgressProps {
+interface ProgressBarProps {
   value: number;
   max?: number;
   size?: 'sm' | 'md' | 'lg';
-  color?: 'blue' | 'green' | 'yellow' | 'purple' | 'red';
+  color?: 'blue' | 'green' | 'yellow' | 'purple';
   showLabel?: boolean;
-  showValue?: boolean;
-  label?: string;
   className?: string;
-  variant?: 'default' | 'gradient' | 'striped';
+  label?: string;
 }
 
-export const Progress: React.FC<ProgressProps> = ({
+export const ProgressBar: React.FC<ProgressBarProps> = ({
   value,
   max = 100,
   size = 'md',
   color = 'blue',
   showLabel = false,
-  showValue = false,
-  label,
   className = '',
-  variant = 'default'
+  label
 }) => {
   const percentage = Math.min((value / max) * 100, 100);
 
@@ -40,47 +35,23 @@ export const Progress: React.FC<ProgressProps> = ({
   };
 
   const colorClasses = {
-    blue: 'bg-blue-600',
+    blue: 'bg-[#3B74BF]',
     green: 'bg-green-600',
-    yellow: 'bg-yellow-600',
-    purple: 'bg-purple-600',
-    red: 'bg-red-600'
-  };
-
-  const gradientClasses = {
-    blue: 'bg-gradient-to-r from-blue-500 to-blue-600',
-    green: 'bg-gradient-to-r from-green-500 to-green-600',
-    yellow: 'bg-gradient-to-r from-yellow-500 to-yellow-600',
-    purple: 'bg-gradient-to-r from-purple-500 to-purple-600',
-    red: 'bg-gradient-to-r from-red-500 to-red-600'
-  };
-
-  const getBarClasses = () => {
-    const baseClasses = `${sizeClasses[size]} rounded-full transition-all duration-300`;
-    
-    if (variant === 'gradient') {
-      return `${baseClasses} ${gradientClasses[color]}`;
-    }
-    
-    if (variant === 'striped') {
-      return `${baseClasses} ${colorClasses[color]} bg-stripes`;
-    }
-    
-    return `${baseClasses} ${colorClasses[color]}`;
+    yellow: 'bg-[#EDF25E]',
+    purple: 'bg-purple-600'
   };
 
   return (
     <div className={className}>
-      {(showLabel || showValue) && (
-        <div className="flex justify-between text-sm text-gray-600 mb-2">
-          {showLabel && <span>{label}</span>}
-          {showValue && <span>{percentage.toFixed(0)}%</span>}
+      {showLabel && (
+        <div className="flex justify-between text-sm text-[#403F3D] mb-1">
+          <span>{label || 'Progress'}</span>
+          <span>{value}/{max}</span>
         </div>
       )}
-      
-      <div className={`w-full bg-gray-200 rounded-full ${sizeClasses[size]}`}>
+      <div className={`w-full bg-[#F2F2F2] rounded-full ${sizeClasses[size]}`}>
         <div
-          className={getBarClasses()}
+          className={`${sizeClasses[size]} ${colorClasses[color]} rounded-full transition-all duration-300`}
           style={{ width: `${percentage}%` }}
         />
       </div>
