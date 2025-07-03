@@ -1,21 +1,24 @@
 // ============================================================================
-// 📁 src/components/chat/IndependentMainContent.tsx
-// ⭐️ 완전 독립 스크롤 메인 콘텐츠 (채팅 + 개선 기능)
+// 📁 src/components/chat/IndependentMainContent.tsx (마크다운 렌더링 추가)
+// 기존 파일의 상단에 import 추가하고 MessageBubble 컴포넌트 수정
 // ============================================================================
 
 'use client';
 
 import React, { useRef, useEffect, useState } from 'react';
+// ✨ 마크다운 렌더링 라이브러리 추가
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github-dark.css';
+
 import {
   Send, Paperclip, Mic, MicOff, Star, Coins, MessageCircle, X,
   Wifi, WifiOff, Coffee, Zap, Target, ChevronDown, Copy, 
   RefreshCw, Settings, BarChart3, Brain, Eye, Hash
 } from 'lucide-react';
 
-// ============================================================================
-// 🔧 타입 정의
-// ============================================================================
-
+// 기존 interface들 그대로 유지...
 interface Message {
   id: string;
   type: 'user' | 'ai';
@@ -47,25 +50,7 @@ interface IndependentMainContentProps {
 }
 
 // ============================================================================
-// 🎨 공통 UI 컴포넌트들
-// ============================================================================
-
-const LoadingSpinner = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => {
-  const sizeClasses = {
-    sm: 'w-4 h-4',
-    md: 'w-5 h-5', 
-    lg: 'w-6 h-6'
-  };
-
-  return (
-    <div className={`animate-spin ${sizeClasses[size]}`}>
-      <div className="border-2 border-gray-300 border-t-blue-600 rounded-full w-full h-full"></div>
-    </div>
-  );
-};
-
-// ============================================================================
-// 💬 메시지 버블 컴포넌트
+// 💬 개선된 메시지 버블 컴포넌트 (마크다운 렌더링 포함)
 // ============================================================================
 
 const MessageBubble = ({ message, index }: { message: Message; index: number }) => {
@@ -113,6 +98,7 @@ const MessageBubble = ({ message, index }: { message: Message; index: number }) 
     );
   }
 
+  // ✨ AI 메시지 - 마크다운 렌더링 적용
   return (
     <div className="flex justify-start">
       <div className="max-w-[85%] lg:max-w-[70%]">
@@ -131,15 +117,96 @@ const MessageBubble = ({ message, index }: { message: Message; index: number }) 
           )}
         </div>
         
-        {/* 메시지 내용 */}
+        {/* ✨ 메시지 내용 - 마크다운 렌더링 */}
         <div className="bg-white border border-gray-200 p-4 md:p-5 rounded-xl shadow-sm">
-          <div className="whitespace-pre-wrap text-sm md:text-base leading-relaxed text-gray-800">
-            {message.content}
+          <div className="prose prose-sm max-w-none dark:prose-invert">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={{
+                // 커스텀 스타일링 컴포넌트들
+                h1: ({children}) => (
+                  <h1 className="text-lg md:text-xl font-bold text-gray-900 mb-3">{children}</h1>
+                ),
+                h2: ({children}) => (
+                  <h2 className="text-base md:text-lg font-semibold text-gray-800 mb-2">{children}</h2>
+                ),
+                h3: ({children}) => (
+                  <h3 className="text-sm md:text-base font-medium text-gray-700 mb-2">{children}</h3>
+                ),
+                p: ({children}) => (
+                  <p className="text-gray-700 mb-3 leading-relaxed text-sm md:text-base">{children}</p>
+                ),
+                ul: ({children}) => (
+                  <ul className="list-disc list-inside mb-3 space-y-1 text-sm md:text-base">{children}</ul>
+                ),
+                ol: ({children}) => (
+                  <ol className="list-decimal list-inside mb-3 space-y-1 text-sm md:text-base">{children}</ol>
+                ),
+                li: ({children}) => (
+                  <li className="text-gray-700">{children}</li>
+                ),
+                code: ({inline, children}) => 
+                  inline ? (
+                    <code className="bg-gray-200 px-1 py-0.5 rounded text-sm font-mono text-blue-600">
+                      {children}
+                    </code>
+                  ) : (
+                    <code className="block bg-gray-800 text-gray-100 p-3 rounded-lg text-sm font-mono overflow-x-auto">
+                      {children}
+                    </code>
+                  ),
+                pre: ({children}) => (
+                  <pre className="bg-gray-800 p-3 rounded-lg overflow-x-auto mb-3">
+                    {children}
+                  </pre>
+                ),
+                blockquote: ({children}) => (
+                  <blockquote className="border-l-4 border-blue-500 pl-4 py-2 bg-blue-50 mb-3">
+                    {children}
+                  </blockquote>
+                ),
+                strong: ({children}) => (
+                  <strong className="font-semibold text-gray-900">{children}</strong>
+                ),
+                em: ({children}) => (
+                  <em className="italic text-gray-800">{children}</em>
+                ),
+                a: ({children, href}) => (
+                  <a 
+                    href={href} 
+                    className="text-blue-600 hover:underline" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                  >
+                    {children}
+                  </a>
+                ),
+                // 테이블 스타일링
+                table: ({children}) => (
+                  <table className="min-w-full border border-gray-200 rounded-lg mb-3">
+                    {children}
+                  </table>
+                ),
+                th: ({children}) => (
+                  <th className="border border-gray-200 px-3 py-2 bg-gray-50 font-semibold text-left">
+                    {children}
+                  </th>
+                ),
+                td: ({children}) => (
+                  <td className="border border-gray-200 px-3 py-2">
+                    {children}
+                  </td>
+                ),
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
           </div>
           
-          {/* 메타데이터 */}
+          {/* CUE 토큰 및 메타 정보 표시 */}
           {(message.cueReward || message.trustScore || message.qualityScore) && (
-            <div className="mt-3 pt-3 border-t border-gray-100">
+            <div className="mt-4 pt-3 border-t border-gray-100">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3 md:space-x-4">
                   {message.cueReward && (
@@ -216,7 +283,7 @@ const MessageBubble = ({ message, index }: { message: Message; index: number }) 
 };
 
 // ============================================================================
-// 🎯 메인 콘텐츠 컴포넌트
+// 🎯 기존 IndependentMainContent 컴포넌트 (MessageBubble 교체)
 // ============================================================================
 
 export const IndependentMainContent: React.FC<IndependentMainContentProps> = ({
@@ -238,7 +305,7 @@ export const IndependentMainContent: React.FC<IndependentMainContentProps> = ({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 메시지 자동 스크롤
+  // 기존 로직들 그대로 유지...
   useEffect(() => {
     if (messagesEndRef.current && messagesContainerRef.current) {
       const container = messagesContainerRef.current;
@@ -249,7 +316,6 @@ export const IndependentMainContent: React.FC<IndependentMainContentProps> = ({
     }
   }, [messages, isTyping]);
 
-  // 텍스트에리어 자동 높이 조절
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -269,7 +335,7 @@ export const IndependentMainContent: React.FC<IndependentMainContentProps> = ({
     { id: 'gemini-pro', name: 'Gemini Pro', description: 'Google 클라우드', icon: '☁️' }
   ];
 
-  // 메시지 전송 핸들러
+  // 메시지 전송 핸들러 등 기존 함수들 그대로 유지...
   const handleSendMessage = async () => {
     if (!newMessage.trim() && attachments.length === 0) return;
     
@@ -285,7 +351,6 @@ export const IndependentMainContent: React.FC<IndependentMainContentProps> = ({
     }
   };
 
-  // 파일 첨부 핸들러
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     setAttachments([...attachments, ...files]);
@@ -295,7 +360,6 @@ export const IndependentMainContent: React.FC<IndependentMainContentProps> = ({
     setAttachments(attachments.filter((_, i) => i !== index));
   };
 
-  // 키보드 핸들러
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -313,7 +377,7 @@ export const IndependentMainContent: React.FC<IndependentMainContentProps> = ({
 
   return (
     <div className="flex flex-col h-full">
-      {/* ⭐️ 상단 상태 바 (고정) */}
+      {/* ⭐️ 상단 상태 바 (고정) - 기존과 동일 */}
       <div className="flex-shrink-0 p-3 md:p-4 border-b border-gray-200 bg-gray-50">
         <div className={`flex items-center justify-between p-2 md:p-3 rounded-lg ${
           backendConnected ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'
@@ -406,6 +470,7 @@ export const IndependentMainContent: React.FC<IndependentMainContentProps> = ({
           </div>
         ) : (
           <>
+            {/* ✨ 개선된 MessageBubble 사용 */}
             {messages.map((message, index) => (
               <MessageBubble key={message.id} message={message} index={index} />
             ))}
@@ -439,7 +504,7 @@ export const IndependentMainContent: React.FC<IndependentMainContentProps> = ({
         )}
       </div>
 
-      {/* ⭐️ 하단 입력창 (완전 고정) */}
+      {/* ⭐️ 하단 입력창 (완전 고정) - 기존과 동일 */}
       <div className="flex-shrink-0 border-t border-gray-200 p-3 md:p-4 bg-white">
         <div className="max-w-4xl mx-auto">
           {/* 첨부파일 미리보기 */}

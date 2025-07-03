@@ -8,7 +8,7 @@ import { Router, Request, Response } from 'express';
 import { DatabaseService } from '../../services/database/DatabaseService';
 import { SupabaseService } from '../../services/database/SupabaseService';
 import { SemanticCompressionService } from '../../services/ai/SemanticCompressionService';
-import { PersonalcueExtractor } from '../../services/ai/PersonalcueExtractor';
+import { PersonalCueExtractor } from '../../services/ai/PersonalCueExtractor';
 import { CUEMiningService } from '../../services/cue/CUEMiningService';
 import { CryptoService } from '../../services/encryption/CryptoService';
 import { authMiddleware } from '../../middleware/authMiddleware';

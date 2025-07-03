@@ -1,16 +1,16 @@
 // ============================================================================
-// 📁 src/components/chat/MessageBubble.tsx
-// 💬 개별 메시지 버블 컴포넌트
-// ============================================================================
-// 이 컴포넌트는 AI 채팅 인터페이스에서 각 메시지를 표시하는
-// 버블 형태의 UI를 제공합니다. 사용자 메시지와 AI 응답을 구분하여
-// 각각 다른 스타일로 렌더링하며, 메시지의 타임스   
+// 📁 src/components/chat/MessageBubble.tsx (마크다운 렌더링 개선)
+// 기존 파일에서 AI 메시지 부분만 수정
 // ============================================================================
 
 'use client';
 
 import React from 'react';
 import { User, Bot, Zap, Shield, Clock } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github-dark.css';
 import { StatusBadge } from '../ui/StatusBadge';
 import type { Message } from '../../types/chat.types';
 import type { UnifiedAIPassport } from '../../types/passport.types';
@@ -56,19 +56,78 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               'bg-gray-100 text-gray-900 border border-gray-200'
             }
           `}>
-            {/* AI 메시지의 경우 마크다운 스타일 적용 */}
+            {/* ✨ AI 메시지: 마크다운 렌더링 적용 */}
             {!isUser ? (
-              <div 
-                className="prose prose-sm max-w-none"
-                dangerouslySetInnerHTML={{
-                  __html: message.content
-                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                    .replace(/`(.*?)`/g, '<code class="bg-gray-200 px-1 rounded text-sm">$1</code>')
-                    .replace(/\n/g, '<br>')
-                }}
-              />
+              <div className="prose prose-sm max-w-none dark:prose-invert">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeHighlight]}
+                  components={{
+                    // 커스텀 스타일링
+                    h1: ({children}) => (
+                      <h1 className="text-lg font-bold text-gray-900 mb-2">{children}</h1>
+                    ),
+                    h2: ({children}) => (
+                      <h2 className="text-base font-semibold text-gray-800 mb-2">{children}</h2>
+                    ),
+                    h3: ({children}) => (
+                      <h3 className="text-sm font-medium text-gray-700 mb-1">{children}</h3>
+                    ),
+                    p: ({children}) => (
+                      <p className="text-gray-700 mb-2 leading-relaxed">{children}</p>
+                    ),
+                    ul: ({children}) => (
+                      <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>
+                    ),
+                    ol: ({children}) => (
+                      <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>
+                    ),
+                    li: ({children}) => (
+                      <li className="text-gray-700">{children}</li>
+                    ),
+                    code: ({inline, children}) => 
+                      inline ? (
+                        <code className="bg-gray-200 px-1 py-0.5 rounded text-sm font-mono text-blue-600">
+                          {children}
+                        </code>
+                      ) : (
+                        <code className="block bg-gray-800 text-gray-100 p-2 rounded text-sm font-mono overflow-x-auto">
+                          {children}
+                        </code>
+                      ),
+                    pre: ({children}) => (
+                      <pre className="bg-gray-800 p-2 rounded overflow-x-auto mb-2">
+                        {children}
+                      </pre>
+                    ),
+                    blockquote: ({children}) => (
+                      <blockquote className="border-l-4 border-blue-500 pl-3 py-1 bg-blue-50 mb-2">
+                        {children}
+                      </blockquote>
+                    ),
+                    strong: ({children}) => (
+                      <strong className="font-semibold text-gray-900">{children}</strong>
+                    ),
+                    em: ({children}) => (
+                      <em className="italic text-gray-800">{children}</em>
+                    ),
+                    a: ({children, href}) => (
+                      <a 
+                        href={href} 
+                        className="text-blue-600 hover:underline" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                      >
+                        {children}
+                      </a>
+                    ),
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
+              </div>
             ) : (
+              // 사용자 메시지는 그대로
               <p className="text-sm">{message.content}</p>
             )}
           </div>
