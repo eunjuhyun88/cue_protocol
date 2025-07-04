@@ -1,6 +1,7 @@
+
 // ============================================================================
 // 📁 backend/src/routes/auth/webauthn.ts
-// 🔐 WebAuthn 라우터 - DI 패턴 적용 (대폭 간소화)
+// 🔐 WebAuthn 라우터 - DI 패턴 완전 적용
 // ============================================================================
 
 import { Router, Request, Response } from 'express';
@@ -12,6 +13,80 @@ const router = Router();
 const getWebAuthnService = () => getService('WebAuthnService');
 const getAuthService = () => getService('AuthService');
 const getSessionService = () => getService('SessionService');
+const getDatabaseService = () => getService('ActiveDatabaseService');
+
+console.log('🔐 WebAuthn 라우트 초기화 (DI 패턴)');
+
+// ============================================================================
+// 🔥 통합 인증 API (추천)
+// ============================================================================
+
+router.post('/start', async (req: Request, res: Response): Promise<void> => {
+  console.log('🔍 === 통합 WebAuthn 인증 시작 ===');
+  
+  try {
+    const { username, email, deviceInfo } = req.body;
+    
+    // DI 서비스 사용
+    const webauthnService = getWebAuthnService() as {
+      startUnifiedAuthentication: (deviceInfo: any) => Promise<any>;
+      // 다른 필요한 메서드 타입도 여기에 추가하세요
+    };
+    const result = await webauthnService.startUnifiedAuthentication(deviceInfo);
+    
+    res.json({
+      success: true,
+      ...result,
+      message: '패스키를 사용하여 인증해주세요'
+    });
+  } catch (error: any) {
+    console.error('❌ 통합 인증 시작 오류:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Unified auth start failed',
+      message: error.message
+    });
+  }
+});
+
+router.post('/complete', async (req: Request, res: Response): Promise<void> => {
+  console.log('✅ === 통합 WebAuthn 인증 완료 ===');
+  
+  try {
+    const { credential, sessionId } = req.body;
+    
+    if (!credential || !sessionId) {
+      res.status(400).json({
+        success: false,
+        error: 'credential과 sessionId가 필요합니다'
+      });
+      return;
+    }
+    
+    // DI 서비스 사용
+    const webauthnService = getWebAuthnService() as {
+      completeUnifiedAuthentication: (credential: any, sessionId: any, method: string) => Promise<any>;
+    };
+    const result = await webauthnService.completeUnifiedAuthentication(
+      credential,
+      sessionId,
+      'WebAuthn'
+    );
+    
+    res.json({
+      success: true,
+      ...result,
+      message: result.isExistingUser ? '로그인 완료' : '회원가입 완료'
+    });
+  } catch (error: any) {
+    console.error('❌ 통합 인증 완료 오류:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Unified auth complete failed',
+      message: error.message
+    });
+  }
+});
 
 // ============================================================================
 // 🔥 회원가입 API (하위 호환성)
@@ -24,7 +99,10 @@ router.post('/register/start', async (req: Request, res: Response): Promise<void
     const { username, email, deviceInfo } = req.body;
     
     // DI 서비스 사용
-    const webauthnService = getWebAuthnService();
+    const webauthnService = getWebAuthnService() as {
+      startRegistration: (username: string, email: string, deviceInfo: any) => Promise<any>;
+      // 필요한 경우 다른 메서드 타입도 추가하세요
+    };
     const result = await webauthnService.startRegistration(username, email, deviceInfo);
     
     res.json({
@@ -32,7 +110,7 @@ router.post('/register/start', async (req: Request, res: Response): Promise<void
       ...result,
       message: '회원가입을 위한 패스키를 생성해주세요'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ 회원가입 시작 오류:', error);
     res.status(500).json({
       success: false,
@@ -69,7 +147,7 @@ router.post('/register/complete', async (req: Request, res: Response): Promise<v
       ...result,
       message: '회원가입이 완료되었습니다'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ 회원가입 완료 오류:', error);
     res.status(500).json({
       success: false,
@@ -98,7 +176,7 @@ router.post('/login/start', async (req: Request, res: Response): Promise<void> =
       ...result,
       message: '패스키를 사용하여 로그인해주세요'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ 로그인 시작 오류:', error);
     res.status(500).json({
       success: false,
@@ -135,7 +213,7 @@ router.post('/login/complete', async (req: Request, res: Response): Promise<void
       ...result,
       message: '로그인이 완료되었습니다'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ 로그인 완료 오류:', error);
     res.status(500).json({
       success: false,
@@ -167,7 +245,7 @@ router.post('/logout', async (req: Request, res: Response): Promise<void> => {
       message: '로그아웃되었습니다'
     });
     
-  } catch (error) {
+  } catch (error: any) {
     console.error('💥 로그아웃 오류:', error);
     res.status(500).json({
       success: false,
@@ -181,14 +259,16 @@ router.post('/logout', async (req: Request, res: Response): Promise<void> => {
 router.get('/status', async (req: Request, res: Response): Promise<void> => {
   try {
     // DI 서비스 상태 확인
-    const webauthnService = getWebAuthnService();
-    const authService = getAuthService();
-    const sessionService = getSessionService();
+    const webauthnService = getWebAuthnService() as { getStatus: () => Promise<any> };
+    const authService = getAuthService() as { getStatus: () => Promise<any> };
+    const sessionService = getSessionService() as { getStatus: () => Promise<any> };
+    const databaseService = getDatabaseService() as { getConnectionInfo: () => any };
     
     const status = {
       webauthn: await webauthnService.getStatus(),
       auth: await authService.getStatus(),
       session: await sessionService.getStatus(),
+      database: databaseService.getConnectionInfo(),
       timestamp: new Date().toISOString()
     };
     
@@ -197,7 +277,7 @@ router.get('/status', async (req: Request, res: Response): Promise<void> => {
       status,
       message: 'WebAuthn 시스템이 정상 작동 중입니다'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ 상태 확인 오류:', error);
     res.status(500).json({
       success: false,
@@ -205,71 +285,6 @@ router.get('/status', async (req: Request, res: Response): Promise<void> => {
       message: error.message
     });
   }
-});
-
-// 가이드 정보
-router.get('/guide', (req: Request, res: Response): void => {
-  res.json({
-    success: true,
-    service: 'WebAuthn 인증 서비스',
-    version: '2.0 (DI 적용)',
-    
-    workflow: {
-      registration: [
-        '1. POST /register/start - 회원가입 시작',
-        '2. 브라우저에서 패스키 생성',
-        '3. POST /register/complete - 회원가입 완료',
-        '4. sessionToken 받아서 저장'
-      ],
-      login: [
-        '1. POST /login/start - 로그인 시작',
-        '2. 브라우저에서 패스키 인증',
-        '3. POST /login/complete - 로그인 완료',
-        '4. sessionToken 받아서 저장'
-      ],
-      unified: [
-        '1. POST /start - 통합 인증 시작 (권장)',
-        '2. 브라우저에서 패스키 인증',
-        '3. POST /complete - 자동 로그인/가입',
-        '4. sessionToken 받아서 저장'
-      ]
-    },
-    
-    features: {
-      diIntegration: [
-        '✅ 의존성 주입으로 서비스 관리',
-        '✅ 복잡한 로직을 서비스 계층으로 분리',
-        '✅ 코드 재사용성 및 테스트 용이성 향상',
-        '✅ 설정 기반 서비스 교체 가능'
-      ],
-      compatibility: [
-        '✅ 기존 API 100% 호환',
-        '✅ 요청/응답 포맷 동일',
-        '✅ 하위 호환성 완전 지원',
-        '✅ 점진적 마이그레이션 가능'
-      ]
-    },
-    
-    endpoints: {
-      legacy: {
-        'POST /register/start': '회원가입 시작',
-        'POST /register/complete': '회원가입 완료',
-        'POST /login/start': '로그인 시작',
-        'POST /login/complete': '로그인 완료'
-      },
-      management: {
-        'POST /logout': '로그아웃',
-        'GET /status': '시스템 상태',
-        'GET /guide': '이 가이드'
-      },
-      recommended: {
-        'POST /start': '통합 인증 시작 (권장)',
-        'POST /complete': '통합 인증 완료 (권장)'
-      }
-    },
-    
-    note: 'DI 적용으로 코드가 대폭 간소화되었지만 모든 기능은 그대로 유지됩니다.'
-  });
 });
 
 console.log('✅ WebAuthn routes initialized with DI');
