@@ -1,504 +1,432 @@
 // ============================================================================
-// 📁 frontend/src/hooks/useChat.ts
-// 💬 채팅 훅 - 백엔드 완전 연동 (기존 구조 호환)
+// 🪝 개선된 useChat 훅 (실제 백엔드 연동, Mock 제거)
+// 경로: frontend/src/hooks/useChat.ts
+// 수정 사항: 백엔드 직접 연동, 에러 처리 강화, 상태 관리 개선
+// 호출 구조: 컴포넌트 → useChat → ChatAPI → 백엔드
 // ============================================================================
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { getUnifiedChatAPI, UnifiedChatAPI } from '../services/api/UnifiedChatAPI';
-import type { 
-  SendChatRequest, 
-  SendChatResponse, 
-  AIModel,
-  PersonalizationContext 
-} from '../services/api/UnifiedChatAPI';
-import type { ChatMessage } from '../types/chat.types';
+import { ChatAPI } from '../services/api/ChatAPI';
+import type { UnifiedAIPassport } from '../types/passport.types';
 
 // ============================================================================
-// 📝 타입 정의
+// 🏷️ 타입 정의
 // ============================================================================
 
-export interface UseChatOptions {
-  autoLoadModels?: boolean;
-  autoLoadContext?: boolean;
-  autoLoadHistory?: boolean;
-  defaultModel?: string;
-  enableRealtimeUpdates?: boolean;
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  model?: string;
+  cueReward?: number;
+  error?: boolean;
+  loading?: boolean;
 }
 
 export interface ChatState {
-  // 메시지 관련
   messages: ChatMessage[];
   isLoading: boolean;
-  isTyping: boolean;
-  
-  // 모델 관련
-  availableModels: AIModel[];
+  error: string | null;
+  connectionStatus: 'connected' | 'connecting' | 'disconnected' | 'error';
   selectedModel: string;
-  modelsLoading: boolean;
-  
-  // 개인화 관련
-  personalizationContext: PersonalizationContext | null;
-  contextLoading: boolean;
-  
-  // 시스템 상태
-  isConnected: boolean;
-  lastError: string | null;
-  
-  // 통계
+  lastCueReward: number;
   totalCueEarned: number;
-  totalMessages: number;
+  messageCount: number;
 }
 
-export interface ChatActions {
-  // 메시지 전송
-  sendMessage: (message: string, options?: Partial<SendChatRequest>) => Promise<void>;
-  
-  // 모델 관리
-  changeModel: (modelId: string) => void;
-  loadModels: () => Promise<void>;
-  
-  // 개인화
-  loadPersonalizationContext: () => Promise<void>;
-  
-  // 기록 관리
-  loadChatHistory: (options?: { page?: number; limit?: number }) => Promise<void>;
-  clearHistory: () => void;
-  
-  // 시스템
-  testConnection: () => Promise<boolean>;
-  resetError: () => void;
-  
-  // 유틸리티
-  retry: () => Promise<void>;
-  exportHistory: () => void;
+export interface UseChatOptions {
+  passport?: UnifiedAIPassport;
+  backendConnected?: boolean;
+  autoLoadHistory?: boolean;
+  maxMessages?: number;
+  enableRealtime?: boolean;
+}
+
+export interface UseChatReturn extends ChatState {
+  sendMessage: (message: string, model?: string) => Promise<void>;
+  setSelectedModel: (model: string) => void;
+  clearMessages: () => void;
+  retryLastMessage: () => Promise<void>;
+  loadHistory: () => Promise<void>;
+  getAvailableModels: () => Promise<string[]>;
+  exportHistory: () => ChatMessage[];
+  stats: {
+    totalMessages: number;
+    totalCueEarned: number;
+    averageResponseTime: number;
+    errorRate: number;
+  };
 }
 
 // ============================================================================
-// 🎯 useChat 훅 (백엔드 완전 연동)
+// 🪝 개선된 useChat 훅
 // ============================================================================
 
-export function useChat(options: UseChatOptions = {}): ChatState & ChatActions {
+export const useChat = (options: UseChatOptions = {}): UseChatReturn => {
   const {
-    autoLoadModels = true,
-    autoLoadContext = true,
+    passport,
+    backendConnected = true,
     autoLoadHistory = true,
-    defaultModel = 'gpt-4o',
-    enableRealtimeUpdates = false
+    maxMessages = 100,
+    enableRealtime = false
   } = options;
 
   // ============================================================================
   // 📊 상태 관리
   // ============================================================================
 
-  const [state, setState] = useState<ChatState>({
-    messages: [],
-    isLoading: false,
-    isTyping: false,
-    availableModels: [],
-    selectedModel: defaultModel,
-    modelsLoading: false,
-    personalizationContext: null,
-    contextLoading: false,
-    isConnected: false,
-    lastError: null,
-    totalCueEarned: 0,
-    totalMessages: 0
-  });
-
-  // API 인스턴스 및 참조
-  const apiRef = useRef<UnifiedChatAPI>(getUnifiedChatAPI());
-  const lastMessageRef = useRef<string>(''); // 재시도용
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<ChatState['connectionStatus']>('disconnected');
+  const [selectedModel, setSelectedModel] = useState('gpt-4');
+  const [lastCueReward, setLastCueReward] = useState(0);
+  const [totalCueEarned, setTotalCueEarned] = useState(0);
+  const [messageCount, setMessageCount] = useState(0);
 
   // ============================================================================
-  // 🔧 유틸리티 함수들
+  // 📈 통계 추적
   // ============================================================================
 
-  /**
-   * 상태 업데이트 헬퍼
-   */
-  const updateState = useCallback((updates: Partial<ChatState>) => {
-    setState(prev => ({ ...prev, ...updates }));
-  }, []);
+  const [responseTimes, setResponseTimes] = useState<number[]>([]);
+  const [errorCount, setErrorCount] = useState(0);
+  const lastMessageRef = useRef<{ message: string; model: string } | null>(null);
 
-  /**
-   * 에러 처리 헬퍼
-   */
-  const handleError = useCallback((error: Error, context?: string) => {
-    console.error(`💥 Chat 오류${context ? ` (${context})` : ''}:`, error);
-    updateState({ 
-      lastError: error.message,
-      isLoading: false,
-      isTyping: false 
-    });
-  }, [updateState]);
+  // ============================================================================
+  // 🔧 API 클라이언트 초기화
+  // ============================================================================
 
-  /**
-   * 새 메시지를 상태에 추가
-   */
-  const addMessage = useCallback((message: Omit<ChatMessage, 'id'>) => {
-    const newMessage: ChatMessage = {
-      ...message,
-      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  const chatAPI = useRef(new ChatAPI()).current;
+
+  // ============================================================================
+  // 🔄 초기화 및 히스토리 로드
+  // ============================================================================
+
+  useEffect(() => {
+    const initializeChat = async () => {
+      console.log('🪝 useChat 초기화 시작...');
+      
+      try {
+        setConnectionStatus('connecting');
+        
+        // 백엔드 연결 상태 확인
+        if (backendConnected) {
+          console.log('🔗 백엔드 연결 확인 중...');
+          
+          // 간단한 헬스체크 요청
+          const healthCheck = await fetch('http://localhost:3001/health');
+          if (healthCheck.ok) {
+            setConnectionStatus('connected');
+            console.log('✅ 백엔드 연결 성공');
+          } else {
+            throw new Error('백엔드 헬스체크 실패');
+          }
+          
+          // 자동 히스토리 로드
+          if (autoLoadHistory && passport?.did) {
+            await loadChatHistory();
+          }
+          
+        } else {
+          setConnectionStatus('disconnected');
+          console.log('⚠️ 백엔드 연결 없음 - 로컬 모드');
+        }
+        
+      } catch (error) {
+        console.error('❌ useChat 초기화 실패:', error);
+        setConnectionStatus('error');
+        setError('채팅 서비스 연결에 실패했습니다');
+      }
     };
 
-    setState(prev => ({
-      ...prev,
-      messages: [...prev.messages, newMessage],
-      totalMessages: prev.totalMessages + 1
-    }));
-
-    return newMessage;
-  }, []);
+    initializeChat();
+  }, [backendConnected, passport?.did, autoLoadHistory]);
 
   // ============================================================================
-  // 💬 채팅 핵심 기능
+  // 💬 메시지 전송 (핵심 기능)
   // ============================================================================
 
-  /**
-   * 메시지 전송 (백엔드 연동)
-   */
-  const sendMessage = useCallback(async (message: string, options: Partial<SendChatRequest> = {}) => {
+  const sendMessage = useCallback(async (message: string, model?: string) => {
     if (!message.trim()) {
-      console.warn('빈 메시지는 전송할 수 없습니다');
+      setError('메시지를 입력해주세요');
       return;
     }
 
-    lastMessageRef.current = message; // 재시도용 저장
+    if (isLoading) {
+      console.warn('⚠️ 이미 메시지 처리 중입니다');
+      return;
+    }
+
+    const startTime = Date.now();
+    const effectiveModel = model || selectedModel;
+    const userMessageId = `user_${Date.now()}`;
+    const aiMessageId = `ai_${Date.now()}`;
+
+    // 사용자 메시지 즉시 추가
+    const userMessage: ChatMessage = {
+      id: userMessageId,
+      role: 'user',
+      content: message,
+      timestamp: new Date(),
+      model: effectiveModel
+    };
+
+    // 로딩 상태의 AI 메시지 추가
+    const loadingMessage: ChatMessage = {
+      id: aiMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      model: effectiveModel,
+      loading: true
+    };
+
+    setMessages(prev => [...prev, userMessage, loadingMessage]);
+    setIsLoading(true);
+    setError(null);
+    setConnectionStatus('connecting');
+    lastMessageRef.current = { message, model: effectiveModel };
+
+    console.log(`💬 메시지 전송: "${message.substring(0, 50)}..." (모델: ${effectiveModel})`);
 
     try {
-      // 로딩 상태 시작
-      updateState({ 
-        isLoading: true, 
-        isTyping: true, 
-        lastError: null 
-      });
-
-      // 사용자 메시지 추가
-      addMessage({
-        type: 'user',
-        content: message,
-        timestamp: new Date().toISOString(),
-        metadata: { model: state.selectedModel }
-      });
-
-      console.log('💬 메시지 전송:', { message, model: state.selectedModel });
-
-      // 백엔드로 메시지 전송
-      const request: SendChatRequest = {
-        message,
-        model: state.selectedModel,
-        includeContext: true,
-        ...options
-      };
-
-      const response: SendChatResponse = await apiRef.current.sendMessage(request);
-
-      if (!response.success) {
-        throw new Error(response.error || 'AI 응답 실패');
-      }
-
-      // AI 응답 메시지 추가
-      addMessage({
-        type: 'ai',
-        content: response.response,
-        timestamp: response.timestamp,
-        model: response.model,
-        cueReward: response.cueReward,
-        trustScore: response.trustScore,
-        contextLearned: response.contextLearned,
-        qualityScore: response.qualityScore,
-        metadata: {
-          processingTime: response.processingTime,
-          tokensUsed: response.tokensUsed,
-          messageId: response.aiMetadata.messageId,
-          conversationId: response.aiMetadata.conversationId,
-          personalityMatch: response.aiMetadata.personalityMatch
-        }
-      });
-
-      // CUE 토큰 누적
-      updateState({
-        totalCueEarned: state.totalCueEarned + (response.cueReward || 0)
-      });
-
-      console.log('✅ 메시지 전송 완료:', {
-        model: response.model,
-        cueReward: response.cueReward,
-        processingTime: response.processingTime
-      });
-
-    } catch (error) {
-      handleError(error as Error, '메시지 전송');
+      // 실제 백엔드 API 호출
+      const response = await chatAPI.sendMessage(message, effectiveModel, passport?.did);
       
-      // 에러 메시지 추가
-      addMessage({
-        type: 'ai',
-        content: `죄송합니다. 메시지 처리 중 오류가 발생했습니다: ${error.message}`,
-        timestamp: new Date().toISOString(),
-        metadata: { error: true }
-      });
+      if (response.success) {
+        const responseTime = Date.now() - startTime;
+        
+        // AI 응답으로 로딩 메시지 교체
+        const aiResponseMessage: ChatMessage = {
+          id: aiMessageId,
+          role: 'assistant',
+          content: response.response,
+          timestamp: new Date(),
+          model: response.model || effectiveModel,
+          cueReward: response.cueReward || 0,
+          loading: false
+        };
 
-    } finally {
-      updateState({ 
-        isLoading: false, 
-        isTyping: false 
-      });
-    }
-  }, [state.selectedModel, state.totalCueEarned, updateState, handleError, addMessage]);
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === aiMessageId ? aiResponseMessage : msg
+          )
+        );
 
-  // ============================================================================
-  // 🤖 모델 관리
-  // ============================================================================
+        // 통계 업데이트
+        setLastCueReward(response.cueReward || 0);
+        setTotalCueEarned(prev => prev + (response.cueReward || 0));
+        setMessageCount(prev => prev + 1);
+        setResponseTimes(prev => [...prev.slice(-19), responseTime]); // 최근 20개만 유지
+        setConnectionStatus('connected');
 
-  /**
-   * 사용 가능한 모델 목록 로드
-   */
-  const loadModels = useCallback(async () => {
-    try {
-      updateState({ modelsLoading: true, lastError: null });
-
-      console.log('📋 모델 목록 로드 중...');
-      const models = await apiRef.current.getAvailableModels();
-
-      updateState({ 
-        availableModels: models,
-        modelsLoading: false 
-      });
-
-      console.log('✅ 모델 목록 로드 완료:', models.length, '개');
-
-    } catch (error) {
-      handleError(error as Error, '모델 목록 로드');
-      updateState({ modelsLoading: false });
-    }
-  }, [updateState, handleError]);
-
-  /**
-   * 모델 변경
-   */
-  const changeModel = useCallback((modelId: string) => {
-    console.log('🔄 모델 변경:', state.selectedModel, '→', modelId);
-    updateState({ selectedModel: modelId });
-    
-    // 모델 변경 알림 메시지 추가 (선택사항)
-    addMessage({
-      type: 'ai',
-      content: `AI 모델이 ${modelId}로 변경되었습니다.`,
-      timestamp: new Date().toISOString(),
-      metadata: { system: true, modelChange: true }
-    });
-  }, [state.selectedModel, updateState, addMessage]);
-
-  // ============================================================================
-  // 🧠 개인화 기능
-  // ============================================================================
-
-  /**
-   * 개인화 컨텍스트 로드
-   */
-  const loadPersonalizationContext = useCallback(async () => {
-    try {
-      updateState({ contextLoading: true, lastError: null });
-
-      console.log('🧠 개인화 컨텍스트 로드 중...');
-      const context = await apiRef.current.getPersonalizationContext();
-
-      updateState({ 
-        personalizationContext: context,
-        contextLoading: false 
-      });
-
-      console.log('✅ 개인화 컨텍스트 로드 완료:', context);
-
-    } catch (error) {
-      handleError(error as Error, '개인화 컨텍스트 로드');
-      updateState({ contextLoading: false });
-    }
-  }, [updateState, handleError]);
-
-  // ============================================================================
-  // 📚 대화 기록 관리
-  // ============================================================================
-
-  /**
-   * 대화 기록 로드
-   */
-  const loadChatHistory = useCallback(async (options: { page?: number; limit?: number } = {}) => {
-    try {
-      updateState({ isLoading: true, lastError: null });
-
-      console.log('📚 대화 기록 로드 중...');
-      const history = await apiRef.current.getChatHistory(options);
-
-      // 기록을 ChatMessage 형식으로 변환
-      const convertedHistory: ChatMessage[] = history.map(msg => ({
-        id: msg.id || `hist_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type: msg.type,
-        content: msg.content,
-        timestamp: msg.timestamp,
-        model: msg.model,
-        cueReward: msg.cueReward,
-        trustScore: msg.trustScore,
-        contextLearned: msg.contextLearned,
-        qualityScore: msg.qualityScore,
-        metadata: msg.metadata
-      }));
-
-      updateState({ 
-        messages: convertedHistory,
-        totalMessages: convertedHistory.length,
-        isLoading: false 
-      });
-
-      console.log('✅ 대화 기록 로드 완료:', convertedHistory.length, '개');
-
-    } catch (error) {
-      handleError(error as Error, '대화 기록 로드');
-    }
-  }, [updateState, handleError]);
-
-  /**
-   * 대화 기록 초기화
-   */
-  const clearHistory = useCallback(() => {
-    console.log('🧹 대화 기록 초기화');
-    updateState({ 
-      messages: [],
-      totalMessages: 0,
-      totalCueEarned: 0 
-    });
-  }, [updateState]);
-
-  // ============================================================================
-  // 🔍 시스템 관리
-  // ============================================================================
-
-  /**
-   * 연결 상태 테스트
-   */
-  const testConnection = useCallback(async (): Promise<boolean> => {
-    try {
-      console.log('🔍 연결 상태 테스트 중...');
-      const isConnected = await apiRef.current.testConnection();
-      
-      updateState({ isConnected });
-      
-      if (isConnected) {
-        console.log('✅ 백엔드 연결 정상');
+        console.log(`✅ AI 응답 완료 (${responseTime}ms, CUE: ${response.cueReward || 0})`);
+        
       } else {
-        console.log('❌ 백엔드 연결 실패');
+        throw new Error(response.error || 'AI 응답 생성 실패');
       }
+
+    } catch (error: any) {
+      console.error('❌ 메시지 전송 실패:', error);
       
-      return isConnected;
-    } catch (error) {
-      console.error('💥 연결 테스트 오류:', error);
-      updateState({ isConnected: false });
-      return false;
-    }
-  }, [updateState]);
-
-  /**
-   * 에러 상태 리셋
-   */
-  const resetError = useCallback(() => {
-    updateState({ lastError: null });
-  }, [updateState]);
-
-  /**
-   * 마지막 작업 재시도
-   */
-  const retry = useCallback(async () => {
-    if (lastMessageRef.current) {
-      console.log('🔄 마지막 메시지 재시도:', lastMessageRef.current);
-      await sendMessage(lastMessageRef.current);
-    } else {
-      console.log('🔄 연결 상태 재시도');
-      await testConnection();
-    }
-  }, [sendMessage, testConnection]);
-
-  /**
-   * 대화 기록 내보내기
-   */
-  const exportHistory = useCallback(() => {
-    try {
-      const exportData = {
-        messages: state.messages,
-        totalMessages: state.totalMessages,
-        totalCueEarned: state.totalCueEarned,
-        selectedModel: state.selectedModel,
-        exportedAt: new Date().toISOString()
+      setErrorCount(prev => prev + 1);
+      setConnectionStatus('error');
+      
+      // 에러 메시지로 로딩 메시지 교체
+      const errorMessage: ChatMessage = {
+        id: aiMessageId,
+        role: 'assistant',
+        content: `죄송합니다. 메시지 처리 중 오류가 발생했습니다: ${error.message}`,
+        timestamp: new Date(),
+        model: effectiveModel,
+        error: true,
+        loading: false
       };
 
-      const dataStr = JSON.stringify(exportData, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === aiMessageId ? errorMessage : msg
+        )
+      );
+
+      setError(`메시지 전송 실패: ${error.message}`);
       
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `chat-history-${new Date().toISOString().split('T')[0]}.json`;
-      link.click();
-      
-      URL.revokeObjectURL(url);
-      
-      console.log('💾 대화 기록 내보내기 완료');
-    } catch (error) {
-      handleError(error as Error, '대화 기록 내보내기');
-    }
-  }, [state, handleError]);
-
-  // ============================================================================
-  // 🚀 초기화 및 생명주기
-  // ============================================================================
-
-  useEffect(() => {
-    let mounted = true;
-
-    const initialize = async () => {
-      console.log('🚀 useChat 초기화 시작');
-
-      // 연결 상태 확인
-      const isConnected = await testConnection();
-      
-      if (!mounted) return;
-
-      if (isConnected) {
-        // 모델 목록 로드
-        if (autoLoadModels) {
-          await loadModels();
-        }
-
-        // 개인화 컨텍스트 로드
-        if (autoLoadContext) {
-          await loadPersonalizationContext();
-        }
-
-        // 대화 기록 로드
-        if (autoLoadHistory) {
-          await loadChatHistory({ limit: 50 });
-        }
+      // 연결 상태에 따른 폴백 처리
+      if (!backendConnected || error.message.includes('fetch')) {
+        await handleOfflineResponse(message, effectiveModel, aiMessageId);
       }
+    } finally {
+      setIsLoading(false);
+      
+      // 메시지 수 제한 적용
+      setMessages(prev => 
+        prev.length > maxMessages ? prev.slice(-maxMessages) : prev
+      );
+    }
+  }, [isLoading, selectedModel, passport?.did, chatAPI, backendConnected, maxMessages]);
 
-      console.log('✅ useChat 초기화 완료');
+  // ============================================================================
+  // 🔄 히스토리 로드
+  // ============================================================================
+
+  const loadChatHistory = async (): Promise<void> => {
+    if (!passport?.did) {
+      console.log('⚠️ 사용자 DID 없음 - 히스토리 로드 생략');
+      return;
+    }
+
+    console.log('📋 채팅 히스토리 로드 중...');
+
+    try {
+      const response = await fetch(`http://localhost:3001/api/ai/history/${passport.did}?limit=50`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.success && data.history) {
+          const historyMessages: ChatMessage[] = data.history.map((msg: any) => ({
+            id: msg.id || `history_${Date.now()}_${Math.random()}`,
+            role: msg.message_type === 'user' ? 'user' : 'assistant',
+            content: msg.content,
+            timestamp: new Date(msg.created_at || msg.timestamp),
+            model: msg.ai_model,
+            cueReward: msg.cue_tokens_earned || 0
+          }));
+
+          setMessages(historyMessages);
+          
+          // 통계 업데이트
+          const totalCue = historyMessages
+            .filter(msg => msg.role === 'assistant')
+            .reduce((sum, msg) => sum + (msg.cueReward || 0), 0);
+          
+          setTotalCueEarned(totalCue);
+          setMessageCount(historyMessages.filter(msg => msg.role === 'user').length);
+          
+          console.log(`✅ 히스토리 로드 완료: ${historyMessages.length}개 메시지`);
+        }
+      } else {
+        console.warn('⚠️ 히스토리 로드 실패:', response.status);
+      }
+    } catch (error) {
+      console.error('❌ 히스토리 로드 오류:', error);
+    }
+  };
+
+  // ============================================================================
+  // 🛠️ 오프라인 폴백 처리
+  // ============================================================================
+
+  const handleOfflineResponse = async (
+    message: string, 
+    model: string, 
+    messageId: string
+  ): Promise<void> => {
+    console.log('📱 오프라인 모드 - 로컬 응답 생성');
+
+    const offlineResponses = [
+      `"${message}"에 대한 답변을 드리고 싶지만, 현재 AI 서비스에 연결할 수 없습니다.`,
+      '현재 오프라인 모드입니다. 네트워크 연결을 확인하고 다시 시도해주세요.',
+      '서버와의 연결이 끊어졌습니다. 잠시 후 다시 시도해주시거나 설정을 확인해주세요.'
+    ];
+
+    const randomResponse = offlineResponses[Math.floor(Math.random() * offlineResponses.length)];
+
+    const offlineMessage: ChatMessage = {
+      id: messageId,
+      role: 'assistant',
+      content: randomResponse,
+      timestamp: new Date(),
+      model: `${model}-offline`,
+      cueReward: 0,
+      error: true
     };
 
-    initialize();
+    setMessages(prev => 
+      prev.map(msg => 
+        msg.id === messageId ? offlineMessage : msg
+      )
+    );
+  };
 
-    return () => {
-      mounted = false;
-    };
-  }, [autoLoadModels, autoLoadContext, autoLoadHistory]);
+  // ============================================================================
+  // 🔄 재시도 기능
+  // ============================================================================
 
-  // 실시간 업데이트 (선택사항)
-  useEffect(() => {
-    if (!enableRealtimeUpdates) return;
+  const retryLastMessage = useCallback(async (): Promise<void> => {
+    if (!lastMessageRef.current) {
+      setError('재시도할 메시지가 없습니다');
+      return;
+    }
 
-    const interval = setInterval(async () => {
-      await testConnection();
-    }, 30000); // 30초마다 연결 상태 확인
+    const { message, model } = lastMessageRef.current;
+    console.log('🔄 마지막 메시지 재시도:', message.substring(0, 30));
+    
+    await sendMessage(message, model);
+  }, [sendMessage]);
 
-    return () => clearInterval(interval);
-  }, [enableRealtimeUpdates, testConnection]);
+  // ============================================================================
+  // 🤖 사용 가능한 모델 조회
+  // ============================================================================
+
+  const getAvailableModels = useCallback(async (): Promise<string[]> => {
+    try {
+      const response = await fetch('http://localhost:3001/api/ai/models');
+      
+      if (response.ok) {
+        const data = await response.json();
+        return data.models?.map((model: any) => model.id) || ['gpt-4', 'claude-3-sonnet'];
+      }
+    } catch (error) {
+      console.warn('⚠️ 모델 목록 조회 실패:', error);
+    }
+    
+    // 기본 모델 목록
+    return ['gpt-4', 'gpt-3.5-turbo', 'claude-3-sonnet', 'claude-3-haiku'];
+  }, []);
+
+  // ============================================================================
+  // 🧹 유틸리티 함수들
+  // ============================================================================
+
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+    setError(null);
+    setLastCueReward(0);
+    setMessageCount(0);
+    setResponseTimes([]);
+    setErrorCount(0);
+    console.log('🧹 채팅 메시지 초기화 완료');
+  }, []);
+
+  const exportHistory = useCallback((): ChatMessage[] => {
+    return [...messages];
+  }, [messages]);
+
+  // ============================================================================
+  // 📊 통계 계산
+  // ============================================================================
+
+  const stats = {
+    totalMessages: messageCount,
+    totalCueEarned,
+    averageResponseTime: responseTimes.length > 0 
+      ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
+      : 0,
+    errorRate: messageCount > 0 
+      ? Math.round((errorCount / messageCount) * 100) 
+      : 0
+  };
+
+  // ============================================================================
+  // 🔄 모델 변경 처리
+  // ============================================================================
+
+  const handleSetSelectedModel = useCallback((model: string) => {
+    setSelectedModel(model);
+    console.log(`🤖 AI 모델 변경: ${model}`);
+  }, []);
 
   // ============================================================================
   // 📤 반환값
@@ -506,48 +434,244 @@ export function useChat(options: UseChatOptions = {}): ChatState & ChatActions {
 
   return {
     // 상태
-    ...state,
+    messages,
+    isLoading,
+    error,
+    connectionStatus,
+    selectedModel,
+    lastCueReward,
+    totalCueEarned,
+    messageCount,
     
     // 액션
     sendMessage,
-    changeModel,
-    loadModels,
-    loadPersonalizationContext,
-    loadChatHistory,
-    clearHistory,
-    testConnection,
-    resetError,
-    retry,
-    exportHistory
+    setSelectedModel: handleSetSelectedModel,
+    clearMessages,
+    retryLastMessage,
+    loadHistory: loadChatHistory,
+    getAvailableModels,
+    exportHistory,
+    
+    // 통계
+    stats
   };
-}
+};
 
 // ============================================================================
-// 📤 편의 훅들
+// 📤 추가 유틸리티 훅들
 // ============================================================================
 
 /**
- * 간단한 채팅 훅 (최소 기능)
+ * 채팅 히스토리를 로컬 스토리지에 저장/복원하는 훅
  */
-export function useSimpleChat(defaultModel?: string) {
-  return useChat({
-    autoLoadModels: false,
-    autoLoadContext: false,
-    autoLoadHistory: false,
-    defaultModel
-  });
-}
+export const useChatPersistence = (userDid?: string) => {
+  const storageKey = `chat_history_${userDid || 'anonymous'}`;
+
+  const saveMessages = useCallback((messages: ChatMessage[]) => {
+    try {
+      const dataToSave = {
+        messages,
+        timestamp: new Date().toISOString(),
+        userDid
+      };
+      localStorage.setItem(storageKey, JSON.stringify(dataToSave));
+      console.log(`💾 채팅 히스토리 저장됨: ${messages.length}개 메시지`);
+    } catch (error) {
+      console.warn('⚠️ 로컬 저장 실패:', error);
+    }
+  }, [storageKey, userDid]);
+
+  const loadMessages = useCallback((): ChatMessage[] => {
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        const data = JSON.parse(saved);
+        console.log(`💾 로컬 히스토리 로드됨: ${data.messages?.length || 0}개 메시지`);
+        return data.messages || [];
+      }
+    } catch (error) {
+      console.warn('⚠️ 로컬 로드 실패:', error);
+    }
+    return [];
+  }, [storageKey]);
+
+  const clearStorage = useCallback(() => {
+    try {
+      localStorage.removeItem(storageKey);
+      console.log('🧹 로컬 히스토리 삭제됨');
+    } catch (error) {
+      console.warn('⚠️ 로컬 삭제 실패:', error);
+    }
+  }, [storageKey]);
+
+  return { saveMessages, loadMessages, clearStorage };
+};
 
 /**
- * 완전한 채팅 훅 (모든 기능)
+ * 실시간 채팅 상태를 관리하는 훅
  */
-export function useFullChat() {
-  return useChat({
-    autoLoadModels: true,
-    autoLoadContext: true,
-    autoLoadHistory: true,
-    enableRealtimeUpdates: true
-  });
-}
+export const useChatRealtime = (userDid?: string, enabled: boolean = false) => {
+  const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const socketRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    if (!enabled || !userDid) return;
+
+    console.log('🔗 실시간 채팅 연결 시도...');
+
+    try {
+      const wsUrl = `ws://localhost:3001/chat?userDid=${userDid}`;
+      const socket = new WebSocket(wsUrl);
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        console.log('✅ 실시간 채팅 연결됨');
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          switch (data.type) {
+            case 'online_users':
+              setOnlineUsers(data.users || []);
+              break;
+            case 'user_typing':
+              setTypingUsers(prev => 
+                prev.includes(data.userDid) ? prev : [...prev, data.userDid]
+              );
+              break;
+            case 'user_stopped_typing':
+              setTypingUsers(prev => prev.filter(id => id !== data.userDid));
+              break;
+          }
+        } catch (error) {
+          console.warn('⚠️ 실시간 메시지 파싱 실패:', error);
+        }
+      };
+
+      socket.onerror = (error) => {
+        console.error('❌ 실시간 채팅 오류:', error);
+      };
+
+      socket.onclose = () => {
+        console.log('🔌 실시간 채팅 연결 종료');
+      };
+
+    } catch (error) {
+      console.warn('⚠️ 실시간 채팅 초기화 실패:', error);
+    }
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
+    };
+  }, [enabled, userDid]);
+
+  const sendTyping = useCallback(() => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        type: 'typing',
+        userDid
+      }));
+    }
+  }, [userDid]);
+
+  const sendStoppedTyping = useCallback(() => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        type: 'stopped_typing',
+        userDid
+      }));
+    }
+  }, [userDid]);
+
+  return {
+    onlineUsers,
+    typingUsers,
+    sendTyping,
+    sendStoppedTyping,
+    isConnected: socketRef.current?.readyState === WebSocket.OPEN
+  };
+};
+
+/**
+ * AI 모델 선택을 관리하는 훅
+ */
+export const useModelSelector = () => {
+  const [availableModels, setAvailableModels] = useState<Array<{
+    id: string;
+    name: string;
+    provider: string;
+    available: boolean;
+    recommended?: boolean;
+  }>>([]);
+  const [selectedModel, setSelectedModel] = useState('gpt-4');
+  const [loading, setLoading] = useState(false);
+
+  const loadModels = useCallback(async () => {
+    setLoading(true);
+    console.log('🤖 사용 가능한 AI 모델 조회 중...');
+
+    try {
+      const response = await fetch('http://localhost:3001/api/ai/models');
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        if (data.success && data.models) {
+          setAvailableModels(data.models);
+          console.log(`✅ AI 모델 로드 완료: ${data.models.length}개`);
+          
+          // 권장 모델이 있으면 자동 선택
+          const recommendedModel = data.models.find((model: any) => model.recommended);
+          if (recommendedModel && recommendedModel.available) {
+            setSelectedModel(recommendedModel.id);
+          }
+        }
+      } else {
+        throw new Error('모델 목록 조회 실패');
+      }
+    } catch (error) {
+      console.warn('⚠️ 모델 로드 실패, 기본 모델 사용:', error);
+      
+      // 기본 모델 목록
+      setAvailableModels([
+        { id: 'gpt-4', name: 'GPT-4', provider: 'OpenAI', available: false },
+        { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: 'OpenAI', available: false },
+        { id: 'claude-3-sonnet', name: 'Claude 3 Sonnet', provider: 'Anthropic', available: false },
+        { id: 'claude-3-haiku', name: 'Claude 3 Haiku', provider: 'Anthropic', available: false }
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
+
+  const selectModel = useCallback((modelId: string) => {
+    const model = availableModels.find(m => m.id === modelId);
+    if (model) {
+      setSelectedModel(modelId);
+      console.log(`🤖 AI 모델 선택: ${model.name} (${model.provider})`);
+    }
+  }, [availableModels]);
+
+  return {
+    availableModels,
+    selectedModel,
+    loading,
+    selectModel,
+    refreshModels: loadModels
+  };
+};
+
+// ============================================================================
+// 📤 기본 export
+// ============================================================================
 
 export default useChat;
