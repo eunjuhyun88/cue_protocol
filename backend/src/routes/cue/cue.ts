@@ -1,260 +1,413 @@
 // ============================================================================
-// 💎 CUE 토큰 라우트 (완전한 구현)
-// 경로: backend/src/routes/cue/cue.ts
-// 용도: CUE 토큰 마이닝, 잔액 조회, 거래 내역 API
+// 📁 backend/src/routes/cue/cue.ts
+// 💰 CUE 토큰 관련 라우트 (DI 컨테이너 연동, 중복 제거 완료)
 // ============================================================================
 
-import express, { Request, Response, Router } from 'express';
-import { DatabaseService } from '../../services/database/DatabaseService';
-import { supabaseService } from '../../services/database/SupabaseService';
-import { CUEMiningService } from '../../services/cue/CUEMiningService';
+import { Router, Request, Response } from 'express';
+import { DIContainer } from '../../core/DIContainer';
 
-// 라우터 생성
-const router: Router = express.Router();
+/**
+ * CUE 라우트 클래스 (DI 패턴 적용)
+ */
+export class CUERoutes {
+  private router: Router;
+  private container: DIContainer;
 
-// 데이터베이스 서비스 선택
-const db = process.env.USE_MOCK_DATABASE === 'true' || 
-          !process.env.SUPABASE_URL || 
-          process.env.SUPABASE_URL.includes('dummy')
-  ? DatabaseService.getInstance()
-  : supabaseService;
-
-console.log('💎 CUE routes initialized with:', db.constructor.name);
-
-// ============================================================================
-// 💰 CUE 잔액 조회
-// GET /api/cue/:userDid/balance
-// ============================================================================
-
-router.get('/:userDid/balance', async (req: Request, res: Response): Promise<void> => {
-  const { userDid } = req.params;
-
-  console.log(`💰 CUE 잔액 조회 요청: ${userDid}`);
-
-  if (!userDid) {
-    res.status(400).json({
-      success: false,
-      error: 'User DID is required'
-    });
-    return;
+  constructor(container: DIContainer) {
+    this.router = Router();
+    this.container = container;
+    this.setupRoutes();
   }
 
-  try {
-    const balance = await db.getCUEBalance(userDid);
+  /**
+   * 라우트 설정
+   */
+  private setupRoutes(): void {
+    console.log('🔧 CUE Routes 설정 시작...');
+
+    // CUE 잔액 조회
+    this.router.get('/balance/:did', this.getCUEBalance.bind(this));
     
-    res.json({
-      success: true,
-      balance,
-      userDid,
-      currency: 'CUE',
-      timestamp: new Date().toISOString()
-    });
-
-    console.log(`✅ CUE 잔액 조회 성공: ${userDid} - ${balance} CUE`);
-
-  } catch (error: any) {
-    console.error('❌ CUE 잔액 조회 오류:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get CUE balance',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// ============================================================================
-// 📊 CUE 거래 내역 조회
-// GET /api/cue/:userDid/transactions
-// ============================================================================
-
-router.get('/:userDid/transactions', async (req: Request, res: Response): Promise<void> => {
-  const { userDid } = req.params;
-  const { limit = 50, offset = 0 } = req.query;
-
-  console.log(`📊 CUE 거래 내역 조회: ${userDid}`);
-
-  if (!userDid) {
-    res.status(400).json({
-      success: false,
-      error: 'User DID is required'
-    });
-    return;
-  }
-
-  try {
-    const cueService = new CUEMiningService(db);
-    const transactions = await cueService.getTransactionHistory(
-      userDid, 
-      parseInt(limit as string)
-    );
+    // CUE 거래 내역
+    this.router.get('/transactions/:did', this.getCUETransactions.bind(this));
     
-    res.json({
-      success: true,
-      transactions,
-      count: transactions.length,
-      userDid,
-      pagination: {
-        limit: parseInt(limit as string),
-        offset: parseInt(offset as string)
-      }
-    });
-
-    console.log(`✅ CUE 거래 내역 조회 성공: ${userDid} - ${transactions.length}건`);
-
-  } catch (error: any) {
-    console.error('❌ CUE 거래 내역 조회 오류:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get CUE transactions',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// ============================================================================
-// ⛏️ CUE 마이닝 실행
-// POST /api/cue/mine
-// ============================================================================
-
-router.post('/mine', async (req: Request, res: Response): Promise<void> => {
-  const { userDid, activity, data = {} } = req.body;
-
-  console.log(`⛏️ CUE 마이닝 요청: ${userDid} - ${activity}`);
-
-  if (!userDid || !activity) {
-    res.status(400).json({
-      success: false,
-      error: 'User DID and activity type are required'
-    });
-    return;
-  }
-
-  try {
-    const cueService = new CUEMiningService(db);
-    let minedAmount = 0;
+    // CUE 전송
+    this.router.post('/transfer', this.transferCUE.bind(this));
     
-    // 활동에 따른 CUE 마이닝
-    switch (activity) {
-      case 'ai_chat':
-        minedAmount = await cueService.mineFromInteraction({
-          userDid,
-          messageContent: data.message || 'AI Chat interaction',
-          aiResponse: data.response || 'AI response',
-          model: data.model || 'default',
-          personalContextUsed: data.personalContextUsed || 0,
-          responseTime: data.responseTime || 1000,
-          conversationId: data.conversationId || `conv_${Date.now()}`
-        });
-        break;
-        
-      case 'data_extraction':
-        minedAmount = await cueService.mineFromDataExtraction({
-          userDid,
-          dataType: data.dataType || 'text',
-          dataSize: data.dataSize || 100,
-          extractionQuality: data.extractionQuality || 0.8,
-          processingTime: data.processingTime || 5000
-        });
-        break;
-        
-      case 'daily_login':
-        minedAmount = await cueService.mineLoginBonus(userDid);
-        break;
-        
-      case 'manual':
-        minedAmount = Math.random() * 3 + 1; // 1-4 CUE
-        await cueService.awardCUE({
-          userDid,
-          amount: minedAmount,
-          reason: 'manual_mining',
-          description: 'Manual CUE mining reward',
-          metadata: data
-        });
-        break;
-        
-      default:
+    // CUE 스테이킹
+    this.router.post('/stake', this.stakeCUE.bind(this));
+    
+    // CUE 언스테이킹
+    this.router.post('/unstake', this.unstakeCUE.bind(this));
+    
+    // 사용자 CUE 통계
+    this.router.get('/stats/:did', this.getCUEStats.bind(this));
+
+    console.log('✅ CUE Routes 설정 완료');
+  }
+
+  /**
+   * CUE 잔액 조회
+   */
+  private async getCUEBalance(req: Request, res: Response): Promise<void> {
+    try {
+      console.log('💰 CUE 잔액 조회 시작:', req.params.did);
+      
+      const { did } = req.params;
+      const cueService = this.container.get('CueService');
+      const activeDB = this.container.get('ActiveDatabaseService');
+
+      // DID 유효성 검증
+      if (!did || typeof did !== 'string') {
         res.status(400).json({
           success: false,
-          error: 'Invalid activity type',
-          supportedActivities: ['ai_chat', 'data_extraction', 'daily_login', 'manual']
+          message: 'Invalid DID provided',
+          code: 'INVALID_DID'
         });
         return;
-    }
-
-    res.json({
-      success: true,
-      minedAmount: Math.round(minedAmount * 100) / 100,
-      activity,
-      userDid,
-      timestamp: new Date().toISOString()
-    });
-
-    console.log(`✅ CUE 마이닝 성공: ${userDid} - ${minedAmount} CUE (${activity})`);
-
-  } catch (error: any) {
-    console.error('❌ CUE 마이닝 오류:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to mine CUE tokens',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// ============================================================================
-// 📈 CUE 마이닝 통계 조회
-// GET /api/cue/:userDid/stats
-// ============================================================================
-
-router.get('/:userDid/stats', async (req: Request, res: Response): Promise<void> => {
-  const { userDid } = req.params;
-  const { days = 7 } = req.query;
-
-  console.log(`📈 CUE 통계 조회: ${userDid} (${days}일)`);
-
-  try {
-    const cueService = new CUEMiningService(db);
-    const stats = await cueService.getMiningStats(userDid, parseInt(days as string));
-    
-    res.json({
-      success: true,
-      stats,
-      userDid,
-      period: {
-        days: parseInt(days as string),
-        from: new Date(Date.now() - parseInt(days as string) * 24 * 60 * 60 * 1000).toISOString(),
-        to: new Date().toISOString()
       }
-    });
 
-    console.log(`✅ CUE 통계 조회 성공: ${userDid}`);
+      // 잔액 조회
+      const balance = await cueService.getUserBalance(did);
+      
+      // 추가 통계 정보
+      const additionalStats = await activeDB.query(`
+        SELECT 
+          COUNT(*) as total_transactions,
+          SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as total_earned,
+          SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as total_spent,
+          MAX(created_at) as last_transaction
+        FROM cue_transactions 
+        WHERE user_did = $1
+      `, [did]);
 
-  } catch (error: any) {
-    console.error('❌ CUE 통계 조회 오류:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get CUE statistics',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+      console.log('✅ CUE 잔액 조회 성공:', { did, balance });
+
+      res.json({
+        success: true,
+        data: {
+          did,
+          balance: balance || 0,
+          stats: additionalStats?.rows[0] || null,
+          timestamp: new Date().toISOString()
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ CUE 잔액 조회 실패:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get CUE balance',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
   }
-});
 
-// ============================================================================
-// 📋 상태 확인 API
-// GET /api/cue/health
-// ============================================================================
+  /**
+   * CUE 거래 내역 조회
+   */
+  private async getCUETransactions(req: Request, res: Response): Promise<void> {
+    try {
+      console.log('📊 CUE 거래 내역 조회 시작:', req.params.did);
+      
+      const { did } = req.params;
+      const { page = 1, limit = 20, type = 'all' } = req.query;
+      const activeDB = this.container.get('ActiveDatabaseService');
 
-router.get('/health', (req: Request, res: Response): void => {
-  res.json({
-    success: true,
-    service: 'CUE Routes',
-    database: db.constructor.name,
-    timestamp: new Date().toISOString(),
-    mockMode: process.env.USE_MOCK_DATABASE === 'true'
-  });
-});
+      // 페이지네이션 계산
+      const offset = (Number(page) - 1) * Number(limit);
 
-console.log('✅ [라우트명] routes loaded successfully');
+      // 타입별 필터링
+      let typeFilter = '';
+      const params: any[] = [did, Number(limit), offset];
 
-export default router;
+      if (type !== 'all') {
+        typeFilter = 'AND transaction_type = $4';
+        params.push(type);
+      }
 
+      // 거래 내역 조회
+      const query = `
+        SELECT 
+          id,
+          transaction_type,
+          amount,
+          source_type,
+          source_id,
+          description,
+          metadata,
+          created_at
+        FROM cue_transactions 
+        WHERE user_did = $1
+        ${typeFilter}
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
+      `;
+
+      const transactions = await activeDB.query(query, params);
+
+      // 총 개수 조회
+      const countQuery = `
+        SELECT COUNT(*) as total
+        FROM cue_transactions 
+        WHERE user_did = $1 ${typeFilter}
+      `;
+      const countParams = type !== 'all' ? [did, type] : [did];
+      const totalCount = await activeDB.query(countQuery, countParams);
+
+      console.log('✅ CUE 거래 내역 조회 성공:', { 
+        did, 
+        count: transactions.rows.length,
+        total: totalCount.rows[0]?.total 
+      });
+
+      res.json({
+        success: true,
+        data: {
+          transactions: transactions.rows,
+          pagination: {
+            page: Number(page),
+            limit: Number(limit),
+            total: Number(totalCount.rows[0]?.total || 0),
+            totalPages: Math.ceil(Number(totalCount.rows[0]?.total || 0) / Number(limit))
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ CUE 거래 내역 조회 실패:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get CUE transactions',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * CUE 전송
+   */
+  private async transferCUE(req: Request, res: Response): Promise<void> {
+    try {
+      console.log('💸 CUE 전송 시작:', req.body);
+      
+      const { fromDid, toDid, amount, description = 'CUE Transfer' } = req.body;
+      const cueService = this.container.get('CueService');
+
+      // 입력값 검증
+      if (!fromDid || !toDid || !amount || amount <= 0) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid transfer parameters',
+          code: 'INVALID_PARAMS'
+        });
+        return;
+      }
+
+      // CUE 전송 실행
+      const transferResult = await cueService.transferCUE({
+        fromDid,
+        toDid,
+        amount: Number(amount),
+        description,
+        metadata: {
+          timestamp: new Date().toISOString(),
+          ip: req.ip,
+          userAgent: req.get('User-Agent')
+        }
+      });
+
+      console.log('✅ CUE 전송 성공:', transferResult);
+
+      res.json({
+        success: true,
+        data: transferResult,
+        message: 'CUE transferred successfully'
+      });
+
+    } catch (error) {
+      console.error('❌ CUE 전송 실패:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to transfer CUE',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * CUE 스테이킹
+   */
+  private async stakeCUE(req: Request, res: Response): Promise<void> {
+    try {
+      console.log('🔒 CUE 스테이킹 시작:', req.body);
+      
+      const { userDid, amount, duration = 30 } = req.body;
+      const cueService = this.container.get('CueService');
+
+      // 입력값 검증
+      if (!userDid || !amount || amount <= 0) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid staking parameters',
+          code: 'INVALID_PARAMS'
+        });
+        return;
+      }
+
+      // 스테이킹 실행
+      const stakingResult = await cueService.stakeCUE({
+        userDid,
+        amount: Number(amount),
+        duration: Number(duration),
+        metadata: {
+          timestamp: new Date().toISOString(),
+          ip: req.ip
+        }
+      });
+
+      console.log('✅ CUE 스테이킹 성공:', stakingResult);
+
+      res.json({
+        success: true,
+        data: stakingResult,
+        message: 'CUE staked successfully'
+      });
+
+    } catch (error) {
+      console.error('❌ CUE 스테이킹 실패:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to stake CUE',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * CUE 언스테이킹
+   */
+  private async unstakeCUE(req: Request, res: Response): Promise<void> {
+    try {
+      console.log('🔓 CUE 언스테이킹 시작:', req.body);
+      
+      const { userDid, stakingId } = req.body;
+      const cueService = this.container.get('CueService');
+
+      // 입력값 검증
+      if (!userDid || !stakingId) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid unstaking parameters',
+          code: 'INVALID_PARAMS'
+        });
+        return;
+      }
+
+      // 언스테이킹 실행
+      const unstakingResult = await cueService.unstakeCUE({
+        userDid,
+        stakingId,
+        metadata: {
+          timestamp: new Date().toISOString(),
+          ip: req.ip
+        }
+      });
+
+      console.log('✅ CUE 언스테이킹 성공:', unstakingResult);
+
+      res.json({
+        success: true,
+        data: unstakingResult,
+        message: 'CUE unstaked successfully'
+      });
+
+    } catch (error) {
+      console.error('❌ CUE 언스테이킹 실패:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to unstake CUE',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * CUE 통계 조회
+   */
+  private async getCUEStats(req: Request, res: Response): Promise<void> {
+    try {
+      console.log('📈 CUE 통계 조회 시작:', req.params.did);
+      
+      const { did } = req.params;
+      const cueService = this.container.get('CueService');
+      const activeDB = this.container.get('ActiveDatabaseService');
+
+      // 기본 통계
+      const basicStats = await cueService.getUserStats(did);
+
+      // 상세 통계 쿼리
+      const detailedStats = await activeDB.query(`
+        SELECT 
+          COUNT(*) as total_transactions,
+          SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as total_earned,
+          SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as total_spent,
+          AVG(amount) as avg_transaction,
+          COUNT(DISTINCT DATE(created_at)) as active_days,
+          MAX(created_at) as last_activity,
+          MIN(created_at) as first_activity
+        FROM cue_transactions 
+        WHERE user_did = $1
+      `, [did]);
+
+      // 카테고리별 통계
+      const categoryStats = await activeDB.query(`
+        SELECT 
+          transaction_type,
+          COUNT(*) as count,
+          SUM(amount) as total_amount,
+          AVG(amount) as avg_amount
+        FROM cue_transactions 
+        WHERE user_did = $1 
+        GROUP BY transaction_type
+        ORDER BY total_amount DESC
+      `, [did]);
+
+      console.log('✅ CUE 통계 조회 성공:', { did, basicStats });
+
+      res.json({
+        success: true,
+        data: {
+          basic: basicStats,
+          detailed: detailedStats.rows[0],
+          categories: categoryStats.rows,
+          timestamp: new Date().toISOString()
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ CUE 통계 조회 실패:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get CUE stats',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
+   * 라우터 반환
+   */
+  public getRouter(): Router {
+    return this.router;
+  }
+}
+
+/**
+ * DI Container와 호환되는 팩토리 함수
+ */
+export default function createCUERoutes(container: DIContainer): Router {
+  console.log('🏭 CUE Routes 팩토리 함수 실행');
+  const cueRoutes = new CUERoutes(container);
+  return cueRoutes.getRouter();
+}

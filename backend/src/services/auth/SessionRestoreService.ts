@@ -10,7 +10,7 @@ export class SessionRestoreService {
   private readonly JWT_SECRET: string;
 
   constructor() {
-    this.JWT_SECRET = process.env.JWT_SECRET || 'final0626-development-secret-key';
+    this.JWT_SECRET = process.env.JWT_SECRET || '';
     console.log('🔧 SessionRestoreService 초기화됨 (JWT malformed 특화)');
   }
 

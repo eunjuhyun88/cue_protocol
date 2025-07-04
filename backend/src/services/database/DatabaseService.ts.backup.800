@@ -1,0 +1,803 @@
+// ============================================================================
+// 🗄️ 완전한 기능의 간단한 데이터베이스 서비스
+// 경로: backend/src/services/database/DatabaseService.ts
+// 용도: 모든 기능을 다 하되 간단하게 - Supabase 하나로 모든 것 처리
+// 기능: 스키마 v2.2의 모든 테이블 지원
+// ============================================================================
+
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+
+export class DatabaseService {
+  private static instance: DatabaseService;
+  private supabase: SupabaseClient;
+  private connected: boolean = false;
+
+  private constructor() {
+    const url = process.env.SUPABASE_URL!;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+    if (!url || !key) {
+      throw new Error('❌ SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY가 필요합니다!');
+    }
+
+    this.supabase = createClient(url, key);
+    console.log('✅ Supabase 연결 완료');
+  }
+
+  public static getInstance(): DatabaseService {
+    if (!DatabaseService.instance) {
+      DatabaseService.instance = new DatabaseService();
+    }
+    return DatabaseService.instance;
+  }
+
+  // ============================================================================
+  // 🔌 연결 관리
+  // ============================================================================
+
+  public async connect(): Promise<void> {
+    try {
+      await this.supabase.from('users').select('count').limit(1);
+      this.connected = true;
+      console.log('✅ 데이터베이스 연결 성공');
+    } catch (error) {
+      console.error('❌ 데이터베이스 연결 실패:', error);
+      throw error;
+    }
+  }
+
+  public isConnected(): boolean {
+    return this.connected;
+  }
+
+  public isMockMode(): boolean {
+    return false; // Mock 완전 제거
+  }
+
+  public getConnectionInfo(): any {
+    return {
+      type: 'supabase',
+      connected: this.connected,
+      url: process.env.SUPABASE_URL?.split('//')[1]?.split('.')[0],
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  public async testConnection(): Promise<boolean> {
+    try {
+      await this.supabase.from('users').select('count').limit(1);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ============================================================================
+  // 👤 사용자 관리 (Users 테이블)
+  // ============================================================================
+
+  public async createUser(userData: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('users')
+      .insert([{
+        ...userData,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log('✅ 사용자 생성:', data.username);
+    return data;
+  }
+
+  public async getUserById(userId: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  }
+
+  public async getUserByEmail(email: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  }
+
+  public async getUserByDID(did: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('users')
+      .select('*')
+      .eq('did', did)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  }
+
+  public async getUserByUsername(username: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('users')
+      .select('*')
+      .or(`username.eq.${username},email.eq.${username}`)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  }
+
+  public async updateUser(id: string, updates: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('users')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  // 호환성 별칭
+  public async findUserById(userId: string): Promise<any | null> {
+    return this.getUserById(userId);
+  }
+
+  public async findUserByEmail(email: string): Promise<any | null> {
+    return this.getUserByEmail(email);
+  }
+
+  // ============================================================================
+  // 🔐 WebAuthn 자격증명 (webauthn_credentials 테이블)
+  // ============================================================================
+
+  public async saveWebAuthnCredential(credentialData: any): Promise<boolean> {
+    const { error } = await this.supabase
+      .from('webauthn_credentials')
+      .insert([{
+        ...credentialData,
+        created_at: new Date().toISOString()
+      }]);
+
+    if (error) {
+      console.error('❌ WebAuthn 저장 실패:', error);
+      return false;
+    }
+    return true;
+  }
+
+  public async getUserByCredentialId(credentialId: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('webauthn_credentials')
+      .select('*, users(*)')
+      .eq('credential_id', credentialId)
+      .eq('is_active', true)
+      .single();
+
+    if (error) return null;
+    return data?.users || null;
+  }
+
+  public async getWebAuthnCredentials(userId: string): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('webauthn_credentials')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_active', true);
+
+    if (error) return [];
+    return data || [];
+  }
+
+  public async getWebAuthnCredentialById(credentialId: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('webauthn_credentials')
+      .select('*')
+      .eq('credential_id', credentialId)
+      .eq('is_active', true)
+      .single();
+
+    if (error && error.code !== 'PGRST116') return null;
+    return data;
+  }
+
+  public async updateWebAuthnCredentialCounter(credentialId: string, counter: number): Promise<boolean> {
+    const { error } = await this.supabase
+      .from('webauthn_credentials')
+      .update({
+        counter: counter,
+        last_used_at: new Date().toISOString()
+      })
+      .eq('credential_id', credentialId);
+
+    return !error;
+  }
+
+  // ============================================================================
+  // 🎫 AI Passport (ai_passports 테이블)
+  // ============================================================================
+
+  public async getPassport(did: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('ai_passports')
+      .select('*')
+      .eq('did', did)
+      .single();
+
+    if (error && error.code !== 'PGRST116') return null;
+    return data;
+  }
+
+  public async updatePassport(did: string, updates: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('ai_passports')
+      .upsert({
+        did,
+        ...updates,
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log('✅ Passport 업데이트:', did);
+    return data;
+  }
+
+  public async createPassport(passportData: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('ai_passports')
+      .insert([{
+        ...passportData,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  // ============================================================================
+  // 💎 CUE 토큰 (cue_transactions 테이블)
+  // ============================================================================
+
+  public async getCUEBalance(did: string): Promise<number> {
+    const { data, error } = await this.supabase
+      .from('cue_transactions')
+      .select('amount')
+      .eq('user_did', did);
+
+    if (error) return 0;
+    return data?.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+  }
+
+  public async createCUETransaction(transaction: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('cue_transactions')
+      .insert([{
+        ...transaction,
+        created_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log('✅ CUE 거래 생성:', transaction.amount);
+    return data;
+  }
+
+  public async getCUETransactions(did: string, limit = 50): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('cue_transactions')
+      .select('*')
+      .eq('user_did', did)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) return [];
+    return data || [];
+  }
+
+  // 호환성 별칭
+  public async recordCueTransaction(transactionData: any): Promise<any> {
+    return this.createCUETransaction(transactionData);
+  }
+
+  // ============================================================================
+  // 🗄️ 데이터 볼트 (data_vaults, vault_data 테이블)
+  // ============================================================================
+
+  public async getDataVaults(did: string): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('data_vaults')
+      .select('*')
+      .eq('owner_did', did)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
+
+    if (error) return [];
+    return data || [];
+  }
+
+  public async getUserVaults(userId: string): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('data_vaults')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .order('updated_at', { ascending: false });
+
+    if (error) return [];
+    return data || [];
+  }
+
+  public async getVaultById(vaultId: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('data_vaults')
+      .select('*')
+      .eq('id', vaultId)
+      .eq('status', 'active')
+      .single();
+
+    if (error && error.code !== 'PGRST116') return null;
+    return data;
+  }
+
+  public async createVault(vaultData: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('data_vaults')
+      .insert([{
+        ...vaultData,
+        data_count: 0,
+        total_size: 0,
+        status: 'active',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log('✅ 볼트 생성:', vaultData.name);
+    return data;
+  }
+
+  public async updateVault(vaultId: string, updates: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('data_vaults')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', vaultId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  public async deleteVault(vaultId: string): Promise<boolean> {
+    const { error } = await this.supabase
+      .from('data_vaults')
+      .update({
+        status: 'deleted',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', vaultId);
+
+    return !error;
+  }
+
+  public async saveVaultData(vaultData: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('vault_data')
+      .insert([{
+        ...vaultData,
+        created_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  public async getVaultData(vaultId: string, limit: number = 50): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('vault_data')
+      .select('*')
+      .eq('vault_id', vaultId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) return [];
+    return data || [];
+  }
+
+  // ============================================================================
+  // 🧠 Personal CUE (personal_cues 테이블)
+  // ============================================================================
+
+  public async getPersonalCues(did: string, limit = 50): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('personal_cues')
+      .select('*')
+      .eq('user_did', did)
+      .eq('status', 'active')
+      .order('updated_at', { ascending: false })
+      .limit(limit);
+
+    if (error) return [];
+    return data || [];
+  }
+
+  public async storePersonalCue(cueData: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('personal_cues')
+      .insert([{
+        ...cueData,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log('✅ Personal CUE 저장:', cueData.cue_key);
+    return data;
+  }
+
+  public async getPersonalCue(userDid: string, cueKey: string, cueType: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('personal_cues')
+      .select('*')
+      .eq('user_did', userDid)
+      .eq('cue_key', cueKey)
+      .eq('cue_type', cueType)
+      .single();
+
+    if (error && error.code !== 'PGRST116') return null;
+    return data;
+  }
+
+  public async searchPersonalCues(userId: string, query: string, limit: number = 10): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('personal_cues')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .ilike('cue_key', `%${query}%`)
+      .limit(limit);
+
+    if (error) return [];
+    return data || [];
+  }
+
+  // 호환성 별칭들
+  public async getPersonalCuesByUser(userDid: string): Promise<any[]> {
+    return this.getPersonalCues(userDid);
+  }
+
+  public async createPersonalCue(cueData: any): Promise<any> {
+    return this.storePersonalCue(cueData);
+  }
+
+  public async addPersonalCue(cueData: any): Promise<any> {
+    return this.storePersonalCue(cueData);
+  }
+
+  // ============================================================================
+  // 💬 대화 및 메시지 (conversations, messages 테이블)
+  // ============================================================================
+
+  public async createConversation(conversationData: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('conversations')
+      .insert([{
+        ...conversationData,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        last_message_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log('✅ 대화 생성:', conversationData.title);
+    return data;
+  }
+
+  public async saveMessage(messageData: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('messages')
+      .insert([{
+        ...messageData,
+        timestamp: messageData.timestamp || new Date().toISOString(),
+        created_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  public async saveChatMessage(messageData: any): Promise<void> {
+    await this.saveMessage(messageData);
+  }
+
+  public async getChatHistory(userDid: string, conversationId?: string, limit = 100): Promise<any[]> {
+    let query = this.supabase
+      .from('messages')
+      .select(`
+        *,
+        conversations!inner(
+          id,
+          user_id,
+          title,
+          ai_agent_id
+        )
+      `)
+      .eq('conversations.user_id', userDid)
+      .order('timestamp', { ascending: true })
+      .limit(limit);
+
+    if (conversationId) {
+      query = query.eq('conversation_id', conversationId);
+    }
+
+    const { data, error } = await query;
+    if (error) return [];
+    return data || [];
+  }
+
+  public async getConversationHistory(userId: string, conversationId?: string, limit: number = 50): Promise<any[]> {
+    return this.getChatHistory(userId, conversationId, limit);
+  }
+
+  // ============================================================================
+  // 🤖 AI Agents (ai_agents 테이블)
+  // ============================================================================
+
+  public async getAIAgents(): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('ai_agents')
+      .select('*')
+      .eq('status', 'active')
+      .order('name');
+
+    if (error) return [];
+    return data || [];
+  }
+
+  public async getAIAgent(agentId: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('ai_agents')
+      .select('*')
+      .eq('agent_id', agentId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') return null;
+    return data;
+  }
+
+  // ============================================================================
+  // 📱 플랫폼 연동 (connected_platforms 테이블)
+  // ============================================================================
+
+  public async getConnectedPlatforms(userId: string): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('connected_platforms')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) return [];
+    return data || [];
+  }
+
+  public async updatePlatformConnection(userId: string, platformId: string, updates: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('connected_platforms')
+      .upsert({
+        user_id: userId,
+        platform_id: platformId,
+        ...updates,
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  // ============================================================================
+  // 📊 WebAuthn 세션 관리 (webauthn_sessions, webauthn_challenges 테이블)
+  // ============================================================================
+
+  public async createWebAuthnSession(sessionData: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('webauthn_sessions')
+      .insert([{
+        ...sessionData,
+        created_at: new Date().toISOString(),
+        last_activity_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  public async getActiveWebAuthnSessions(userId: string): Promise<any[]> {
+    const { data, error } = await this.supabase
+      .from('webauthn_sessions')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .gt('expires_at', new Date().toISOString());
+
+    if (error) return [];
+    return data || [];
+  }
+
+  public async createWebAuthnChallenge(challengeData: any): Promise<any> {
+    const { data, error } = await this.supabase
+      .from('webauthn_challenges')
+      .insert([{
+        ...challengeData,
+        created_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  public async getWebAuthnChallenge(challenge: string): Promise<any | null> {
+    const { data, error } = await this.supabase
+      .from('webauthn_challenges')
+      .select('*')
+      .eq('challenge', challenge)
+      .eq('is_used', false)
+      .gt('expires_at', new Date().toISOString())
+      .single();
+
+    if (error && error.code !== 'PGRST116') return null;
+    return data;
+  }
+
+  public async markChallengeAsUsed(challengeId: string): Promise<boolean> {
+    const { error } = await this.supabase
+      .from('webauthn_challenges')
+      .update({
+        is_used: true,
+        used_at: new Date().toISOString()
+      })
+      .eq('id', challengeId);
+
+    return !error;
+  }
+
+  // ============================================================================
+  // 📋 시스템 활동 로그 (system_activities 테이블)
+  // ============================================================================
+
+  public async logSystemActivity(activityData: any): Promise<void> {
+    await this.supabase
+      .from('system_activities')
+      .insert([{
+        ...activityData,
+        created_at: new Date().toISOString()
+      }]);
+  }
+
+  public async getSystemActivities(userId?: string, limit = 100): Promise<any[]> {
+    let query = this.supabase
+      .from('system_activities')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query;
+    if (error) return [];
+    return data || [];
+  }
+
+  // ============================================================================
+  // 🔧 유틸리티 및 통계
+  // ============================================================================
+
+  public async cleanupExpiredSessions(): Promise<boolean> {
+    const { error } = await this.supabase
+      .from('webauthn_sessions')
+      .update({
+        is_active: false,
+        ended_at: new Date().toISOString()
+      })
+      .eq('is_active', true)
+      .lt('expires_at', new Date().toISOString());
+
+    return !error;
+  }
+
+  public async getSystemStats(): Promise<any> {
+    try {
+      const [users, conversations, messages, cues] = await Promise.all([
+        this.supabase.from('users').select('count').single(),
+        this.supabase.from('conversations').select('count').single(),
+        this.supabase.from('messages').select('count').single(),
+        this.supabase.from('personal_cues').select('count').single()
+      ]);
+
+      return {
+        totalUsers: users.data?.count || 0,
+        totalConversations: conversations.data?.count || 0,
+        totalMessages: messages.data?.count || 0,
+        totalCues: cues.data?.count || 0,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error('❌ 시스템 통계 조회 실패:', error);
+      return null;
+    }
+  }
+
+  public getStatistics() {
+    return {
+      mockMode: false,
+      connected: this.connected,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  public async healthCheck(): Promise<boolean> {
+    return this.testConnection();
+  }
+
+  public async disconnect(): Promise<void> {
+    this.connected = false;
+    console.log('🔌 데이터베이스 연결 해제');
+  }
+
+  public async close(): Promise<void> {
+    await this.disconnect();
+  }
+}
+
+// ============================================================================
+// 🚀 간단한 사용법 - 싱글톤 인스턴스
+// ============================================================================
+
+const databaseService = DatabaseService.getInstance();
+
+// 자동 연결 시도
+databaseService.connect().catch(error => {
+  console.error('❌ 데이터베이스 자동 연결 실패:', error);
+  console.log('💡 Supabase 환경변수를 확인하세요');
+});
+
+export default databaseService;

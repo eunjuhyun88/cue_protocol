@@ -3,6 +3,7 @@
 // 경로: backend/src/services/database/SupabaseService.ts
 // 용도: Supabase 클라이언트 및 데이터베이스 연산 관리
 // 특징: 싱글톤 패턴 + Mock 모드 + 풍부한 기능 + 타입 안정성
+// 역할: DatabaseService와 동일한 인터페이스 제공 (호환성 유지)
 // ============================================================================
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -88,6 +89,10 @@ class SupabaseServiceClass {
     return this.isDummyMode;
   }
 
+  public isMockMode(): boolean {
+    return this.isDummyMode;
+  }
+
   // ============================================================================
   // 👤 사용자 관리 메서드
   // ============================================================================
@@ -169,7 +174,7 @@ class SupabaseServiceClass {
     return this.getUserById(id);
   }
 
-  public async findUserByEmail(email: string): Promise<any | null> {
+  public async getUserByEmail(email: string): Promise<any | null> {
     try {
       if (this.isDummy()) {
         console.log('📋 Mock 사용자 이메일 조회:', email);
@@ -206,6 +211,78 @@ class SupabaseServiceClass {
       return data;
     } catch (error) {
       console.error('❌ 사용자 이메일 조회 오류:', error);
+      return null;
+    }
+  }
+
+  public async findUserByEmail(email: string): Promise<any | null> {
+    return this.getUserByEmail(email);
+  }
+
+  public async getUserByDID(did: string): Promise<any | null> {
+    try {
+      if (this.isDummy()) {
+        console.log('📋 Mock 사용자 DID 조회:', did);
+        return {
+          id: 'mock-user-id',
+          username: 'demo_user',
+          email: 'demo@example.com',
+          did: did,
+          wallet_address: '0x742d35Cc6460C532FAEcE1dd25073C8d2FCAE857',
+          passkey_registered: true,
+          two_factor_enabled: false,
+          login_count: 3,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+      }
+
+      if (!this.supabase) throw new Error('Supabase not initialized');
+
+      const { data, error } = await this.supabase
+        .from('users')
+        .select('*')
+        .eq('did', did)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('❌ 사용자 DID 조회 실패:', error);
+        return null;
+      }
+
+      return data;
+    } catch (error) {
+      console.error('❌ 사용자 DID 조회 오류:', error);
+      return null;
+    }
+  }
+
+  public async getUserByUsername(username: string): Promise<any | null> {
+    try {
+      if (this.isDummy()) {
+        console.log('📋 Mock 사용자명 조회:', username);
+        return {
+          id: 'mock-user-id',
+          username: username,
+          email: 'demo@example.com',
+          did: `did:final0626:mock`,
+          wallet_address: '0x742d35Cc6460C532FAEcE1dd25073C8d2FCAE857'
+        };
+      }
+
+      if (!this.supabase) throw new Error('Supabase not initialized');
+
+      const { data, error } = await this.supabase
+        .from('users')
+        .select('*')
+        .or(`username.eq.${username},email.eq.${username}`)
+        .eq('deleted_at', null)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return data;
+    } catch (error) {
+      console.error('❌ 사용자명 조회 오류:', error);
       return null;
     }
   }
@@ -621,6 +698,51 @@ class SupabaseServiceClass {
     }
   }
 
+  public async getCUETransactions(did: string, limit = 50) {
+    try {
+      if (this.isDummy()) {
+        console.log('📋 Mock CUE 거래 내역 조회:', did);
+        return [
+          {
+            id: 'cue-tx-001',
+            user_did: did,
+            transaction_type: 'reward',
+            amount: 100.0,
+            status: 'completed',
+            source: 'registration_bonus',
+            description: 'Welcome bonus',
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 'cue-tx-002',
+            user_did: did,
+            transaction_type: 'mining',
+            amount: 25.5,
+            status: 'completed',
+            source: 'daily_mining',
+            description: 'Daily mining reward',
+            created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+          }
+        ];
+      }
+
+      if (!this.supabase) return [];
+
+      const { data, error } = await this.supabase
+        .from('cue_transactions')
+        .select('*')
+        .eq('user_did', did)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('❌ CUE 거래 내역 조회 오류:', error);
+      return [];
+    }
+  }
+
   // 별칭 메서드
   public async addCUETransaction(transactionData: any): Promise<any> {
     return this.createCUETransaction(transactionData);
@@ -745,6 +867,10 @@ class SupabaseServiceClass {
     return this.createPersonalCue(cueData);
   }
 
+  public async storePersonalCue(cueData: any): Promise<any> {
+    return this.createPersonalCue(cueData);
+  }
+
   public async updatePersonalCue(cueId: string, updateData: any): Promise<any | null> {
     try {
       if (this.isDummy()) {
@@ -823,6 +949,73 @@ class SupabaseServiceClass {
     }
   }
 
+  public async getUserVaults(userId: string): Promise<any[]> {
+    try {
+      if (this.isDummy()) {
+        console.log('📋 Mock 사용자 볼트 조회:', userId);
+        return [
+          {
+            id: 'vault-1',
+            user_id: userId,
+            name: 'Personal Knowledge',
+            description: 'Mock personal data vault',
+            category: 'personal',
+            access_level: 'private',
+            status: 'active',
+            data_count: 25,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ];
+      }
+
+      if (!this.supabase) return [];
+
+      const { data, error } = await this.supabase
+        .from('data_vaults')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .order('updated_at', { ascending: false });
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('❌ 사용자 볼트 조회 실패:', error);
+      return [];
+    }
+  }
+
+  public async getVaultById(vaultId: string): Promise<any | null> {
+    try {
+      if (this.isDummy()) {
+        console.log('📋 Mock 볼트 ID 조회:', vaultId);
+        return {
+          id: vaultId,
+          name: 'Mock Vault',
+          description: 'Mock vault data',
+          category: 'personal',
+          status: 'active'
+        };
+      }
+
+      if (!this.supabase) throw new Error('Supabase not initialized');
+
+      const { data, error } = await this.supabase
+        .from('data_vaults')
+        .select('*')
+        .eq('id', vaultId)
+        .eq('status', 'active')
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return data;
+    } catch (error) {
+      console.error('❌ 볼트 ID 조회 실패:', error);
+      return null;
+    }
+  }
+
   public async createDataVault(vaultData: any): Promise<any> {
     try {
       if (this.isDummy()) {
@@ -853,6 +1046,129 @@ class SupabaseServiceClass {
     } catch (error) {
       console.error('❌ 데이터 볼트 생성 오류:', error);
       throw error;
+    }
+  }
+
+  public async createVault(vaultData: any): Promise<any> {
+    return this.createDataVault(vaultData);
+  }
+
+  public async updateVault(vaultId: string, updates: any): Promise<any> {
+    try {
+      if (this.isDummy()) {
+        console.log('📋 Mock 볼트 업데이트:', vaultId);
+        return {
+          id: vaultId,
+          ...updates,
+          updated_at: new Date().toISOString()
+        };
+      }
+
+      if (!this.supabase) throw new Error('Supabase not initialized');
+
+      const { data, error } = await this.supabase
+        .from('data_vaults')
+        .update({
+          ...updates,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', vaultId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('❌ 볼트 업데이트 실패:', error);
+      throw error;
+    }
+  }
+
+  public async deleteVault(vaultId: string): Promise<boolean> {
+    try {
+      if (this.isDummy()) {
+        console.log('📋 Mock 볼트 삭제:', vaultId);
+        return true;
+      }
+
+      if (!this.supabase) throw new Error('Supabase not initialized');
+
+      const { error } = await this.supabase
+        .from('data_vaults')
+        .update({ 
+          status: 'deleted',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', vaultId);
+
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('❌ 볼트 삭제 실패:', error);
+      return false;
+    }
+  }
+
+  public async saveVaultData(vaultData: any): Promise<any> {
+    try {
+      if (this.isDummy()) {
+        console.log('📋 Mock 볼트 데이터 저장:', vaultData.data_type);
+        return {
+          id: `data-${Date.now()}`,
+          ...vaultData,
+          created_at: new Date().toISOString()
+        };
+      }
+
+      if (!this.supabase) throw new Error('Supabase not initialized');
+
+      const { data, error } = await this.supabase
+        .from('vault_data')
+        .insert([{
+          ...vaultData,
+          created_at: new Date().toISOString()
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('❌ 볼트 데이터 저장 실패:', error);
+      throw error;
+    }
+  }
+
+  public async getVaultData(vaultId: string, limit: number = 50): Promise<any[]> {
+    try {
+      if (this.isDummy()) {
+        console.log('📋 Mock 볼트 데이터 조회:', vaultId);
+        return Array.from({ length: Math.min(limit, 5) }, (_, i) => ({
+          id: `data-${i + 1}`,
+          vault_id: vaultId,
+          data_type: ['text', 'image', 'document'][i % 3],
+          metadata: {
+            title: `Sample Data ${i + 1}`,
+            size: Math.floor(Math.random() * 10000)
+          },
+          created_at: new Date(Date.now() - i * 60000).toISOString()
+        }));
+      }
+
+      if (!this.supabase) return [];
+
+      const { data, error } = await this.supabase
+        .from('vault_data')
+        .select('*')
+        .eq('vault_id', vaultId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('❌ 볼트 데이터 조회 실패:', error);
+      return [];
     }
   }
 
@@ -892,7 +1208,7 @@ class SupabaseServiceClass {
     }
   }
 
-  public async getChatHistory(userDid: string, limit: number = 50): Promise<any[]> {
+  public async getChatHistory(userDid: string, conversationId?: string, limit: number = 50): Promise<any[]> {
     try {
       if (this.isDummy()) {
         console.log('📋 Mock 채팅 이력 조회:', userDid);
@@ -909,12 +1225,18 @@ class SupabaseServiceClass {
 
       if (!this.supabase) return [];
 
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('chat_messages')
         .select('*')
         .eq('user_did', userDid)
         .order('created_at', { ascending: false })
         .limit(limit);
+
+      if (conversationId) {
+        query = query.eq('conversation_id', conversationId);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         console.error('❌ 채팅 이력 조회 실패:', error);
@@ -931,6 +1253,17 @@ class SupabaseServiceClass {
   // ============================================================================
   // 🧹 유틸리티 및 시스템 관리 메서드
   // ============================================================================
+
+  public async connect(): Promise<void> {
+    if (!this.isDummy()) {
+      await this.initializeConnection();
+    }
+  }
+
+  public async disconnect(): Promise<void> {
+    this.connected = false;
+    this.supabase = null;
+  }
 
   public async testConnection(): Promise<boolean> {
     try {
@@ -958,6 +1291,10 @@ class SupabaseServiceClass {
       console.error('❌ Supabase 연결 오류:', error);
       return false;
     }
+  }
+
+  public async healthCheck(): Promise<boolean> {
+    return await this.testConnection();
   }
 
   public async cleanupExpiredSessions(): Promise<boolean> {
@@ -1021,6 +1358,47 @@ class SupabaseServiceClass {
       console.error('❌ 시스템 통계 조회 오류:', error);
       return null;
     }
+  }
+
+  public getConnectionInfo(): {
+    type: 'supabase' | 'mock';
+    connected: boolean;
+    url?: string;
+    mockDataCount?: number;
+  } {
+    if (this.isDummyMode) {
+      return {
+        type: 'mock',
+        connected: true,
+        mockDataCount: 1
+      };
+    } else {
+      return {
+        type: 'supabase',
+        connected: this.connected,
+        url: process.env.SUPABASE_URL
+      };
+    }
+  }
+
+  public getStatistics() {
+    if (this.isDummyMode) {
+      return {
+        users: 1,
+        passports: 1,
+        transactions: 2,
+        credentials: 1,
+        vaults: 1,
+        mockMode: true,
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    return {
+      mockMode: false,
+      connected: this.connected,
+      timestamp: new Date().toISOString()
+    };
   }
 }
 

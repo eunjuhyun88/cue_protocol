@@ -1,18 +1,14 @@
 // ============================================================================
-// 🦙 Ollama 서비스 - 로컬 AI 모델 관리
-// 파일: backend/src/services/ollama.ts
-// 역할: Ollama 로컬 AI 모델 연동 및 관리
+// 🤖 backend/src/services/ollama.ts
+// 🔧 Ollama 연결 문제 해결 및 안정성 개선
 // ============================================================================
-
-interface OllamaMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
 
 interface OllamaResponse {
   model: string;
+  created_at: string;
   response: string;
   done: boolean;
+  context?: number[];
   total_duration?: number;
   load_duration?: number;
   prompt_eval_count?: number;
@@ -21,67 +17,120 @@ interface OllamaResponse {
   eval_duration?: number;
 }
 
-class OllamaService {
-  private baseUrl: string;
-  private isConnected: boolean = false;
-  private availableModels: string[] = [];
-  private lastCheck: number = 0;
-  private checkInterval: number = 5 * 60 * 1000; // 5분
+interface OllamaError {
+  error: string;
+  code?: string;
+}
 
-  constructor() {
-    this.baseUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-    console.log(`🦙 Ollama 서비스 초기화 - URL: ${this.baseUrl}`);
+export class OllamaService {
+  private static instance: OllamaService;
+  private baseUrl: string;
+  private timeout: number;
+  private retryCount: number;
+  private isAvailable: boolean = false;
+  private lastHealthCheck: number = 0;
+  private healthCheckInterval: number = 5 * 60 * 1000; // 5분
+
+  private constructor() {
+    this.baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+    this.timeout = parseInt(process.env.OLLAMA_TIMEOUT || '60000');
+    this.retryCount = parseInt(process.env.OLLAMA_RETRY_COUNT || '3');
+    
+    console.log('🤖 Ollama Service 초기화:', {
+      baseUrl: this.baseUrl,
+      timeout: this.timeout,
+      retryCount: this.retryCount
+    });
+
+    // 초기 헬스체크
+    this.checkHealth().catch(error => {
+      console.warn('⚠️ Ollama 초기 연결 실패 - 필요시 재시도합니다:', error.message);
+    });
+  }
+
+  public static getInstance(): OllamaService {
+    if (!OllamaService.instance) {
+      OllamaService.instance = new OllamaService();
+    }
+    return OllamaService.instance;
   }
 
   // ============================================================================
-  // 🔍 Ollama 연결 상태 확인
+  // 🔍 헬스체크 및 연결 관리
   // ============================================================================
 
-  public async checkConnection(): Promise<boolean> {
+  /**
+   * ✅ Ollama 서비스 헬스체크 (향상된 로직)
+   */
+  async checkHealth(): Promise<boolean> {
     const now = Date.now();
     
-    // 캐시된 결과 사용 (5분 이내)
-    if (now - this.lastCheck < this.checkInterval && this.lastCheck > 0) {
-      return this.isConnected;
+    // 최근에 체크했으면 캐시된 결과 사용
+    if (now - this.lastHealthCheck < this.healthCheckInterval && this.isAvailable) {
+      return this.isAvailable;
     }
 
     try {
-      console.log('🔍 Ollama 연결 상태 확인 중...');
+      console.log('🔍 Ollama 헬스체크 시작...');
       
-      const response = await fetch(`${this.baseUrl}/api/version`, {
-        method: 'GET',
-        timeout: 5000 // 5초 타임아웃
-      } as any);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5초 타임아웃
 
-      if (response.ok) {
-        const version = await response.json();
-        console.log(`✅ Ollama 연결 성공 - 버전: ${version.version || 'unknown'}`);
-        this.isConnected = true;
-      } else {
-        console.log('❌ Ollama 응답 오류:', response.status);
-        this.isConnected = false;
-      }
-    } catch (error: any) {
-      console.log('❌ Ollama 연결 실패:', error.message);
-      this.isConnected = false;
-    }
-
-    this.lastCheck = now;
-    return this.isConnected;
-  }
-
-  // ============================================================================
-  // 📋 사용 가능한 모델 목록 조회
-  // ============================================================================
-
-  public async getModels(): Promise<string[]> {
-    try {
-      console.log('📋 Ollama 모델 목록 조회 중...');
-      
       const response = await fetch(`${this.baseUrl}/api/tags`, {
         method: 'GET',
-        timeout: 10000
-      } as any);
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      this.isAvailable = true;
+      this.lastHealthCheck = now;
+      
+      console.log('✅ Ollama 연결 성공:', {
+        modelCount: data.models?.length || 0,
+        availableModels: data.models?.slice(0, 3).map((m: any) => m.name) || []
+      });
+      
+      return true;
+
+    } catch (error: any) {
+      this.isAvailable = false;
+      this.lastHealthCheck = now;
+      
+      if (error.name === 'AbortError') {
+        console.error('❌ Ollama 연결 타임아웃 (5초)');
+      } else if (error.code === 'ECONNREFUSED') {
+        console.error('❌ Ollama 서버 연결 거부 - 서버가 실행 중인지 확인하세요');
+      } else {
+        console.error('❌ Ollama 헬스체크 실패:', error.message);
+      }
+      
+      return false;
+    }
+  }
+
+  /**
+   * ✅ 사용 가능한 모델 목록 조회
+   */
+  async getAvailableModels(): Promise<string[]> {
+    try {
+      if (!await this.checkHealth()) {
+        console.warn('⚠️ Ollama 서비스 이용 불가 - 빈 모델 목록 반환');
+        return [];
+      }
+
+      const response = await fetch(`${this.baseUrl}/api/tags`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -90,381 +139,260 @@ class OllamaService {
       const data = await response.json();
       const models = data.models?.map((model: any) => model.name) || [];
       
-      this.availableModels = models;
-      console.log(`✅ Ollama 모델 목록 조회 성공 - ${models.length}개 모델`);
-      console.log('🔹 사용 가능한 모델:', models.join(', '));
-      
+      console.log('📋 사용 가능한 Ollama 모델:', models);
       return models;
+
     } catch (error: any) {
-      console.error('❌ Ollama 모델 목록 조회 실패:', error.message);
+      console.error('❌ 모델 목록 조회 실패:', error.message);
       return [];
     }
   }
 
   // ============================================================================
-  // 🤖 채팅 응답 생성
+  // 💬 채팅 완료 기능
   // ============================================================================
 
-  public async chat(
-    model: string, 
-    messages: OllamaMessage[], 
-    stream: boolean = false
+  /**
+   * ✅ 채팅 완료 (재시도 로직 포함)
+   */
+  async chatCompletion(
+    model: string,
+    messages: Array<{ role: string; content: string }>,
+    options: {
+      temperature?: number;
+      stream?: boolean;
+      personalizedContext?: any;
+    } = {}
   ): Promise<string> {
-    try {
-      console.log(`🤖 Ollama 채팅 요청 - 모델: ${model}, 메시지: ${messages.length}개`);
+    console.log('💬 Ollama 채팅 완료 요청:', {
+      model,
+      messageCount: messages.length,
+      lastMessageLength: messages[messages.length - 1]?.content?.length || 0
+    });
 
-      const isConnected = await this.checkConnection();
-      if (!isConnected) {
-        throw new Error('Ollama is not connected');
-      }
+    // 헬스체크 먼저 수행
+    if (!await this.checkHealth()) {
+      return this.getFallbackResponse(messages[messages.length - 1]?.content || '');
+    }
 
-      const requestBody = {
-        model: model,
-        messages: messages,
-        stream: stream,
-        options: {
-          temperature: 0.7,
-          top_p: 0.9,
-          top_k: 40,
-          repeat_penalty: 1.1
+    let lastError: any = null;
+
+    // 재시도 로직
+    for (let attempt = 1; attempt <= this.retryCount; attempt++) {
+      try {
+        console.log(`🔄 채팅 완료 시도 ${attempt}/${this.retryCount}`);
+        
+        const result = await this.makeRequest(model, messages, options);
+        console.log('✅ Ollama 응답 성공:', {
+          responseLength: result.length,
+          model: model
+        });
+        
+        return result;
+
+      } catch (error: any) {
+        lastError = error;
+        console.warn(`⚠️ 시도 ${attempt} 실패:`, error.message);
+        
+        if (attempt < this.retryCount) {
+          const delay = Math.pow(2, attempt) * 1000; // 지수 백오프
+          console.log(`⏳ ${delay}ms 후 재시도...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
-      };
-
-      const response = await fetch(`${this.baseUrl}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody),
-        timeout: 60000 // 60초 타임아웃
-      } as any);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
-
-      if (stream) {
-        // 스트리밍 응답 처리
-        return await this.handleStreamResponse(response);
-      } else {
-        // 일반 응답 처리
-        const data: OllamaResponse = await response.json();
-        console.log(`✅ Ollama 응답 생성 완료 - 길이: ${data.response?.length || 0}자`);
-        return data.response || '';
-      }
-
-    } catch (error: any) {
-      console.error(`❌ Ollama 채팅 오류 (${model}):`, error.message);
-      throw new Error(`Ollama chat failed: ${error.message}`);
     }
+
+    // 모든 재시도 실패 시 폴백 응답
+    console.error('❌ 모든 Ollama 재시도 실패:', lastError?.message);
+    return this.getFallbackResponse(messages[messages.length - 1]?.content || '');
   }
 
-  // ============================================================================
-  // 🔽 모델 다운로드
-  // ============================================================================
-
-  public async pullModel(modelName: string): Promise<void> {
-    try {
-      console.log(`🔽 Ollama 모델 다운로드 시작 - ${modelName}`);
-
-      const response = await fetch(`${this.baseUrl}/api/pull`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name: modelName,
-          stream: false
-        })
-      } as any);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      console.log(`✅ Ollama 모델 다운로드 시작됨 - ${modelName}`);
-      
-      // 모델 목록 캐시 무효화
-      this.availableModels = [];
-      this.lastCheck = 0;
-
-    } catch (error: any) {
-      console.error(`❌ Ollama 모델 다운로드 실패 (${modelName}):`, error.message);
-      throw error;
-    }
-  }
-
-  // ============================================================================
-  // 📊 모델 정보 조회
-  // ============================================================================
-
-  public async getModelInfo(modelName: string): Promise<any> {
-    try {
-      console.log(`📊 Ollama 모델 정보 조회 - ${modelName}`);
-
-      const response = await fetch(`${this.baseUrl}/api/show`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name: modelName
-        })
-      } as any);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const modelInfo = await response.json();
-      console.log(`✅ 모델 정보 조회 성공 - ${modelName}`);
-      
-      return {
-        name: modelInfo.name,
-        size: modelInfo.size,
-        digest: modelInfo.digest,
-        modified: modelInfo.modified_at,
-        parameters: modelInfo.parameters,
-        template: modelInfo.template,
-        details: modelInfo.details
-      };
-
-    } catch (error: any) {
-      console.error(`❌ 모델 정보 조회 실패 (${modelName}):`, error.message);
-      throw error;
-    }
-  }
-
-  // ============================================================================
-  // 🗑️ 모델 삭제
-  // ============================================================================
-
-  public async deleteModel(modelName: string): Promise<void> {
-    try {
-      console.log(`🗑️ Ollama 모델 삭제 - ${modelName}`);
-
-      const response = await fetch(`${this.baseUrl}/api/delete`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name: modelName
-        })
-      } as any);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      console.log(`✅ 모델 삭제 완료 - ${modelName}`);
-      
-      // 모델 목록 캐시 무효화
-      this.availableModels = this.availableModels.filter(m => m !== modelName);
-
-    } catch (error: any) {
-      console.error(`❌ 모델 삭제 실패 (${modelName}):`, error.message);
-      throw error;
-    }
-  }
-
-  // ============================================================================
-  // 🔧 일반 생성 (레거시 지원)
-  // ============================================================================
-
-  public async generate(
-    model: string, 
-    prompt: string, 
-    stream: boolean = false
+  /**
+   * ✅ 실제 요청 수행
+   */
+  private async makeRequest(
+    model: string,
+    messages: Array<{ role: string; content: string }>,
+    options: any
   ): Promise<string> {
+    // Ollama 형식에 맞게 프롬프트 구성
+    const prompt = this.formatPrompt(messages, options.personalizedContext);
+    
+    const requestBody = {
+      model: model,
+      prompt: prompt,
+      stream: false,
+      options: {
+        temperature: options.temperature || 0.7,
+        num_predict: 2000,
+        top_p: 0.9,
+        top_k: 40
+      }
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
     try {
-      console.log(`🔧 Ollama 텍스트 생성 - 모델: ${model}`);
-
-      const requestBody = {
-        model: model,
-        prompt: prompt,
-        stream: stream,
-        options: {
-          temperature: 0.7,
-          top_p: 0.9,
-          top_k: 40
-        }
-      };
-
       const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify(requestBody),
-        timeout: 60000
-      } as any);
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
-      if (stream) {
-        return await this.handleStreamResponse(response);
-      } else {
-        const data = await response.json();
-        return data.response || '';
+      const data: OllamaResponse = await response.json();
+      
+      if (!data.response) {
+        throw new Error('Empty response from Ollama');
       }
+
+      return data.response.trim();
 
     } catch (error: any) {
-      console.error(`❌ Ollama 텍스트 생성 오류:`, error.message);
+      clearTimeout(timeoutId);
+      
+      if (error.name === 'AbortError') {
+        throw new Error(`Request timeout after ${this.timeout}ms`);
+      }
+      
       throw error;
     }
   }
 
-  // ============================================================================
-  // 🛠️ 프라이빗 헬퍼 메서드들
-  // ============================================================================
+  /**
+   * ✅ 메시지를 Ollama 프롬프트 형식으로 변환
+   */
+  private formatPrompt(
+    messages: Array<{ role: string; content: string }>,
+    personalizedContext?: any
+  ): string {
+    let prompt = '';
 
-  private async handleStreamResponse(response: Response): Promise<string> {
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('스트림 응답을 읽을 수 없습니다');
+    // 개인화 컨텍스트가 있으면 추가
+    if (personalizedContext) {
+      prompt += this.formatPersonalizedContext(personalizedContext);
     }
 
-    let fullResponse = '';
-    const decoder = new TextDecoder();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n').filter(line => line.trim());
-
-        for (const line of lines) {
-          try {
-            const data = JSON.parse(line);
-            if (data.response) {
-              fullResponse += data.response;
-            }
-            if (data.done) {
-              return fullResponse;
-            }
-          } catch (parseError) {
-            // JSON 파싱 오류 무시 (부분 응답일 수 있음)
-          }
-        }
+    // 메시지 히스토리 추가
+    messages.forEach((message, index) => {
+      if (message.role === 'system') {
+        prompt += `System: ${message.content}\n\n`;
+      } else if (message.role === 'user') {
+        prompt += `Human: ${message.content}\n\n`;
+      } else if (message.role === 'assistant') {
+        prompt += `Assistant: ${message.content}\n\n`;
       }
+    });
 
-      return fullResponse;
-    } finally {
-      reader.releaseLock();
+    prompt += 'Assistant: ';
+    return prompt;
+  }
+
+  /**
+   * ✅ 개인화 컨텍스트를 프롬프트에 포함
+   */
+  private formatPersonalizedContext(context: any): string {
+    if (!context || Object.keys(context).length === 0) {
+      return '';
     }
+
+    let contextPrompt = 'Context about the user:\n';
+
+    if (context.personalityProfile) {
+      contextPrompt += `- Personality: ${context.personalityProfile.type || 'Adaptive'}\n`;
+      contextPrompt += `- Communication Style: ${context.personalityProfile.communicationStyle || 'Balanced'}\n`;
+    }
+
+    if (context.behaviorPatterns && context.behaviorPatterns.length > 0) {
+      contextPrompt += `- Interests: ${context.behaviorPatterns.slice(0, 3).join(', ')}\n`;
+    }
+
+    if (context.preferences && Object.keys(context.preferences).length > 0) {
+      contextPrompt += `- Preferences: ${context.preferences.language || 'adaptive'} language\n`;
+    }
+
+    contextPrompt += '\nPlease respond in a way that matches the user\'s personality and preferences.\n\n';
+    
+    return contextPrompt;
+  }
+
+  /**
+   * ✅ 폴백 응답 생성 (Ollama 연결 실패 시)
+   */
+  private getFallbackResponse(userMessage: string): string {
+    console.log('🔄 폴백 응답 생성 중...');
+
+    // 간단한 키워드 기반 응답
+    const lowerMessage = userMessage.toLowerCase();
+
+    if (lowerMessage.includes('hello') || lowerMessage.includes('안녕')) {
+      return '안녕하세요! 현재 AI 서비스에 일시적인 문제가 있지만, 도움을 드리기 위해 노력하고 있습니다. 어떤 도움이 필요하신가요?';
+    }
+
+    if (lowerMessage.includes('help') || lowerMessage.includes('도움')) {
+      return '도움이 필요하시는군요. 현재 메인 AI 서비스가 일시적으로 이용 불가하지만, 기본적인 지원은 제공할 수 있습니다. 구체적으로 어떤 도움이 필요하신지 말씀해 주세요.';
+    }
+
+    if (lowerMessage.includes('error') || lowerMessage.includes('오류') || lowerMessage.includes('문제')) {
+      return '현재 시스템에 일시적인 문제가 발생한 것 같습니다. 곧 정상화될 예정이니 잠시 후 다시 시도해 주시기 바랍니다.';
+    }
+
+    // 기본 폴백 응답
+    return '죄송합니다. 현재 AI 서비스에 일시적인 문제가 있어 제한된 응답만 가능합니다. 서비스 복구 후 더 나은 도움을 드릴 수 있을 것입니다. 조금 후에 다시 시도해 주세요.';
   }
 
   // ============================================================================
-  // 📊 공개 유틸리티 메서드들
+  // 🔧 유틸리티 메서드
   // ============================================================================
 
-  public getConnectionStatus(): {
-    connected: boolean;
-    url: string;
-    lastCheck: string;
-    modelCount: number;
+  /**
+   * ✅ 서비스 상태 정보 반환
+   */
+  getStatus(): {
+    available: boolean;
+    baseUrl: string;
+    lastHealthCheck: Date | null;
+    timeout: number;
+    retryCount: number;
   } {
     return {
-      connected: this.isConnected,
-      url: this.baseUrl,
-      lastCheck: new Date(this.lastCheck).toISOString(),
-      modelCount: this.availableModels.length
+      available: this.isAvailable,
+      baseUrl: this.baseUrl,
+      lastHealthCheck: this.lastHealthCheck ? new Date(this.lastHealthCheck) : null,
+      timeout: this.timeout,
+      retryCount: this.retryCount
     };
   }
 
-  public getCachedModels(): string[] {
-    return [...this.availableModels];
+  /**
+   * ✅ 강제 헬스체크 (캐시 무시)
+   */
+  async forceHealthCheck(): Promise<boolean> {
+    this.lastHealthCheck = 0; // 캐시 초기화
+    return await this.checkHealth();
   }
 
-  public getRecommendedModels(): Array<{
-    name: string;
-    size: string;
-    description: string;
-    recommended: boolean;
-  }> {
-    return [
-      {
-        name: 'llama3.2:1b',
-        size: '1.3GB',
-        description: '가장 빠른 소형 모델 - 일반 대화용',
-        recommended: true
-      },
-      {
-        name: 'llama3.2:3b',
-        size: '2.0GB',
-        description: '균형잡힌 성능과 속도 - 권장 모델',
-        recommended: true
-      },
-      {
-        name: 'gemma2:2b',
-        size: '1.6GB',
-        description: 'Google 기반 효율적 모델',
-        recommended: false
-      },
-      {
-        name: 'qwen2.5:3b',
-        size: '1.9GB',
-        description: '다국어 지원 우수 모델',
-        recommended: false
-      },
-      {
-        name: 'llama3.1:8b',
-        size: '4.7GB',
-        description: '고성능 대형 모델 - 고급 작업용',
-        recommended: false
-      }
-    ];
-  }
-
-  public async healthCheck(): Promise<{
-    status: string;
-    connected: boolean;
-    models: number;
-    version?: string;
-    error?: string;
-  }> {
-    try {
-      const isConnected = await this.checkConnection();
-      
-      if (!isConnected) {
-        return {
-          status: 'disconnected',
-          connected: false,
-          models: 0,
-          error: 'Ollama service is not available'
-        };
-      }
-
-      const models = await this.getModels();
-      
-      return {
-        status: 'healthy',
-        connected: true,
-        models: models.length,
-        version: 'unknown' // 버전 정보는 별도 API로 조회 가능
-      };
-
-    } catch (error: any) {
-      return {
-        status: 'error',
-        connected: false,
-        models: 0,
-        error: error.message
-      };
-    }
+  /**
+   * ✅ 연결 가능 여부 확인 (빠른 체크)
+   */
+  isConnected(): boolean {
+    return this.isAvailable && (Date.now() - this.lastHealthCheck < this.healthCheckInterval);
   }
 }
 
-// 싱글톤 인스턴스 생성 및 export
-export const ollamaService = new OllamaService();
+// ============================================================================
+// 🏭 싱글톤 인스턴스 내보내기
+// ============================================================================
 
-// 클래스도 export (테스트용)
-export { OllamaService };
+const ollamaService = OllamaService.getInstance();
+export default ollamaService;

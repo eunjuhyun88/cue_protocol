@@ -2,7 +2,7 @@
 
 // ============================================================================
 // 📁 src/components/AIPassportSystem.tsx  
-// 🎯 useCueProtocol 훅과 깔끔하게 통합된 버전
+// 🎯 원래 버전 복원 (DID 표시 문제 수정된 버전)
 // ============================================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 
 // ============================================================================
-// 🔧 Import 분리된 컴포넌트들 및 서비스들
+// 🔧 Import 분리된 컴포넌트들
 // ============================================================================
 
 // API 클라이언트들
@@ -30,11 +30,8 @@ import { BackendStatus } from './ui/BackendStatus';
 import { OnboardingFlow } from './auth/OnBoardingFlow';
 import { MainLayout } from './layout/MainLayout';
 
-// 🧠 Cue Protocol 통합
-import { useCueProtocol } from '../hooks/useCueProtocol';
-
 // ============================================================================
-// 🔧 타입 정의 (기존과 동일)
+// 🔧 수정된 타입 정의 (백엔드 호환성 추가)
 // ============================================================================
 
 interface User {
@@ -43,17 +40,17 @@ interface User {
   email?: string;
   did: string;
   walletAddress?: string;
-  wallet_address?: string;
+  wallet_address?: string; // 백엔드 호환성
   cueBalance: number;
-  cue_tokens?: number;
+  cue_tokens?: number; // 백엔드 호환성
   trustScore: number;
-  trust_score?: number;
+  trust_score?: number; // 백엔드 호환성
   passportLevel: string;
-  passport_level?: string;
+  passport_level?: string; // 백엔드 호환성
   biometricVerified: boolean;
-  biometric_verified?: boolean;
+  biometric_verified?: boolean; // 백엔드 호환성
   registeredAt: string;
-  created_at?: string;
+  created_at?: string; // 백엔드 호환성
 }
 
 interface AIPassport {
@@ -62,14 +59,14 @@ interface AIPassport {
   trustScore: number;
   passportLevel: string;
   cueBalance: number;
-  cueTokens?: number;
+  cueTokens?: number; // 추가: UI 호환성
   totalMined: number;
   dataVaults: Array<{
     name: string;
     type: string;
     size: string;
     items: number;
-    cueCount?: number;
+    cueCount?: number; // 추가: UI에서 사용
   }>;
   connectedPlatforms: string[];
   personalityProfile: {
@@ -95,14 +92,6 @@ interface AIPassport {
     description: string;
     timestamp: string;
   }>;
-  // 🧠 Cue Protocol 확장 (선택적)
-  cueProtocolData?: {
-    totalCues: number;
-    avgQuality: number;
-    knowledgeNodes: number;
-    connectionStrength: number;
-    recentLearning: string[];
-  };
 }
 
 interface Message {
@@ -115,12 +104,10 @@ interface Message {
   trustScore?: number;
   contextLearned?: boolean;
   qualityScore?: number;
-  // 🧠 Cue Protocol 확장 (선택적)
-  cueId?: string;
-  personalCuesExtracted?: number;
-  knowledgeNodesUpdated?: number;
 }
 
+// ============================================================================
+// ============================================================================
 // WebAuthn 라이브러리 동적 로드
 let startRegistration: any = null;
 let startAuthentication: any = null;
@@ -141,59 +128,46 @@ const loadWebAuthn = async () => {
 };
 
 // ============================================================================
-// 🎯 메인 AI Passport 시스템 컴포넌트 (Cue Protocol 통합)
+// 🎯 메인 AI Passport 시스템 컴포넌트
 // ============================================================================
 
 const AIPassportSystem: React.FC = () => {
   // ============================================================================
-  // 🔧 기본 상태 관리 (변경 없음)
+  // 🔧 상태 관리
   // ============================================================================
   
+  // 초기화 및 인증 상태
   const [isInitialized, setIsInitialized] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [registrationStep, setRegistrationStep] = useState<'waiting' | 'passport' | 'auth' | 'wallet' | 'complete'>('waiting');
   const [error, setError] = useState('');
   
+  // 사용자 및 패스포트 데이터
   const [user, setUser] = useState<User | null>(null);
   const [passport, setPassport] = useState<AIPassport | null>(null);
   
+  // UI 상태
   const [currentView, setCurrentView] = useState('chat');
   const [selectedModel, setSelectedModel] = useState('personalized-agent');
   const [messages, setMessages] = useState<Message[]>([]);
   const [cueBalance, setCueBalance] = useState(3200);
   const [todaysMining, setTodaysMining] = useState(47);
   
+  // 연결 상태
   const [backendConnected, setBackendConnected] = useState(false);
   const [backendMode, setBackendMode] = useState('checking');
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [isLibraryLoaded, setIsLibraryLoaded] = useState(false);
   
+  // WebAuthn 지원 확인
   const [webauthnSupport] = useState(() => checkWebAuthnSupport());
+  
+  // API 클라이언트 인스턴스
   const [api] = useState(() => new PersistentDataAPIClient());
 
   // ============================================================================
-  // 🧠 Cue Protocol 통합 (새로 추가)
-  // ============================================================================
-  
-  const {
-    // Cue Protocol 데이터
-    cues,
-    personalCues,
-    vault,
-    stats: cueStats,
-    realTimeStats,
-    isLoading: isCueLoading,
-    
-    // Cue Protocol 액션들
-    handleNewMessage: handleCueMessage,
-    searchCues,
-    getPersonalizationInsights,
-    refreshVault
-  } = useCueProtocol(user?.did || '');
-
-  // ============================================================================
-  // 🔧 데이터 정규화 함수들 (기존과 동일)
+  // 🔧 데이터 정규화 함수들
   // ============================================================================
   
   const normalizeUserData = useCallback((userData: any): User => {
@@ -201,7 +175,7 @@ const AIPassportSystem: React.FC = () => {
       id: userData.id,
       username: userData.username || userData.display_name || `User_${userData.id.slice(-8)}`,
       email: userData.email || null,
-      did: userData.did || `did:final0626:${userData.id}`,
+      did: userData.did || `did:final0626:${userData.id}`, // DID 보장
       walletAddress: userData.walletAddress || userData.wallet_address,
       cueBalance: userData.cueBalance || userData.cue_tokens || 15428,
       trustScore: userData.trustScore || userData.trust_score || 95,
@@ -212,37 +186,28 @@ const AIPassportSystem: React.FC = () => {
   }, []);
 
   const createDefaultPassport = useCallback((userData: User): AIPassport => {
-    // 🧠 Cue Protocol 데이터 통합
-    const cueProtocolData = realTimeStats ? {
-      totalCues: realTimeStats.totalCues,
-      avgQuality: realTimeStats.avgQuality,
-      knowledgeNodes: realTimeStats.knowledgeNodes,
-      connectionStrength: realTimeStats.connectionStrength,
-      recentLearning: personalCues.slice(-3).map(cue => cue.cue_category)
-    } : undefined;
-
     return {
-      did: userData.did,
+      did: userData.did, // 🔑 핵심: DID 확실히 설정
       username: userData.username,
       trustScore: userData.trustScore,
       passportLevel: userData.passportLevel,
       cueBalance: userData.cueBalance,
-      cueTokens: userData.cueBalance,
+      cueTokens: userData.cueBalance, // UI 호환성
       totalMined: Math.floor(userData.cueBalance * 1.5),
       dataVaults: [
         {
-          name: 'Cue Protocol Vault',
-          type: 'cue-storage',
-          size: vault?.storage_stats.total_size || '0KB',
-          items: vault?.storage_stats.total_cues || 0,
-          cueCount: Math.floor((vault?.storage_stats.total_cues || 0) * 0.1)
+          name: 'Personal Data',
+          type: 'encrypted',
+          size: '1.2MB',
+          items: 247,
+          cueCount: Math.floor(userData.cueBalance * 0.1)
         },
         {
-          name: 'Personal Knowledge Graph',
-          type: 'rag-dag',
-          size: `${Math.round(personalCues.length * 0.5)}KB`,
-          items: personalCues.length,
-          cueCount: Math.floor(personalCues.length * 0.05)
+          name: 'AI Conversations',
+          type: 'conversations',
+          size: '856KB',
+          items: 89,
+          cueCount: Math.floor(userData.cueBalance * 0.05)
         }
       ],
       connectedPlatforms: ['ChatGPT', 'Claude'],
@@ -253,63 +218,69 @@ const AIPassportSystem: React.FC = () => {
       },
       achievements: [
         {
-          name: 'Cue Pioneer',
+          name: 'First Steps',
           icon: '🎯',
-          earned: realTimeStats?.totalCues > 0,
-          description: '첫 번째 Cue 생성'
+          earned: true,
+          description: 'AI Passport 생성 완료'
         },
         {
-          name: 'Knowledge Builder',
-          icon: '🧠',
-          earned: realTimeStats?.knowledgeNodes > 10,
-          description: '지식 그래프 구축자'
+          name: 'Verified Identity',
+          icon: '✅',
+          earned: true,
+          description: '생체인증으로 신원 확인'
         }
       ],
       ragDagStats: {
-        learnedConcepts: realTimeStats?.knowledgeNodes || 0,
-        connectionStrength: realTimeStats?.connectionStrength || 0,
+        learnedConcepts: 247,
+        connectionStrength: 0.87,
         lastLearningActivity: new Date().toISOString(),
-        knowledgeNodes: realTimeStats?.knowledgeNodes || 0,
-        personalityAccuracy: Math.min(0.5 + (personalCues.length * 0.05), 0.95)
+        knowledgeNodes: 1456,
+        personalityAccuracy: 0.94
       },
       recentActivity: [
         {
-          type: 'cue_protocol_activated',
-          description: 'Cue Protocol 시스템 활성화',
+          type: 'passport_created',
+          description: 'AI Passport 생성됨',
           timestamp: new Date().toISOString()
         }
-      ],
-      cueProtocolData
+      ]
     };
-  }, [vault, personalCues, realTimeStats]);
-
-  const isValidDID = useCallback((did: string): boolean => {
-    return did && 
-           (did.startsWith('did:final0626:') || did.startsWith('did:ai:')) && 
-           !did.includes('loading') && 
-           did.length > 20;
   }, []);
 
+  // 수정된 isValidDID 함수
+const isValidDID = useCallback((did: string): boolean => {
+  return did && 
+         (did.startsWith('did:final0626:') || 
+          did.startsWith('did:ai:') || 
+          did.startsWith('did:agent:')) &&  // ✅ did:agent: 추가!
+         !did.includes('loading') && 
+         did.length > 20;
+}, []);
+
   // ============================================================================
-  // 🚀 시스템 초기화 (기존과 동일)
+  // 🚀 수정된 시스템 초기화 및 세션 복원
   // ============================================================================
   
   useEffect(() => {
     const initializeSystem = async () => {
       try {
-        console.log('🚀 === Cue Protocol 통합 시스템 초기화 시작 ===');
+        console.log('🚀 === 시스템 초기화 시작 ===');
         
+        // 백엔드 연결 확인
         const health = await api.checkHealth();
         setBackendConnected(health.connected);
         setBackendMode(health.mode || 'unknown');
         setConnectionStatus(health.connected ? 'connected' : 'disconnected');
         
+        // WebAuthn 라이브러리 로드
         if (webauthnSupport.supported) {
           const loaded = await loadWebAuthn();
           setIsLibraryLoaded(loaded);
         }
         
+        // 저장된 사용자 데이터 확인
         const storedUserData = localStorage.getItem('cue_user_data');
+        const sessionToken = localStorage.getItem('cue_session_token');
         
         if (storedUserData) {
           try {
@@ -319,13 +290,40 @@ const AIPassportSystem: React.FC = () => {
             if (isValidDID(userData.did)) {
               console.log('✅ 유효한 DID 발견, 사용자 복원:', userData.did);
               
+              // 데이터 정규화
               const normalizedUser = normalizeUserData(userData);
+              
               setUser(normalizedUser);
               setCueBalance(normalizedUser.cueBalance);
               setIsAuthenticated(true);
               
-              // 패스포트는 Cue Protocol 로드 완료 후 생성하도록 지연
-              
+              // 패스포트 로드
+              try {
+                console.log('🔍 패스포트 로드 시도 - DID:', normalizedUser.did);
+                const passportData = await api.loadPassport(normalizedUser.did);
+                
+                if (passportData && passportData.did) {
+                  const normalizedPassport = {
+                    ...passportData,
+                    cueTokens: passportData.cueBalance || normalizedUser.cueBalance,
+                    dataVaults: passportData.dataVaults?.map(vault => ({
+                      ...vault,
+                      cueCount: vault.cueCount || Math.floor(Math.random() * 100)
+                    })) || []
+                  };
+                  setPassport(normalizedPassport);
+                  console.log('✅ 패스포트 복원 성공, DID:', normalizedPassport.did);
+                } else {
+                  throw new Error('패스포트 데이터에 DID가 없습니다');
+                }
+              } catch (error) {
+                console.warn('⚠️ 패스포트 복원 실패, 기본값 사용:', error);
+                
+                // 🔧 기본 패스포트에 DID 확실히 포함
+                const defaultPassport = createDefaultPassport(normalizedUser);
+                setPassport(defaultPassport);
+                console.log('🎨 기본 패스포트 생성, DID 포함:', defaultPassport.did);
+              }
             } else {
               console.warn('❌ 유효하지 않은 DID, 로컬 데이터 삭제:', userData.did);
               localStorage.removeItem('cue_user_data');
@@ -338,6 +336,23 @@ const AIPassportSystem: React.FC = () => {
           }
         }
         
+        // 서버 세션 복원 (필요한 경우에만)
+        if (sessionToken && !storedUserData) {
+          try {
+            const restored = await api.restoreSession();
+            if (restored && restored.success && restored.user) {
+              console.log('✅ 서버 세션 복원 성공');
+              const normalizedUser = normalizeUserData(restored.user);
+              setUser(normalizedUser);
+              setIsAuthenticated(true);
+              setCueBalance(normalizedUser.cueBalance);
+              localStorage.setItem('cue_user_data', JSON.stringify(normalizedUser));
+            }
+          } catch (error) {
+            console.warn('⚠️ 서버 세션 복원 실패:', error);
+          }
+        }
+        
       } catch (error) {
         console.error('💥 초기화 실패:', error);
       } finally {
@@ -346,22 +361,10 @@ const AIPassportSystem: React.FC = () => {
     };
 
     initializeSystem();
-  }, [api, webauthnSupport.supported, normalizeUserData, isValidDID]);
+  }, [api, webauthnSupport.supported, normalizeUserData, createDefaultPassport, isValidDID]);
 
   // ============================================================================
-  // 🧠 Cue Protocol 로드 완료 후 패스포트 생성
-  // ============================================================================
-  
-  useEffect(() => {
-    if (user && !passport && !isCueLoading && realTimeStats) {
-      console.log('🎨 Cue Protocol 데이터로 패스포트 생성');
-      const enhancedPassport = createDefaultPassport(user);
-      setPassport(enhancedPassport);
-    }
-  }, [user, passport, isCueLoading, realTimeStats, createDefaultPassport]);
-
-  // ============================================================================
-  // 🔧 백엔드 연결 재시도 (기존과 동일)
+  // 🔧 백엔드 연결 재시도
   // ============================================================================
   
   const retryBackendConnection = useCallback(async () => {
@@ -372,7 +375,7 @@ const AIPassportSystem: React.FC = () => {
   }, [api]);
 
   // ============================================================================
-  // 🔐 WebAuthn 등록/로그인 처리 (기존과 동일)
+  // 🔐 수정된 WebAuthn 등록/로그인 처리
   // ============================================================================
   
   const handleRegister = async () => {
@@ -391,11 +394,15 @@ const AIPassportSystem: React.FC = () => {
 
       console.log('✅ WebAuthn 처리 성공:', result);
 
+      // 🔧 백엔드 응답 데이터 정규화
       const completeUserData = normalizeUserData(result.user);
+
       console.log('💾 정규화된 사용자 데이터:', completeUserData);
 
+      // localStorage에 완전한 사용자 정보 저장
       localStorage.setItem('cue_user_data', JSON.stringify(completeUserData));
       
+      // 세션 토큰들 저장
       if (result.sessionToken) {
         localStorage.setItem('cue_session_token', result.sessionToken);
       }
@@ -403,12 +410,48 @@ const AIPassportSystem: React.FC = () => {
         localStorage.setItem('cue_session_id', result.sessionId);
       }
 
+      // 즉시 상태 업데이트
       setUser(completeUserData);
       setCueBalance(completeUserData.cueBalance);
       setIsAuthenticated(true);
 
-      // 패스포트는 Cue Protocol 로드 완료 후 자동 생성됨
+      // 🔧 패스포트 데이터 생성/로드 개선
+      const createOrLoadPassport = async (userData: User) => {
+        try {
+          console.log('📊 패스포트 로드 시도:', userData.did);
+          const passportData = await api.loadPassport(userData.did);
+          
+          if (passportData && passportData.did) {
+            // 백엔드에서 로드된 패스포트 정규화
+            const normalizedPassport = {
+              ...passportData,
+              cueTokens: passportData.cueBalance || userData.cueBalance, // UI 호환성
+              dataVaults: passportData.dataVaults?.map(vault => ({
+                ...vault,
+                cueCount: vault.cueCount || 0 // 기본값 설정
+              })) || []
+            };
+            
+            setPassport(normalizedPassport);
+            console.log('✅ 패스포트 로드 성공:', normalizedPassport.did);
+            return;
+          }
+        } catch (error) {
+          console.warn('⚠️ 패스포트 로드 실패, 기본 패스포트 생성:', error);
+        }
+        
+        // 기본 패스포트 생성 (DID 확실히 포함)
+        const defaultPassport = createDefaultPassport(userData);
+        setPassport(defaultPassport);
+        console.log('🎨 기본 패스포트 생성 완료, DID:', defaultPassport.did);
+      };
 
+      // 패스포트 생성/로드
+      if (completeUserData.did && completeUserData.did !== 'did:ai:loading...') {
+        await createOrLoadPassport(completeUserData);
+      }
+
+      // 등록 플로우 완료
       if (result.isExistingUser) {
         setRegistrationStep('complete');
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -429,6 +472,7 @@ const AIPassportSystem: React.FC = () => {
     } catch (error: any) {
       console.error('💥 등록/로그인 실패:', error);
       
+      // 에러 메시지 사용자 친화적으로 변환
       let errorMessage = error.message;
       if (error.message.includes('취소')) {
         errorMessage = '생체인증이 취소되었습니다. 다시 시도해주세요.';
@@ -445,22 +489,21 @@ const AIPassportSystem: React.FC = () => {
   };
 
   // ============================================================================
-  // 🚪 로그아웃 처리 (Cue Protocol 데이터 정리 추가)
+  // 🚪 로그아웃 처리 (수정됨)
   // ============================================================================
   
   const handleLogout = useCallback(async () => {
     try {
       console.log('🔧 로그아웃 처리 시작...');
       
+      // 서버 로그아웃 시도
       await api.logout();
       
-      // 모든 로컬 데이터 정리 (Cue Protocol 포함)
+      // 모든 로컬 데이터 정리
       localStorage.removeItem('cue_session_token');
       localStorage.removeItem('cue_session_id');
       localStorage.removeItem('cue_user_data');
       localStorage.removeItem('cue_mock_credential');
-      localStorage.removeItem('cue_vault');
-      localStorage.removeItem('personal_cues');
       
       // 상태 초기화
       setUser(null);
@@ -473,10 +516,11 @@ const AIPassportSystem: React.FC = () => {
       setCueBalance(0);
       setTodaysMining(0);
       
-      console.log('✅ Cue Protocol 통합 로그아웃 완료');
+      console.log('✅ 로그아웃 완료');
       
     } catch (error) {
       console.error('❌ 로그아웃 중 오류:', error);
+      // 오류가 발생해도 로컬 상태는 초기화
       localStorage.clear();
       setUser(null);
       setPassport(null);
@@ -485,210 +529,176 @@ const AIPassportSystem: React.FC = () => {
   }, [api]);
 
   // ============================================================================
-  // 💬 Cue Protocol 통합 채팅 메시지 전송 처리 (새로 개선)
+  // 💬 채팅 메시지 전송 처리 (수정됨)
   // ============================================================================
-  
-  const handleSendMessage = useCallback(async (message: string, model: string) => {
-    if (!message.trim() || !user) return;
+  // ============================================================================
+// 🔧 frontend/src/components/AIPassportSystem.tsx 수정
+// 📍 handleSendMessage 함수에서 force_token 생성 부분 제거
+// ============================================================================
 
-    const userMessage: Message = {
-      id: `msg_${Date.now()}_user`,
-      type: 'user',
-      content: message,
+const handleSendMessage = useCallback(async (message: string, model: string) => {
+  if (!message.trim() || !user) return;
+
+  const userMessage: Message = {
+    id: `msg_${Date.now()}_user`,
+    type: 'user',
+    content: message,
+    timestamp: new Date().toISOString()
+  };
+  
+  setMessages(prev => [...prev, userMessage]);
+
+  try {
+    console.log('🤖 AI 채팅 요청 시작:', {
+      message: message.substring(0, 50),
+      model: model,
+      userDid: user.did,
+      userId: user.id
+    });
+    
+    // 🔧 세션 토큰 확인 및 로깅
+    const sessionToken = localStorage.getItem('cue_session_token') || 
+                        localStorage.getItem('ai_agent_session_token');
+    const sessionId = localStorage.getItem('cue_session_id');
+    
+    console.log('🔑 인증 정보 확인:', {
+      hasSessionToken: !!sessionToken,
+      hasSessionId: !!sessionId,
+      tokenPreview: sessionToken ? sessionToken.substring(0, 20) + '...' : 'null',
+      tokenLength: sessionToken?.length || 0
+    });
+    
+    // 헤더 구성
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    
+    // 세션 토큰이 있으면 Authorization 헤더 추가
+    if (sessionToken) {
+      headers['Authorization'] = `Bearer ${sessionToken}`;
+    }
+    
+    // 요청 본문에 userId 추가
+    const requestBody = {
+      message: message,
+      model: model,
+      userDid: user.did,
+      userId: user.id
+    };
+    
+    console.log('📤 요청 데이터:', requestBody);
+    console.log('📤 요청 헤더:', headers);
+    
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/ai/chat`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(requestBody)
+    });
+    
+    console.log('📨 응답 상태:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      // 🔧 401 에러 처리 개선 - force_token 생성 제거
+      if (response.status === 401) {
+        console.error('❌ 인증 실패 - 401 Unauthorized');
+        console.log('🔄 WebAuthn 재인증 필요');
+        
+        // force_token 생성하지 않고 사용자에게 재인증 요청
+        const errorMessage: Message = {
+          id: `msg_${Date.now()}_error`,
+          type: 'ai',
+          content: '🔐 인증이 만료되었습니다. 새로고침 후 다시 로그인해주세요.',
+          timestamp: new Date().toISOString()
+        };
+        
+        setMessages(prev => [...prev, errorMessage]);
+        
+        // 잘못된 토큰 삭제
+        localStorage.removeItem('cue_session_token');
+        localStorage.removeItem('ai_agent_session_token');
+        
+        // 3초 후 자동 새로고침
+        setTimeout(() => {
+          window.location.reload();
+        }, 3000);
+        
+        return;
+      }
+      
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`AI 서비스 오류 (${response.status}): ${errorData.message || errorData.error || '알 수 없는 오류'}`);
+    }
+    
+    const data = await response.json();
+    
+    console.log('📨 성공 응답:', {
+      success: data.success,
+      hasContent: !!data.message?.content,
+      cueReward: data.message?.cueTokensEarned
+    });
+    
+    if (data.success && data.message?.content) {
+      const aiMessage: Message = {
+        id: `msg_${Date.now()}_ai`,
+        type: 'ai',
+        content: data.message.content,
+        timestamp: new Date().toISOString(),
+        model: model,
+        cueReward: data.message.cueTokensEarned
+      };
+      
+      setMessages(prev => [...prev, aiMessage]);
+      
+      // CUE 토큰 마이닝 결과 반영
+      if (data.message.cueTokensEarned) {
+        const newBalance = cueBalance + data.message.cueTokensEarned;
+        setCueBalance(newBalance);
+        setTodaysMining(prev => prev + data.message.cueTokensEarned);
+        
+        const updatedUser = { ...user, cueBalance: newBalance };
+        setUser(updatedUser);
+        localStorage.setItem('cue_user_data', JSON.stringify(updatedUser));
+      }
+      
+    } else {
+      throw new Error('AI 응답 형식이 올바르지 않습니다');
+    }
+    
+  } catch (error: any) {
+    console.error('💥 AI 채팅 실패:', error);
+    
+    // 에러 메시지 표시
+    const errorMessage: Message = {
+      id: `msg_${Date.now()}_error`,
+      type: 'ai',
+      content: `죄송합니다. AI 서비스에 일시적인 문제가 발생했습니다: ${error.message}`,
       timestamp: new Date().toISOString()
     };
     
-    setMessages(prev => [...prev, userMessage]);
-
-    try {
-      console.log('🧠 Cue Protocol 통합 AI 채팅 요청 시작:', {
-        message: message.substring(0, 50),
-        model: model,
-        userDid: user.did,
-        existingCues: cues.length,
-        personalCues: personalCues.length
-      });
-      
-      // 기존 AI 채팅 API 호출
-      const sessionToken = localStorage.getItem('cue_session_token');
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      
-      if (sessionToken) {
-        headers['Authorization'] = `Bearer ${sessionToken}`;
-      }
-      
-      // 🧠 Personal Cues를 컨텍스트로 포함
-      const requestBody = {
-        message: message,
-        model: model,
-        userDid: user.did,
-        userId: user.id,
-        // Cue Protocol 컨텍스트 추가
-        personalContext: personalCues.slice(-10).map(cue => ({
-          category: cue.cue_category,
-          data: cue.cue_data,
-          confidence: cue.confidence_score
-        })),
-        recentCues: cues.slice(-5).map(cue => ({
-          title: cue.header.title,
-          intent: cue.header.intent,
-          tags: cue.header.tags
-        }))
-      };
-      
-      console.log('📤 Cue Protocol 컨텍스트 포함 요청:', {
-        personalContextCount: requestBody.personalContext.length,
-        recentCuesCount: requestBody.recentCues.length
-      });
-      
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/ai/chat`, {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(requestBody)
-      });
-      
-      console.log('📨 응답 상태:', response.status, response.statusText);
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          console.error('❌ 인증 실패 - 401 Unauthorized');
-          const newToken = `force_token_${Date.now()}_${user.id}`;
-          localStorage.setItem('cue_session_token', newToken);
-          
-          const retryResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/ai/chat`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${newToken}`
-            },
-            body: JSON.stringify(requestBody)
-          });
-          
-          if (retryResponse.ok) {
-            const retryData = await retryResponse.json();
-            await processAIResponse(retryData, message, model);
-            return;
-          }
-        }
-        
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`AI 서비스 오류 (${response.status}): ${errorData.message || errorData.error || '알 수 없는 오류'}`);
-      }
-      
-      const data = await response.json();
-      await processAIResponse(data, message, model);
-      
-    } catch (error: any) {
-      console.error('💥 Cue Protocol AI 채팅 실패:', error);
-      
-      const errorMessage: Message = {
-        id: `msg_${Date.now()}_error`,
-        type: 'ai',
-        content: `죄송합니다. AI 서비스에 일시적인 문제가 발생했습니다: ${error.message}`,
-        timestamp: new Date().toISOString()
-      };
-      
-      setMessages(prev => [...prev, errorMessage]);
-    }
-
-    // 🧠 AI 응답 처리 및 Cue Protocol 통합
-    async function processAIResponse(data: any, userInput: string, model: string) {
-      console.log('🧠 Cue Protocol AI 응답 처리:', {
-        success: data.success,
-        hasContent: !!data.message?.content,
-        cueReward: data.message?.cueTokensEarned
-      });
-      
-      if (data.success && data.message?.content) {
-        // 🧠 Cue Protocol 처리
-        let cueExtractionResult = null;
-        let cueId = null;
-        let personalCuesExtracted = 0;
-        let knowledgeNodesUpdated = 0;
-
-        try {
-          console.log('🧠 Cue Protocol 추출 시작...');
-          cueExtractionResult = await handleCueMessage(userInput, data.message.content, model);
-          
-          if (cueExtractionResult) {
-            personalCuesExtracted = cueExtractionResult.extractionStats.totalExtracted;
-            knowledgeNodesUpdated = cueExtractionResult.extractionStats.highConfidenceCount;
-            
-            // 최근 생성된 Cue ID 찾기 (실제로는 handleCueMessage에서 반환해야 함)
-            if (cues.length > 0) {
-              cueId = cues[cues.length - 1]?.cue_id;
-            }
-            
-            console.log('✅ Cue Protocol 처리 완료:', {
-              personalCuesExtracted,
-              knowledgeNodesUpdated,
-              cueId
-            });
-          }
-        } catch (cueError) {
-          console.warn('⚠️ Cue Protocol 처리 실패:', cueError);
-        }
-
-        // AI 메시지 생성 (Cue Protocol 정보 포함)
-        const aiMessage: Message = {
-          id: `msg_${Date.now()}_ai`,
-          type: 'ai',
-          content: data.message.content,
-          timestamp: new Date().toISOString(),
-          model: model,
-          cueReward: data.message.cueTokensEarned,
-          // 🧠 Cue Protocol 확장 필드
-          cueId,
-          personalCuesExtracted,
-          knowledgeNodesUpdated
-        };
-        
-        setMessages(prev => [...prev, aiMessage]);
-        
-        // CUE 토큰 마이닝 결과 반영
-        if (data.message.cueTokensEarned) {
-          const newBalance = cueBalance + data.message.cueTokensEarned;
-          setCueBalance(newBalance);
-          setTodaysMining(prev => prev + data.message.cueTokensEarned);
-          
-          const updatedUser = { ...user, cueBalance: newBalance };
-          setUser(updatedUser);
-          localStorage.setItem('cue_user_data', JSON.stringify(updatedUser));
-        }
-        
-      } else {
-        throw new Error('AI 응답 형식이 올바르지 않습니다');
-      }
-    }
-  }, [user, cueBalance, cues, personalCues, handleCueMessage]);
+    setMessages(prev => [...prev, errorMessage]);
+  }
+}, [user, cueBalance]);
 
   // ============================================================================
-  // 🔍 디버그 기능 (Cue Protocol 정보 추가)
+  // 🔍 디버그 기능
   // ============================================================================
   
   const handleDebugCredential = useCallback(() => {
     const debugInfo = api.getDebugInfo();
     console.log('🔍 Mock 패스키 디버그 정보:', debugInfo);
     
-    const cueDebugInfo = {
+    // 🔧 DID 디버깅 정보 추가
+    const didInfo = {
       userDID: user?.did || 'No user',
       passportDID: passport?.did || 'No passport',
       localStorage: localStorage.getItem('cue_user_data') ? 'Present' : 'Missing',
-      sessionToken: localStorage.getItem('cue_session_token') ? 'Present' : 'Missing',
-      // 🧠 Cue Protocol 디버그 정보
-      totalCues: cues.length,
-      personalCues: personalCues.length,
-      vaultStatus: vault?.storage_stats.sync_status || 'No vault',
-      realTimeStats: realTimeStats ? 'Present' : 'Loading',
-      avgQuality: realTimeStats?.avgQuality.toFixed(2) || '0'
+      sessionToken: localStorage.getItem('cue_session_token') ? 'Present' : 'Missing'
     };
     
-    console.log('🧠 Cue Protocol 디버그 정보:', cueDebugInfo);
+    console.log('🆔 DID 디버그 정보:', didInfo);
     
-    alert(`Mock 패스키 정보:\nID: ${debugInfo.mockCredential.id}\n세션 토큰: ${debugInfo.sessionToken ? '있음' : '없음'}\n\nCue Protocol 정보:\nTotal Cues: ${cueDebugInfo.totalCues}\nPersonal Cues: ${cueDebugInfo.personalCues}\nVault Status: ${cueDebugInfo.vaultStatus}\nAvg Quality: ${cueDebugInfo.avgQuality}`);
-  }, [api, user, passport, cues, personalCues, vault, realTimeStats]);
+    alert(`Mock 패스키 정보:\nID: ${debugInfo.mockCredential.id}\n세션 토큰: ${debugInfo.sessionToken ? '있음' : '없음'}\n세션 ID: ${debugInfo.sessionId ? '있음' : '없음'}\n\nDID 정보:\nUser DID: ${didInfo.userDID}\nPassport DID: ${didInfo.passportDID}\nLocalStorage: ${didInfo.localStorage}`);
+  }, [api, user, passport]);
 
   // ============================================================================
   // 🎨 렌더링
@@ -700,13 +710,7 @@ const AIPassportSystem: React.FC = () => {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 flex items-center justify-center">
         <div className="text-center">
           <LoadingSpinner size="lg" className="mx-auto mb-4" />
-          <div className="flex items-center justify-center space-x-2 mb-2">
-            <Brain className="w-5 h-5 text-indigo-600 animate-pulse" />
-            <p className="text-gray-600 font-medium">CUE Protocol 초기화 중...</p>
-          </div>
-          <p className="text-sm text-gray-500">
-            {isCueLoading ? 'Personal Cues 로딩 중...' : '시스템 준비 중...'}
-          </p>
+          <p className="text-gray-600">CUE Protocol 초기화 중...</p>
         </div>
       </div>
     );
@@ -729,7 +733,7 @@ const AIPassportSystem: React.FC = () => {
     );
   }
 
-  // 인증된 경우 메인 레이아웃 (Cue Protocol 데이터 포함)
+  // 인증된 경우 메인 레이아웃
   return (
     <MainLayout
       passport={passport ?? undefined}
@@ -737,18 +741,7 @@ const AIPassportSystem: React.FC = () => {
       todaysMining={todaysMining}
       backendConnected={backendConnected}
       connectionStatus={connectionStatus as any}
-      connectionDetails={{
-        // 🧠 Cue Protocol 연결 정보 추가
-        cueProtocol: {
-          totalCues: realTimeStats?.totalCues || 0,
-          avgQuality: realTimeStats?.avgQuality || 0,
-          knowledgeNodes: realTimeStats?.knowledgeNodes || 0,
-          connectionStrength: realTimeStats?.connectionStrength || 0,
-          vaultStatus: vault?.storage_stats.sync_status || 'unknown',
-          personalCues: personalCues.length,
-          isLoading: isCueLoading
-        }
-      }}
+      connectionDetails={{}}
       messages={messages}
       isLoadingChat={false}
       selectedModel={selectedModel}
@@ -756,25 +749,9 @@ const AIPassportSystem: React.FC = () => {
       currentView={currentView as any}
       onViewChange={setCurrentView as any}
       onSendMessage={handleSendMessage}
-      onUpdatePassport={() => {
-        // 🧠 패스포트 업데이트 시 Cue Protocol 데이터도 새로고침
-        if (user) {
-          refreshVault().then(() => {
-            const updatedPassport = createDefaultPassport(user);
-            setPassport(updatedPassport);
-          });
-        }
-      }}
+      onUpdatePassport={() => {}}
       onLogout={handleLogout}
       onRetryConnection={retryBackendConnection}
-      // 🧠 추가 Cue Protocol 전용 props (MainLayout에서 지원하는 경우)
-      cueProtocolData={{
-        searchCues,
-        getPersonalizationInsights,
-        refreshVault,
-        realTimeStats,
-        cueStats
-      }}
     />
   );
 };

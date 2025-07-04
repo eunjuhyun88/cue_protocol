@@ -12,7 +12,7 @@ interface Message {
   content: string;
   type: 'user' | 'ai';
   timestamp: Date;
-  provider?: 'ollama' | 'openai' | 'claude' | 'mock';
+  provider?: 'ollama' | 'openai' | 'claude' | 'mock' | 'error';
   model?: string;
   tokensUsed?: number;
   cueTokensEarned?: number;

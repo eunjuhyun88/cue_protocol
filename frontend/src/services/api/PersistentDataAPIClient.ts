@@ -32,19 +32,35 @@ export class PersistentDataAPIClient {
   private reconnectDelay: number;
 
   constructor(baseURL?: string) {
-    this.baseURL = baseURL || (typeof window !== 'undefined' && window.location.hostname === 'localhost') 
-      ? 'http://localhost:3001' 
-      : 'https://api.cueprotocol.com';
-    this.websocket = null;
-    this.listeners = new Map();
-    this.mockCredentialKey = 'cue_mock_credential';
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 1000;
-    
-    console.log(`🔗 PersistentDataAPIClient 초기화: ${this.baseURL}`);
-  }
+  // 환경변수 우선 확인
+  const envBaseURL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+  
+  // 개발 환경 감지 (더 포괄적)
+  const isDevelopment = process.env.NODE_ENV === 'development' || 
+                       (typeof window !== 'undefined' && 
+                        (window.location.hostname === 'localhost' || 
+                         window.location.hostname === '127.0.0.1' ||
+                         window.location.hostname.includes('localhost')));
 
+  this.baseURL = baseURL || 
+                 envBaseURL || 
+                 (isDevelopment ? 'http://localhost:3001' : 'https://api.cueprotocol.com');
+                 
+  this.websocket = null;
+  this.listeners = new Map();
+  this.mockCredentialKey = 'cue_mock_credential';
+  this.reconnectAttempts = 0;
+  this.maxReconnectAttempts = 5;
+  this.reconnectDelay = 1000;
+  
+  console.log(`🔗 PersistentDataAPIClient 초기화: ${this.baseURL}`);
+  console.log(`🔍 환경 정보:`, {
+    NODE_ENV: process.env.NODE_ENV,
+    hostname: typeof window !== 'undefined' ? window.location.hostname : 'SSR',
+    envBaseURL: envBaseURL,
+    isDevelopment: isDevelopment
+  });
+}
   // ============================================================================
   // 🔧 영구 세션 토큰 관리 (BackendAPIClient 호환)
   // ============================================================================

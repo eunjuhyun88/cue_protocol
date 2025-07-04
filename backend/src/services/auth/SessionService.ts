@@ -1,145 +1,107 @@
 // ============================================================================
-// 🔑 세션 관리 서비스 - 최종 완성 버전 (의존성 최소화)
-// 파일: backend/src/services/auth/SessionService.ts
-// 역할: JWT 토큰 및 세션 스토어 관리, paste-2.txt 로직 적용
+// 📁 backend/src/services/auth/SessionService.ts
+// 🔑 세션 관리 서비스 - AuthService 의존성 제거 버전
 // ============================================================================
 
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 
-// 세션 데이터 인터페이스
+/**
+ * 세션 데이터 인터페이스
+ */
 interface SessionData {
   id: string;
   userId?: string;
-  credentialId?: string;
-  userEmail?: string;
-  userName?: string;
-  challenge?: string;
-  type: 'unified' | 'register' | 'login' | 'session';
-  deviceInfo?: any;
+  type: string;
   timestamp: number;
   created: string;
   lastAccess: string;
   isActive: boolean;
   expiresAt?: number;
+  challenge?: string;
+  deviceInfo?: any;
+  username?: string;
+  email?: string;
+  [key: string]: any;
 }
 
+/**
+ * 세션 관리 서비스 - DI 패턴 적용, AuthService 의존성 제거
+ */
 export class SessionService {
-  private readonly JWT_SECRET: string;
-  private readonly SESSION_DURATION: number; // 30일
+  private config: any;
   private sessionStore = new Map<string, SessionData>();
+  private JWT_SECRET: string;
+  private SESSION_DURATION: number;
 
-  constructor() {
-    this.JWT_SECRET = process.env.JWT_SECRET || 'final0626-development-secret-key';
-    this.SESSION_DURATION = 30 * 24 * 60 * 60 * 1000; // 30일 밀리초
+  constructor(config: any) {  // ✅ AuthService 의존성 제거
+    this.config = config;
+    this.JWT_SECRET = process.env.JWT_SECRET || config.JWT_SECRET || 'development-secret-key';
+    this.SESSION_DURATION = config.SESSION_TIMEOUT || (30 * 24 * 60 * 60 * 1000); // 30일
     
-    console.log('🔑 SessionService 초기화됨 (최종 완성 버전)');
-    console.log(`🔐 JWT Secret: ${this.JWT_SECRET.substring(0, 10)}...`);
-    console.log(`⏰ Session Duration: ${this.SESSION_DURATION / (24 * 60 * 60 * 1000)}일`);
+    console.log('🔑 SessionService 초기화됨 (AuthService 의존성 제거)');
+    console.log('🔐 JWT Secret:', this.JWT_SECRET.substring(0, 10) + '...');
+    console.log('⏰ Session Duration:', this.SESSION_DURATION / (24 * 60 * 60 * 1000), '일');
     
-    // 정기적인 세션 정리 (1시간마다)
+    // 주기적인 세션 정리 (5분마다)
     setInterval(() => {
       this.cleanupExpiredSessions();
-    }, 60 * 60 * 1000);
+    }, 5 * 60 * 1000);
   }
 
   // ============================================================================
-  // 🔑 JWT 토큰 관리 (paste-2.txt 방식 완전 적용)
+  // 🔑 JWT 토큰 관리
   // ============================================================================
 
   /**
-   * JWT 세션 토큰 생성 (30일 유효)
+   * 세션 토큰 생성 (JWT)
    */
-  generateSessionToken(userId: string, credentialId?: string): string {
-    try {
-      const payload = {
-        userId,
-        credentialId,
-        type: 'session',
-        iat: Math.floor(Date.now() / 1000),
-        exp: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60) // 30일
-      };
-      
-      const token = jwt.sign(payload, this.JWT_SECRET);
-      console.log('✅ JWT 토큰 생성 성공 (30일 유효)');
-      
-      return token;
-    } catch (error) {
-      console.error('❌ JWT 토큰 생성 실패:', error);
-      throw error;
-    }
+  generateSessionToken(userId: string, credentialId: string): string {
+    const payload = {
+      userId,
+      credentialId,
+      type: 'session',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + Math.floor(this.SESSION_DURATION / 1000)
+    };
+    
+    const token = jwt.sign(payload, this.JWT_SECRET);
+    console.log(`🎫 JWT 세션 토큰 생성: ${userId}`);
+    return token;
   }
 
   /**
-   * JWT 토큰 검증 (paste-2.txt 방식)
+   * 세션 토큰 검증
    */
   verifySessionToken(token: string): any {
     try {
-      // JWT 토큰이 올바른 형식인지 확인
-      if (typeof token !== 'string' || !token.includes('.')) {
-        throw new Error('Invalid JWT format');
-      }
-
-      // JWT 검증
-      const decoded = jwt.verify(token, this.JWT_SECRET) as any;
-      console.log('✅ JWT 토큰 검증 성공:', { userId: decoded.userId });
-      
+      const decoded = jwt.verify(token, this.JWT_SECRET);
+      console.log(`✅ JWT 토큰 검증 성공: ${(decoded as any).userId}`);
       return decoded;
     } catch (error: any) {
       console.error('❌ JWT 토큰 검증 실패:', error.message);
-      
-      // JWT malformed 에러의 경우 더 자세한 로그 (paste-2.txt 방식)
-      if (error.message.includes('malformed')) {
-        console.log('🔧 JWT malformed 에러 - 토큰 형식 분석:');
-        console.log('   토큰 길이:', token?.length);
-        console.log('   토큰 시작:', token?.substring(0, 20));
-        console.log('   점(.) 개수:', (token?.match(/\./g) || []).length);
-      }
-      
       return null;
     }
   }
 
   /**
-   * 세션으로 사용자 조회 (paste-2.txt + Mock 사용자)
+   * 토큰으로 사용자 정보 조회 (간단 버전)
    */
   async getUserBySession(sessionToken: string): Promise<any> {
-    try {
-      console.log('🔍 세션으로 사용자 조회 시작');
-      
-      const decoded = this.verifySessionToken(sessionToken);
-      if (!decoded) {
-        console.log('❌ 토큰 검증 실패');
-        return null;
-      }
-      
-      // Mock 사용자 반환 (paste-2.txt 방식)
-      const mockUser = {
-        id: decoded.userId || 'restored_user_123',
-        username: decoded.username || 'RestoredAgent',
-        email: 'restored@final0626.ai',
-        did: decoded.did || 'did:final0626:restored:123',
-        wallet_address: '0x1234567890123456789012345678901234567890',
-        walletAddress: '0x1234567890123456789012345678901234567890', // 프론트엔드 호환성
-        cue_tokens: 8750 + Math.floor(Math.random() * 5000),
-        cueBalance: 8750 + Math.floor(Math.random() * 5000), // 프론트엔드 호환성
-        trust_score: 90 + Math.floor(Math.random() * 10),
-        trustScore: 90 + Math.floor(Math.random() * 10), // 프론트엔드 호환성
-        passport_level: 'Verified',
-        passportLevel: 'Verified', // 프론트엔드 호환성
-        biometric_verified: true,
-        biometricVerified: true, // 프론트엔드 호환성
-        created_at: new Date(Date.now() - 86400000 * 7).toISOString(), // 7일 전
-        registeredAt: new Date(Date.now() - 86400000 * 7).toISOString() // 프론트엔드 호환성
-      };
-      
-      console.log('✅ 세션 사용자 조회 성공:', mockUser.username);
-      return mockUser;
-      
-    } catch (error) {
-      console.error('❌ 세션 사용자 조회 실패:', error);
+    const decoded = this.verifySessionToken(sessionToken);
+    if (!decoded) {
       return null;
     }
+
+    // 기본 사용자 정보 반환 (AuthService 없이)
+    return {
+      id: decoded.userId,
+      username: `user_${decoded.userId.slice(-8)}`,
+      did: `did:final0626:${decoded.userId}`,
+      auth_method: 'passkey',
+      session_valid: true,
+      verified_at: new Date().toISOString()
+    };
   }
 
   // ============================================================================
@@ -220,6 +182,14 @@ export class SessionService {
       console.error('❌ 세션 무효화 실패:', error);
       return false;
     }
+  }
+
+  /**
+   * 세션 유효성 검사
+   */
+  async validateSession(sessionToken: string): Promise<boolean> {
+    const decoded = this.verifySessionToken(sessionToken);
+    return !!decoded;
   }
 
   // ============================================================================
@@ -312,9 +282,25 @@ export class SessionService {
         initialized: true,
         activeSessions: this.getActiveSessions().length,
         jwtConfigured: !this.JWT_SECRET.includes('development'),
-        sessionDuration: `${this.SESSION_DURATION / (24 * 60 * 60 * 1000)}일`
+        sessionDuration: `${this.SESSION_DURATION / (24 * 60 * 60 * 1000)}일`,
+        authServiceDependency: false, // ✅ AuthService 의존성 제거됨
+        features: {
+          jwtTokens: true,
+          temporarySessions: true,
+          sessionCleanup: true,
+          userBySession: true
+        }
       },
       timestamp: new Date().toISOString()
     };
+  }
+
+  /**
+   * 서비스 정리 (DI Container에서 호출)
+   */
+  dispose(): void {
+    console.log('🧹 SessionService 정리 중...');
+    this.sessionStore.clear();
+    console.log('✅ SessionService 정리 완료');
   }
 }
