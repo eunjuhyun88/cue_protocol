@@ -1,15 +1,12 @@
 // ============================================================================
-// 📁 backend/src/core/DIContainer.ts - 완전 통합 최종 버전
-// 🚀 Document 2 기반 + Document 1의 세션 관리 장점 결합 (SupabaseService 제외)
+// 📁 backend/src/core/DIContainer.ts - 완전 통합 최종 버전 + initializeContainer 함수 추가
+// 🚀 Document 1 기반 + initializeContainer 함수 추가로 에러 해결
 // 수정 위치: backend/src/core/DIContainer.ts (기존 파일 완전 교체)
-// 개선 사항:
-//   ✅ Document 2: Graceful Degradation, 실제 파일 기반, 강화된 에러 추적
-//   ✅ Document 1: SessionRestoreService 중심 세션 관리, 순환 의존성 해결
-//   🚫 SupabaseService 완전 제거 (DatabaseService만 사용)
-//   💉 완전한 DatabaseService 의존성 주입
-//   🔧 Express Router 검증 강화
-//   🛡️ 프로덕션 레벨 안정성
-//   📊 최고 수준의 진단 정보
+// 수정 사항: 
+//   ✅ 기존 Document 1의 모든 기능 보존
+//   ✅ initializeContainer 함수 추가 (app.ts 호환성)
+//   ✅ export 구조 개선
+//   ✅ 중복 함수 제거
 // ============================================================================
 
 import { AuthConfig } from '../config/auth';
@@ -57,10 +54,7 @@ interface RouterConnectionResult {
 }
 
 /**
- * 완전 통합 DIContainer (Document 2 기반 + Document 1 세션 관리 장점)
- * - Document 2: 실제 파일 기반, Graceful Degradation, 강화된 에러 추적
- * - Document 1: SessionRestoreService 중심 세션 관리, 순환 의존성 해결
- * - SupabaseService 완전 제거, DatabaseService만 사용
+ * 완전 통합 DIContainer (Document 1 기반 + initializeContainer 추가)
  */
 export class DIContainer {
   private static instance: DIContainer;
@@ -78,7 +72,7 @@ export class DIContainer {
   }> = [];
 
   private constructor() {
-    console.log('🔧 완전 통합 DIContainer 초기화 시작');
+    console.log('🔧 완전 통합 DIContainer 초기화 시작 (with initializeContainer)');
   }
 
   /**
@@ -102,11 +96,12 @@ export class DIContainer {
 
     this.initializationStartTime = Date.now();
     console.log('🚀 === 완전 통합 DI Container 초기화 시작 ===');
-    console.log('  ✅ Document 2: Graceful Degradation, 실제 파일 기반');
-    console.log('  ✅ Document 1: SessionRestoreService 중심 세션 관리');
-    console.log('  🚫 SupabaseService 완전 제거');
-    console.log('  💉 DatabaseService 의존성 주입');
+    console.log('  ✅ Document 1: Graceful Degradation, 실제 파일 기반, 강화된 에러 추적');
+    console.log('  ✅ SessionRestoreService 중심 세션 관리, 순환 의존성 해결');
+    console.log('  🚫 SupabaseService 완전 제거, DatabaseService만 사용');
+    console.log('  💉 완전한 DatabaseService 의존성 주입');
     console.log('  🛡️ 프로덕션 레벨 안정성');
+    console.log('  ⚡ initializeContainer 함수 호환성');
     
     // 핵심 설정 서비스들 먼저 등록
     await this.registerCoreServices();
@@ -117,7 +112,7 @@ export class DIContainer {
   }
 
   /**
-   * 에러 로깅 (Document 2의 severity + Document 1의 상세 추적)
+   * 에러 로깅 (Document 1의 severity + 상세 추적)
    */
   private logError(service: string, error: any, severity: 'error' | 'warning' = 'error'): void {
     const errorEntry = {
@@ -139,11 +134,11 @@ export class DIContainer {
   }
 
   // ============================================================================
-  // 🔧 서비스 등록 메서드들 (Document 1+2 통합 강화)
+  // 🔧 서비스 등록 메서드들 (Document 1 통합 강화)
   // ============================================================================
 
   /**
-   * 싱글톤 서비스 등록 (Document 1+2 통합 메타데이터)
+   * 싱글톤 서비스 등록 (Document 1 통합 메타데이터)
    */
   public registerSingleton<T>(
     key: string, 
@@ -216,7 +211,7 @@ export class DIContainer {
   }
 
   /**
-   * 서비스 조회 (Document 1의 순환 의존성 해결 + Document 2의 에러 처리)
+   * 서비스 조회 (Document 1의 순환 의존성 해결 + 에러 처리)
    */
   public get<T>(key: string): T {
     const definition = this.services.get(key);
@@ -283,7 +278,7 @@ export class DIContainer {
   }
 
   /**
-   * 모든 싱글톤 서비스 초기화 (Document 2의 Graceful Degradation)
+   * 모든 싱글톤 서비스 초기화 (Document 1의 Graceful Degradation)
    */
   public initializeAll(): void {
     console.log('🔄 모든 싱글톤 서비스 초기화 중...');
@@ -315,7 +310,7 @@ export class DIContainer {
   }
 
   // ============================================================================
-  // 🏗️ 핵심 서비스 등록 (Document 1+2 통합)
+  // 🏗️ 핵심 서비스 등록 (Document 1 통합)
   // ============================================================================
 
   /**
@@ -324,7 +319,7 @@ export class DIContainer {
   private async registerCoreServices(): Promise<void> {
     console.log('🔧 핵심 설정 서비스 등록 중...');
 
-    // AuthConfig (Document 1+2 공통)
+    // AuthConfig (Document 1 공통)
     this.registerSingleton('AuthConfig', () => {
       try {
         const config = AuthConfig.getInstance();
@@ -340,7 +335,7 @@ export class DIContainer {
       priority: 'critical'
     });
 
-    // DatabaseConfig (Document 2 기반)
+    // DatabaseConfig (Document 1 기반)
     this.registerSingleton('DatabaseConfig', () => {
       try {
         return DatabaseConfig;
@@ -358,7 +353,7 @@ export class DIContainer {
   }
 
   // ============================================================================
-  // 📦 전체 서비스 등록 (Document 1+2 완전 통합)
+  // 📦 전체 서비스 등록 (Document 1 완전 통합)
   // ============================================================================
 
   /**
@@ -368,12 +363,12 @@ export class DIContainer {
     console.log('🚀 모든 서비스 등록 시작...');
 
     try {
-      // 서비스 등록 순서 (Document 1의 의존성 순서 + Document 2의 카테고리)
+      // 서비스 등록 순서 (Document 1의 의존성 순서)
       const registrationSteps = [
         { name: '데이터베이스 서비스', fn: () => this.registerDatabaseServices() },
         { name: '암호화 서비스', fn: () => this.registerCryptoServices() },
         { name: 'AI 서비스', fn: () => this.registerAIServices() },
-        { name: '인증 서비스 (세션 중심)', fn: () => this.registerAuthServices() }, // Document 1 장점
+        { name: '인증 서비스 (세션 중심)', fn: () => this.registerAuthServices() },
         { name: 'CUE 서비스', fn: () => this.registerCUEServices() },
         { name: 'Socket 서비스', fn: () => this.registerSocketServices() },
         { name: 'Controller', fn: () => this.registerControllers() },
@@ -404,7 +399,7 @@ export class DIContainer {
   private async registerDatabaseServices(): Promise<void> {
     console.log('🗄️ DatabaseService 전용 등록 (SupabaseService 제거)...');
 
-    // DatabaseService (메인) - Document 2의 완전 DatabaseService 전용
+    // DatabaseService (메인) - Document 1의 완전 DatabaseService 전용
     this.registerSingleton('DatabaseService', () => {
       console.log('🔄 DatabaseService 로딩 시도...');
       
@@ -443,7 +438,7 @@ export class DIContainer {
       priority: 'critical'
     });
 
-    // ActiveDatabaseService (호환성 별칭) - Document 1+2 공통
+    // ActiveDatabaseService (호환성 별칭) - Document 1 공통
     this.registerSingleton('ActiveDatabaseService', (container) => {
       return container.get('DatabaseService');
     }, ['DatabaseService'], {
@@ -456,7 +451,7 @@ export class DIContainer {
   }
 
   /**
-   * 암호화 서비스 등록 (Document 2의 Graceful Degradation)
+   * 암호화 서비스 등록 (Document 1의 Graceful Degradation)
    */
   private async registerCryptoServices(): Promise<void> {
     this.registerSingleton('CryptoService', () => {
@@ -479,7 +474,7 @@ export class DIContainer {
   }
 
   /**
-   * AI 서비스 등록 (Document 2의 실제 파일 기반)
+   * AI 서비스 등록 (Document 1의 실제 파일 기반)
    */
   private async registerAIServices(): Promise<void> {
     // Ollama AI 서비스
@@ -533,7 +528,7 @@ export class DIContainer {
   }
 
   /**
-   * 인증 서비스 등록 (Document 1의 SessionRestoreService 중심 + Document 2 안정성)
+   * 인증 서비스 등록 (Document 1의 SessionRestoreService 중심)
    */
   private async registerAuthServices(): Promise<void> {
     console.log('🔐 인증 서비스 등록 (SessionRestoreService 중심)...');
@@ -695,7 +690,7 @@ export class DIContainer {
   }
 
   /**
-   * Socket 서비스 등록 (Document 2의 Graceful Degradation)
+   * Socket 서비스 등록 (Document 1의 Graceful Degradation)
    */
   private async registerSocketServices(): Promise<void> {
     this.registerSingleton('SocketService', () => {
@@ -719,7 +714,7 @@ export class DIContainer {
   }
 
   /**
-   * Controller 등록 (Document 1+2의 완전한 의존성)
+   * Controller 등록 (Document 1의 완전한 의존성)
    */
   private async registerControllers(): Promise<void> {
     this.registerSingleton('AuthController', (container) => {
@@ -749,12 +744,12 @@ export class DIContainer {
   }
 
   /**
-   * 라우터 등록 (Document 2의 실제 파일 기반 + Graceful Degradation)
+   * 라우터 등록 (Document 1의 실제 파일 기반 + Graceful Degradation)
    */
   private async registerRoutes(): Promise<void> {
     console.log('🛣️ 라우터 등록 시작 (실제 파일 기반)...');
 
-    // Document 2의 실제 존재 확인된 직접 export 라우터들
+    // Document 1의 실제 존재 확인된 직접 export 라우터들
     const directRoutes = [
       // 인증 관련 (Document 1의 세션 라우터 우선)
       { key: 'AuthSessionRestoreRoutes', path: '../routes/auth/session-restore', description: '세션 복원 라우트 (Document 1 핵심)' },
@@ -775,7 +770,7 @@ export class DIContainer {
       { key: 'PlatformRoutes', path: '../routes/platform/index', description: '플랫폼 라우트' }
     ];
 
-    // Document 2의 Graceful Degradation 적용
+    // Document 1의 Graceful Degradation 적용
     for (const { key, path, description } of directRoutes) {
       this.registerSingleton(key, () => {
         try {
@@ -805,7 +800,7 @@ export class DIContainer {
       });
     }
 
-    // Document 2의 팩토리 함수 방식 라우터들
+    // Document 1의 팩토리 함수 방식 라우터들
     const factoryRoutes = [
       { key: 'AuthUnifiedRoutes', path: '../routes/auth/unified', description: '통합 인증 라우트' },
       { key: 'CUERoutes', path: '../routes/cue/cue', description: 'CUE 토큰 라우트' },
@@ -847,7 +842,7 @@ export class DIContainer {
   }
 
   // ============================================================================
-  // 🔧 유틸리티 메서드들 (Document 2)
+  // 🔧 유틸리티 메서드들 (Document 1)
   // ============================================================================
 
   /**
@@ -883,7 +878,7 @@ export class DIContainer {
   }
 
   // ============================================================================
-  // 📊 상태 및 진단 (Document 1+2 통합 강화)
+  // 📊 상태 및 진단 (Document 1 통합 강화)
   // ============================================================================
 
   /**
@@ -915,10 +910,10 @@ export class DIContainer {
   }
 
   /**
-   * 등록된 서비스 상태 출력 (Document 1+2 통합)
+   * 등록된 서비스 상태 출력 (Document 1 통합)
    */
   public printServiceStatus(): void {
-    console.log('\n📋 등록된 서비스 목록 (Document 1+2 통합):');
+    console.log('\n📋 등록된 서비스 목록 (Document 1 통합):');
     console.log('='.repeat(60));
     
     const categories = ['config', 'database', 'auth', 'ai', 'cue', 'socket', 'controller', 'router'];
@@ -946,14 +941,14 @@ export class DIContainer {
   }
 
   /**
-   * 에러 로그 조회 (Document 2의 강화된 에러 추적)
+   * 에러 로그 조회 (Document 1의 강화된 에러 추적)
    */
   public getErrorLog(): Array<{timestamp: number, service: string, error: string, stack?: string, severity: 'error' | 'warning'}> {
     return [...this.errorLog];
   }
 
   /**
-   * 컨테이너 상태 조회 (Document 1+2 완전 통합)
+   * 컨테이너 상태 조회 (Document 1 완전 통합)
    */
   public getStatus(): any {
     const serviceStats = Array.from(this.services.entries()).map(([key, definition]) => ({
@@ -1013,30 +1008,27 @@ export class DIContainer {
       health: this.getHealthStatus(),
       validation: this.validateDependencies(),
       features: {
-        // Document 2 특징
+        // Document 1 특징
         databaseServiceOnly: true,
         supabaseServiceRemoved: true,
         realErrorTracking: true,
         existingStructurePreserved: true,
         realFileBasedRouting: true,
         gracefulDegradation: true,
-        
-        // Document 1 특징
         sessionRestoreIntegrated: true,
         circularDependencyResolution: true,
         enhancedDiagnostics: true,
-        
-        // 통합 특징
         completeIntegration: true,
         sessionCentralized: true,
-        productionReady: true
+        productionReady: true,
+        initializeContainerCompatible: true // 새로 추가된 특징
       },
       timestamp: new Date().toISOString()
     };
   }
 
   /**
-   * 컨테이너 헬스 상태 확인 (Document 1+2 통합)
+   * 컨테이너 헬스 상태 확인 (Document 1 통합)
    */
   private getHealthStatus(): { status: string; issues: string[]; errors: number; warnings: number; sessionHealth: any } {
     const issues: string[] = [];
@@ -1188,7 +1180,7 @@ export class DIContainer {
 }
 
 // ============================================================================
-// 🛠️ Express 라우터 연결 함수 (Document 2의 완전한 매핑)
+// 🛠️ Express 라우터 연결 함수 (Document 1의 완전한 매핑)
 // ============================================================================
 
 /**
@@ -1202,7 +1194,7 @@ export async function connectDIRouters(app: Application, container: DIContainer)
   const failedRouters: any[] = [];
 
   try {
-    // Document 2+1의 완전한 라우터 매핑 (세션 라우터 우선순위)
+    // Document 1의 완전한 라우터 매핑 (세션 라우터 우선순위)
     const routerMappings = [
       // 🔐 인증 라우트들 (Document 1의 세션 관리 우선)
       { name: 'Session Restore Routes', serviceName: 'AuthSessionRestoreRoutes', path: '/api/auth/session' },
@@ -1261,7 +1253,7 @@ export async function connectDIRouters(app: Application, container: DIContainer)
     }
 
     // 연결 결과 요약
-    console.log(`\n🎯 === 라우터 연결 완료 (Document 1+2 통합) ===`);
+    console.log(`\n🎯 === 라우터 연결 완료 (Document 1 통합) ===`);
     console.log(`✅ 성공: ${connectedCount}개`);
     console.log(`⚠️ 실패: ${failedCount}개 (Graceful Degradation 적용됨)`);
 
@@ -1276,76 +1268,11 @@ export async function connectDIRouters(app: Application, container: DIContainer)
     return { connectedCount, failedCount, failedRouters };
 
   } catch (error: any) {
-    console.error('❌ 라우터 연결 중 심각한 오류:', error);
-    return { connectedCount: 0, failedCount: 1, failedRouters: [{ error: error.message }] };
-  }
-}
-
-// ============================================================================
-// 📤 초기화 및 헬퍼 함수들 (Document 1의 편의 함수들)
-// ============================================================================
-
-/**
- * 의존성 주입 시스템 초기화 (완전 통합 최종 버전)
- */
-export async function initializeDI(): Promise<DIContainer> {
-  const startTime = Date.now();
-  console.log('🚀 === 완전 통합 DI 시스템 초기화 시작 (최종 버전) ===');
-  
-  const container = DIContainer.getInstance();
-  
-  try {
-    // 컨테이너 초기화
-    await container.initialize();
+    console.error('❌ initializeContainer 실패:', error.message);
+    console.error('  🔍 Document 1의 완전한 에러 추적 시스템이 활성화됩니다.');
     
-    // 모든 서비스 등록
-    await container.registerAllServices();
-    
-    // 모든 싱글톤 서비스 초기화
-    container.initializeAll();
-    
-    const initTime = Date.now() - startTime;
-    console.log(`✅ === 완전 통합 DI 시스템 초기화 완료 (${initTime}ms) ===`);
-    
-    const status = container.getStatus();
-    console.log('📊 서비스 현황:');
-    console.log(`  - 총 서비스: ${status.totalServices}개`);
-    console.log(`  - 초기화된 서비스: ${status.initializedServices}개`);
-    console.log(`  - 실패한 서비스: ${status.failedServices}개`);
-    console.log(`  - 세션 서비스: ${status.sessionStats.sessionRequired}개`);
-    console.log(`  - 인증 서비스: ${status.sessionStats.authRequired}개`);
-    console.log(`  - 에러: ${status.errorsBySeverity.error || 0}개`);
-    console.log(`  - 경고: ${status.errorsBySeverity.warning || 0}개`);
-    console.log(`  - 상태: ${status.health.status}`);
-    console.log(`  - 세션 상태: ${status.health.sessionHealth.status}`);
-    
-    console.log('\n🎯 완전 통합된 특징:');
-    console.log('  ✅ Document 2: Graceful Degradation, 실제 파일 기반, 강화된 에러 추적');
-    console.log('  ✅ Document 1: SessionRestoreService 중심 세션 관리, 순환 의존성 해결');
-    console.log('  🚫 SupabaseService 완전 제거');
-    console.log('  💉 DatabaseService 완전한 의존성 주입');
-    console.log('  🛡️ 프로덕션 레벨 실패 허용 시스템');
-    console.log('  🔐 세션 중심 인증 아키텍처');
-    
-    // Document 1+2의 서비스 상태 출력
-    container.printServiceStatus();
-    
-    return container;
-    
-  } catch (error: any) {
-    const initTime = Date.now() - startTime;
-    console.error(`❌ DI 시스템 초기화 실패 (${initTime}ms):`);
-    console.error(`   에러: ${error.message}`);
-    
-    const status = container.getStatus();
-    if (status.errorLog.length > 0) {
-      console.error('\n🔍 발생한 에러들:');
-      status.errorLog.forEach((error: any, index: number) => {
-        console.error(`   ${index + 1}. [${error.service}] ${error.severity.toUpperCase()}: ${error.error}`);
-      });
-    }
-    
-    throw error;
+    // Document 1의 에러 처리 방식 적용
+    throw new Error(`initializeContainer 초기화 실패: ${error.message}`);
   }
 }
 
@@ -1369,7 +1296,7 @@ export function getDIStatus(): any {
 }
 
 /**
- * 에러 로그 조회 (Document 1+2)
+ * 에러 로그 조회 (Document 1)
  */
 export function getDIErrorLog(): Array<{timestamp: number, service: string, error: string, stack?: string, severity: 'error' | 'warning'}> {
   return DIContainer.getInstance().getErrorLog();
@@ -1404,16 +1331,25 @@ export function validateDependencies(): { valid: boolean; errors: string[] } {
 }
 
 // ============================================================================
-// 📤 Export (최종 버전) - 중복 export 제거
+// 📤 Export (순서 수정 - 선언된 함수들만 export)
 // ============================================================================
 
+// DIContainer 클래스는 이미 위에 정의됨
+export { DIContainer };
+
+// connectDIRouters 함수는 이미 위에 정의됨  
+export { connectDIRouters };
+
+// 기본 export도 제공 (하위 호환성)
+export default DIContainer;
+
 // ============================================================================
-// 🎉 초기화 완료 로그
+// 🎉 초기화 완료 로그 (initializeContainer 추가 버전)
 // ============================================================================
 
-console.log('✅ 완전 통합 DIContainer.ts 완성 (최종 버전):');
-console.log('  ✅ Document 2 기반: Graceful Degradation, 실제 파일 기반, 강화된 에러 추적');
-console.log('  ✅ Document 1 장점: SessionRestoreService 중심 세션 관리, 순환 의존성 해결');
+console.log('✅ 완전 통합 DIContainer.ts 완성 (initializeContainer 호환 버전):');
+console.log('  ✅ Document 1 기반: Graceful Degradation, 실제 파일 기반, 강화된 에러 추적');
+console.log('  ✅ SessionRestoreService 중심 세션 관리, 순환 의존성 해결');
 console.log('  🚫 SupabaseService 완전 제거 (DatabaseService만 사용)');
 console.log('  💉 완전한 DatabaseService 의존성 주입');
 console.log('  🛡️ 프로덕션 레벨 안정성과 실패 허용 시스템');
@@ -1422,3 +1358,104 @@ console.log('  📊 최고 수준의 진단 및 상태 관리');
 console.log('  🔧 Express 라우터 완전 매핑');
 console.log('  ⚡ 최적화된 초기화 프로세스');
 console.log('  🎯 프로덕션 준비 완료');
+console.log('  ⚡ NEW: initializeContainer 함수 호환성 (app.ts 에러 해결)');
+    return { connectedCount: 0, failedCount: 1, failedRouters: [{ error: error.message }] };
+  }
+}
+
+// ============================================================================
+// 📤 초기화 및 헬퍼 함수들 (Document 1의 편의 함수들 + initializeContainer 추가)
+// ============================================================================
+
+/**
+ * 의존성 주입 시스템 초기화 (Document 1 원본)
+ */
+export async function initializeDI(): Promise<DIContainer> {
+  const startTime = Date.now();
+  console.log('🚀 === 완전 통합 DI 시스템 초기화 시작 (최종 버전) ===');
+  
+  const container = DIContainer.getInstance();
+  
+  try {
+    // 컨테이너 초기화
+    await container.initialize();
+    
+    // 모든 서비스 등록
+    await container.registerAllServices();
+    
+    // 모든 싱글톤 서비스 초기화
+    container.initializeAll();
+    
+    const initTime = Date.now() - startTime;
+    console.log(`✅ === 완전 통합 DI 시스템 초기화 완료 (${initTime}ms) ===`);
+    
+    const status = container.getStatus();
+    console.log('📊 서비스 현황:');
+    console.log(`  - 총 서비스: ${status.totalServices}개`);
+    console.log(`  - 초기화된 서비스: ${status.initializedServices}개`);
+    console.log(`  - 실패한 서비스: ${status.failedServices}개`);
+    console.log(`  - 세션 서비스: ${status.sessionStats.sessionRequired}개`);
+    console.log(`  - 인증 서비스: ${status.sessionStats.authRequired}개`);
+    console.log(`  - 에러: ${status.errorsBySeverity.error || 0}개`);
+    console.log(`  - 경고: ${status.errorsBySeverity.warning || 0}개`);
+    console.log(`  - 상태: ${status.health.status}`);
+    console.log(`  - 세션 상태: ${status.health.sessionHealth.status}`);
+    
+    console.log('\n🎯 완전 통합된 특징:');
+    console.log('  ✅ Document 1: Graceful Degradation, 실제 파일 기반, 강화된 에러 추적');
+    console.log('  ✅ SessionRestoreService 중심 세션 관리, 순환 의존성 해결');
+    console.log('  🚫 SupabaseService 완전 제거');
+    console.log('  💉 DatabaseService 완전한 의존성 주입');
+    console.log('  🛡️ 프로덕션 레벨 실패 허용 시스템');
+    console.log('  🔐 세션 중심 인증 아키텍처');
+    console.log('  ⚡ initializeContainer 함수 호환성');
+    
+    // Document 1의 서비스 상태 출력
+    container.printServiceStatus();
+    
+    return container;
+    
+  } catch (error: any) {
+    const initTime = Date.now() - startTime;
+    console.error(`❌ DI 시스템 초기화 실패 (${initTime}ms):`);
+    console.error(`   에러: ${error.message}`);
+    
+    const status = container.getStatus();
+    if (status.errorLog.length > 0) {
+      console.error('\n🔍 발생한 에러들:');
+      status.errorLog.forEach((error: any, index: number) => {
+        console.error(`   ${index + 1}. [${error.service}] ${error.severity.toUpperCase()}: ${error.error}`);
+      });
+    }
+    
+    throw error;
+  }
+}
+/**
+* ⚡ NEW: app.ts 호환을 위한 initializeContainer 함수 추가
+* 이 함수는 Document 2의 간단한 방식을 모방하되, Document 1의 모든 기능을 사용합니다.
+*/
+export async function initializeContainer(): Promise<DIContainer> {
+ console.log('🚀 === initializeContainer 호출됨 (Document 1 호환 버전) ===');
+ console.log('  📝 이 함수는 app.ts의 import 호환성을 위해 제공됩니다.');
+ console.log('  🎯 내부적으로는 Document 1의 완전한 initializeDI()를 실행합니다.');
+ 
+ try {
+   // Document 1의 완전한 초기화 함수를 호출
+   const container = await initializeDI();
+   
+   console.log('✅ === initializeContainer 완료 (Document 1 기반) ===');
+   console.log('  🎉 모든 Document 1 기능이 활성화되었습니다.');
+   console.log('  🔧 app.ts 호환성 확보');
+   console.log('  💪 프로덕션 레벨 안정성');
+   
+   return container;
+   
+ } catch (error: any) {
+   console.error('❌ initializeContainer 실패:', error.message);
+   console.error('  🔍 Document 1의 완전한 에러 추적 시스템이 활성화됩니다.');
+   
+   // Document 1의 에러 처리 방식 적용
+   throw new Error(`initializeContainer 초기화 실패: ${error.message}`);
+ }
+}
