@@ -9,10 +9,13 @@
     "start": "node dist/app.js",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "kill-port": "lsof -ti:3001 | xargs kill -9 || echo 'Port not in use'",
+    "kill-port": "lsof -ti:3001 | xargs kill -9 || echo \"Port 3001 is not in use\"",
     "dev-fresh": "npm run kill-port && sleep 1 && npm run dev",
     "lint": "eslint src --ext .ts --fix",
-    "test": "echo 'Tests not implemented yet'"
+    "test": "echo 'Tests not implemented yet'",
+    "dev-clean": "npm run kill-port && sleep 2 && npm run dev",
+    "dev-ws": "npm run kill-port && sleep 2 && tsx watch src/app.ts",
+    "start-ws": "npm run kill-port && sleep 2 && node dist/app.js"
   },
   "keywords": [
     "ai",
@@ -29,6 +32,7 @@
     "@google/generative-ai": "^0.24.1",
     "@simplewebauthn/server": "^9.0.3",
     "@supabase/supabase-js": "^2.50.2",
+    "@types/socket.io": "^3.0.1",
     "axios": "^1.10.0",
     "bcryptjs": "^3.0.2",
     "compression": "^1.8.0",

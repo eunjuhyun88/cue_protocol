@@ -34,6 +34,12 @@ export class PersistentDataAPIClient {
   private currentSessionToken: string | null = null;
   private tokenSyncEnabled: boolean = false;
   private authHookCallback: ((token: string | null) => void) | null = null;
+  
+  // 🔧 Health Check 제어
+  private healthCheckInterval: NodeJS.Timeout | null = null;
+  private isHealthChecking: boolean = false;
+  private healthCheckFrequency: number = 30000; // 30초로 증가
+  private lastHealthCheck: number = 0;
 
   constructor(baseURL?: string) {
     const envBaseURL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
@@ -213,68 +219,190 @@ export class PersistentDataAPIClient {
   }
 
   // ============================================================================
-  // 🔧 향상된 WebSocket 연결 (인증 토큰 포함)
+  // 🔧 Health Check 제어 메서드들
   // ============================================================================
 
   /**
-   * WebSocket 연결 (인증 토큰 자동 전송)
+   * Health Check 자동 시작 (제어된 간격)
+   */
+  startHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      console.log('⚠️ Health Check가 이미 실행 중입니다');
+      return;
+    }
+
+    console.log(`🏥 Health Check 시작 (${this.healthCheckFrequency / 1000}초 간격)`);
+    
+    // 즉시 한 번 실행
+    this.performHealthCheck();
+    
+    // 정기적 실행
+    this.healthCheckInterval = setInterval(() => {
+      this.performHealthCheck();
+    }, this.healthCheckFrequency);
+  }
+
+  /**
+   * Health Check 중지
+   */
+  stopHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+      console.log('🛑 Health Check 중지됨');
+    }
+  }
+
+  /**
+   * 단일 Health Check 실행 (중복 방지)
+   */
+  private async performHealthCheck(): Promise<void> {
+    const now = Date.now();
+    
+    // 중복 실행 방지
+    if (this.isHealthChecking) {
+      console.log('⏳ Health Check 이미 진행 중, 건너뛰기');
+      return;
+    }
+    
+    // 최소 간격 보장 (10초)
+    if (now - this.lastHealthCheck < 10000) {
+      console.log('⏳ Health Check 너무 자주 호출됨, 건너뛰기');
+      return;
+    }
+
+    this.isHealthChecking = true;
+    this.lastHealthCheck = now;
+    
+    try {
+      const startTime = Date.now();
+      const response = await this.get('/health');
+      const responseTime = Date.now() - startTime;
+      
+      console.log(`✅ Health Check 성공 (${responseTime}ms)`);
+      
+      // Health 상태 업데이트 이벤트 발생 (조용히)
+      this.listeners.forEach(callback => {
+        callback({
+          type: 'health_update',
+          status: 'healthy',
+          responseTime,
+          timestamp: new Date().toISOString()
+        });
+      });
+      
+    } catch (error: any) {
+      console.error(`❌ Health Check 실패:`, error.message);
+      
+      // Health 실패 이벤트 발생
+      this.listeners.forEach(callback => {
+        callback({
+          type: 'health_update',
+          status: 'unhealthy',
+          error: error.message,
+          timestamp: new Date().toISOString()
+        });
+      });
+    } finally {
+      this.isHealthChecking = false;
+    }
+  }
+
+  /**
+   * Health Check 빈도 조정
+   */
+  setHealthCheckFrequency(milliseconds: number): void {
+    if (milliseconds < 10000) {
+      console.warn('⚠️ Health Check 빈도가 너무 높습니다. 최소 10초로 설정됩니다.');
+      milliseconds = 10000;
+    }
+    
+    this.healthCheckFrequency = milliseconds;
+    
+    // 실행 중이면 재시작
+    if (this.healthCheckInterval) {
+      this.stopHealthCheck();
+      this.startHealthCheck();
+    }
+    
+    console.log(`🔧 Health Check 빈도 변경: ${milliseconds / 1000}초`);
+  }
+
+  // ============================================================================
+  // 🔧 향상된 WebSocket 연결 (수정된 엔드포인트)
+  // ============================================================================
+
+  /**
+   * WebSocket 연결 (수정된 엔드포인트)
    */
   connectWebSocket(): void {
     if (typeof window === 'undefined') return;
     
     try {
-      const wsUrl = this.baseURL.replace('http', 'ws') + '/ws';
+      // 🔧 수정: 백엔드에서 실제 지원하는 WebSocket 엔드포인트 확인 필요
+      // 현재 백엔드에 WebSocket 서버가 없으므로 연결 시도하지 않음
+      console.log('⚠️ WebSocket 엔드포인트가 백엔드에 구현되지 않음');
+      console.log('📝 향후 실시간 기능을 위해 WebSocket 서버 구현 필요');
+      return;
       
-      if (this.websocket?.readyState === WebSocket.OPEN) {
-        console.log('✅ WebSocket 이미 연결됨');
-        return;
-      }
+      // const wsUrl = this.baseURL.replace('http', 'ws') + '/socket';
       
-      console.log(`🔌 WebSocket 연결 시도: ${wsUrl}`);
+      // if (this.websocket?.readyState === WebSocket.OPEN) {
+      //   console.log('✅ WebSocket 이미 연결됨');
+      //   return;
+      // }
       
-      this.websocket = new WebSocket(wsUrl);
+      // console.log(`🔌 WebSocket 연결 시도: ${wsUrl}`);
       
-      this.websocket.onopen = () => {
-        console.log('✅ WebSocket 연결됨');
-        this.reconnectAttempts = 0;
+      // this.websocket = new WebSocket(wsUrl);
+      
+      // this.websocket.onopen = () => {
+      //   console.log('✅ WebSocket 연결됨');
+      //   this.reconnectAttempts = 0;
         
-        // 인증 토큰 자동 전송
-        const token = this.getSessionToken();
-        if (token && this.websocket) {
-          this.websocket.send(JSON.stringify({ 
-            type: 'auth', 
-            token,
-            source: 'PersistentDataAPIClient'
-          }));
-          console.log('🔑 WebSocket 인증 토큰 전송됨');
-        }
-      };
+      //   // 인증 토큰 자동 전송
+      //   const token = this.getSessionToken();
+      //   if (token && this.websocket) {
+      //     this.websocket.send(JSON.stringify({ 
+      //       type: 'auth', 
+      //       token,
+      //       source: 'PersistentDataAPIClient'
+      //     }));
+      //     console.log('🔑 WebSocket 인증 토큰 전송됨');
+      //   }
+      // };
       
-      this.websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('📨 WebSocket 메시지 수신:', data.type);
+      // this.websocket.onmessage = (event) => {
+      //   try {
+      //     const data = JSON.parse(event.data);
+      //     console.log('📨 WebSocket 메시지 수신:', data.type);
           
-          // CUE 업데이트 메시지 특별 처리
-          if (data.type === 'cue_update' && this.tokenSyncEnabled && this.authHookCallback) {
-            console.log('💰 CUE 업데이트 감지:', data.newBalance);
-            // useAuth의 updateCueBalance 호출 로직 필요 시 추가
-          }
+      //     // CUE 업데이트 메시지 특별 처리
+      //     if (data.type === 'cue_update' && this.tokenSyncEnabled && this.authHookCallback) {
+      //       console.log('💰 CUE 업데이트 감지:', data.newBalance);
+      //     }
           
-          this.listeners.forEach(callback => callback(data));
-        } catch (error) {
-          console.error('❌ WebSocket 메시지 파싱 실패:', error);
-        }
-      };
+      //     this.listeners.forEach(callback => callback(data));
+      //   } catch (error) {
+      //     console.error('❌ WebSocket 메시지 파싱 실패:', error);
+      //   }
+      // };
       
-      this.websocket.onclose = (event) => {
-        console.log(`❌ WebSocket 연결 종료 (코드: ${event.code})`);
-        this.attemptReconnect();
-      };
+      // this.websocket.onclose = (event) => {
+      //   console.log(`❌ WebSocket 연결 종료 (코드: ${event.code})`);
+        
+      //   // 404 에러인 경우 재연결 시도 안함
+      //   if (event.code !== 1006) {
+      //     console.log('🚫 WebSocket 엔드포인트가 지원되지 않음, 재연결 중지');
+      //     return;
+      //   }
+        
+      //   this.attemptReconnect();
+      // };
       
-      this.websocket.onerror = (error) => {
-        console.error('💥 WebSocket 오류:', error);
-      };
+      // this.websocket.onerror = (error) => {
+      //   console.error('💥 WebSocket 오류:', error);
+      // };
       
     } catch (error) {
       console.warn('❌ WebSocket 연결 실패, HTTP 폴백 사용:', error);
@@ -357,18 +485,23 @@ export class PersistentDataAPIClient {
   }
 
   /**
-   * HTTP 요청 (재시도 로직 + 인증 헤더 자동 포함)
+   * HTTP 요청 (재시도 로직 + 인증 헤더 자동 포함 + Health Check 최적화)
    */
   async request(endpoint: string, options: any = {}) {
     const url = `${this.baseURL}${endpoint}`;
-    const maxRetryAttempts = 3;
+    
+    // Health Check 요청인 경우 로깅 최소화 및 특별 처리
+    const isHealthCheck = endpoint.includes('/health');
+    if (!isHealthCheck) {
+      console.log(`📞 API 요청: ${options.method || 'GET'} ${endpoint}`);
+    }
+    
+    const maxRetryAttempts = isHealthCheck ? 1 : 3; // Health Check는 재시도 1회만
     const retryDelay = 1000;
     let lastError: Error | null = null;
     
     for (let attempt = 1; attempt <= maxRetryAttempts; attempt++) {
       try {
-        console.log(`📞 API 요청 [시도 ${attempt}/${maxRetryAttempts}]: ${options.method || 'GET'} ${endpoint}`);
-        
         // 자동 인증 헤더 포함
         const headers = { 
           ...this.getAuthHeaders(),
@@ -385,7 +518,7 @@ export class PersistentDataAPIClient {
           headers,
           mode: 'cors',
           credentials: 'include',
-          signal: AbortSignal.timeout(30000)
+          signal: AbortSignal.timeout(isHealthCheck ? 5000 : 30000) // Health Check는 5초 타임아웃
         });
 
         if (!response.ok) {
@@ -394,29 +527,43 @@ export class PersistentDataAPIClient {
           // 401 에러 시 useAuth와 동기화
           if (response.status === 401) {
             console.log('🗑️ 401 에러로 인한 토큰 삭제 및 useAuth 동기화');
-            this.clearSessionToken(); // 자동으로 useAuth에도 알림
+            this.clearSessionToken();
           }
 
           throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
         }
 
         const data = await response.json();
-        console.log('✅ API 성공:', { endpoint, hasData: !!data });
+        
+        if (!isHealthCheck) {
+          console.log('✅ API 성공:', { endpoint, hasData: !!data });
+        }
+        
         return data;
         
       } catch (error: any) {
         lastError = error;
-        console.error(`❌ API 요청 실패 [시도 ${attempt}/${maxRetryAttempts}]:`, error.message);
+        
+        if (!isHealthCheck) {
+          console.error(`❌ API 요청 실패 [시도 ${attempt}/${maxRetryAttempts}]:`, error.message);
+        }
         
         if (attempt < maxRetryAttempts && this.isRetryableError(error)) {
           const delay = retryDelay * attempt;
-          console.log(`⏳ ${delay}ms 후 재시도...`);
+          if (!isHealthCheck) {
+            console.log(`⏳ ${delay}ms 후 재시도...`);
+          }
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
         
         break;
       }
+    }
+    
+    // Health Check 실패는 조용히 Mock 반환
+    if (isHealthCheck) {
+      return this.getMockFallback(endpoint, options);
     }
     
     console.log(`🎭 ${maxRetryAttempts}회 시도 실패, Mock 응답 사용: ${endpoint}`);
@@ -794,11 +941,9 @@ export class PersistentDataAPIClient {
   }
 
   /**
-   * 백엔드 연결 상태 확인 (향상됨)
+   * 백엔드 연결 상태 확인 (Health Check 제어 포함)
    */
   async checkHealth(): Promise<any> {
-    console.log('🔌 백엔드 연결 상태 확인');
-    
     try {
       const startTime = Date.now();
       const response = await this.get('/health');
@@ -1001,6 +1146,9 @@ export class PersistentDataAPIClient {
   cleanup(): void {
     console.log('🧹 PersistentDataAPIClient 정리 (통합 모드)');
     
+    // Health Check 중지
+    this.stopHealthCheck();
+    
     // WebSocket 연결 해제
     this.disconnectWebSocket();
     
@@ -1016,7 +1164,42 @@ export class PersistentDataAPIClient {
     // 재연결 시도 중지
     this.reconnectAttempts = 0;
     
-    console.log('✅ 통합 정리 완료');
+    console.log('✅ 통합 정리 완료 (Health Check 포함)');
+  }
+
+  // ============================================================================
+  // 🔧 컴포넌트와의 통합 사용법
+  // ============================================================================
+
+  /**
+   * 컴포넌트에서 사용하기 위한 초기화
+   */
+  initialize(options?: {
+    enableHealthCheck?: boolean;
+    healthCheckInterval?: number;
+    enableWebSocket?: boolean;
+  }): void {
+    const {
+      enableHealthCheck = true,
+      healthCheckInterval = 30000,
+      enableWebSocket = false // 백엔드에 WebSocket 없으므로 기본 비활성화
+    } = options || {};
+
+    console.log('🚀 PersistentDataAPIClient 초기화 시작');
+
+    // Health Check 설정
+    if (enableHealthCheck) {
+      this.setHealthCheckFrequency(healthCheckInterval);
+      this.startHealthCheck();
+    }
+
+    // WebSocket 연결 (현재는 비활성화)
+    if (enableWebSocket) {
+      console.log('⚠️ WebSocket은 현재 백엔드에서 지원되지 않습니다');
+      // this.connectWebSocket();
+    }
+
+    console.log('✅ PersistentDataAPIClient 초기화 완료');
   }
 }
 

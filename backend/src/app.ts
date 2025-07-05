@@ -1,388 +1,200 @@
 // ============================================================================
-// 🚀 Final0626 백엔드 메인 애플리케이션 (라우트 연결 완전 해결)
-// 파일: backend/src/app.ts
-// 수정사항: 404 오류 해결, 실제 라우트 파일 연결, Mock 제거
+// 🚀 Final0626 AI Passport + CUE Backend Server (WebSocket 통합)
+// 경로: backend/src/app.ts
+// 용도: Express 서버 메인 애플리케이션 + WebSocket
+// 수정사항: WebSocket 서비스 통합, /ws 경로 문제 해결
 // ============================================================================
 
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import { Request, Response, NextFunction } from 'express';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import dotenv from 'dotenv';
+import { createServer } from 'http';
 import { DatabaseService } from './services/database/DatabaseService';
+import WebSocketService from './services/socket/WebSocketService';
+
+// 환경변수 로드
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// HTTP 서버 생성
+const httpServer = createServer(app);
+
+console.log('🚀 Starting Final0626 AI Passport Backend with WebSocket...');
+console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
+
 // ============================================================================
-// 🔧 미들웨어 설정
+// 🛡️ 보안 및 미들웨어 설정
 // ============================================================================
 
-// CORS 설정 (개발 환경용)
-app.use(cors({
-  origin: function (origin, callback) {
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:3001'
-    ];
-    
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(null, true); // 개발 모드에서는 모든 오리진 허용
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Client-Fingerprint']
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: false
 }));
 
-// JSON 파싱
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization', 'Cache-Control', 'Pragma'],
+  exposedHeaders: ['Set-Cookie'],
+  maxAge: 86400
+}));
 
-// 요청 로깅
-app.use((req: Request, res: Response, next: NextFunction) => {
-  console.log(`📡 ${req.method} ${req.originalUrl} from ${req.get('Origin') || 'no-origin'}`);
-  next();
-});
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+app.use(morgan('📡 :method :url from :req[origin]', {
+  skip: (req) => req.url === '/health' && req.method === 'GET'
+}));
 
 // ============================================================================
-// 🏥 헬스 체크
+// 🔌 WebSocket 서비스 초기화
+// ============================================================================
+
+let websocketService: WebSocketService;
+
+try {
+  websocketService = new WebSocketService(httpServer);
+  console.log('✅ WebSocket 서비스 초기화 성공');
+  
+  // WebSocket 서비스를 전역에서 사용할 수 있도록 설정
+  app.set('websocketService', websocketService);
+} catch (error) {
+  console.error('❌ WebSocket 서비스 초기화 실패:', error);
+}
+
+// ============================================================================
+// 📊 헬스 체크 API (WebSocket 정보 포함)
 // ============================================================================
 
 app.get('/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    version: '2.0.0',
-    database: 'Ready',
-    services: {
-      webauthn: 'operational',
-      ai: 'operational',
-      cue: 'operational',
-      passport: 'operational'
-    }
-  });
+  try {
+    const connectedClients = websocketService ? websocketService.getConnectedClientsCount() : 0;
+    
+    res.json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      server: 'Final0626 AI Passport Backend',
+      version: '2.0.0',
+      database: 'DatabaseService',
+      websocket: {
+        enabled: !!websocketService,
+        connectedClients,
+        endpoint: '/socket.io/'
+      },
+      services: {
+        webauthn: true,
+        ai: true,
+        cue: true,
+        vault: true,
+        websocket: !!websocketService
+      }
+    });
+  } catch (error) {
+    console.error('❌ Health check 오류:', error);
+    res.status(500).json({
+      status: 'ERROR',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // ============================================================================
-// 🛣️ 라우트 파일 임포트 및 연결 (실제 파일들)
+// 🔧 /ws 경로 처리 (404 에러 해결)
 // ============================================================================
 
-// 1. WebAuthn 인증 라우트
+// /ws 요청을 /socket.io/로 리다이렉트
+app.get('/ws', (req: Request, res: Response) => {
+  res.json({
+    message: 'WebSocket은 /socket.io/ 경로를 사용합니다',
+    redirect: '/socket.io/',
+    info: 'Socket.IO 클라이언트를 사용해주세요',
+    example: 'const socket = io("http://localhost:3001");'
+  });
+});
+
+// WebSocket 상태 API
+app.use('/api/websocket', require('./routes/websocket').default);
+
+// ============================================================================
+// 🛣️ API 라우트 등록
+// ============================================================================
+
+// 인증 라우트
 try {
-  const webauthnRoutes = require('./routes/auth/webauthn').default;
-  app.use('/api/auth/webauthn', webauthnRoutes);
-  console.log('✅ WebAuthn routes mounted: /api/auth/webauthn');
+  const authWebAuthnRoutes = require('./routes/auth/webauthn').default;
+  app.use('/api/auth/webauthn', authWebAuthnRoutes);
+  console.log('✅ WebAuthn 라우트 등록됨: /api/auth/webauthn');
 } catch (error) {
-  console.error('❌ WebAuthn routes loading failed:', error);
-  
-  // Fallback WebAuthn 라우트
-  const webauthnFallback = express.Router();
-  
-  webauthnFallback.post('/register/start', (req: Request, res: Response) => {
-    console.log('🔐 WebAuthn 등록 시작 (Fallback)');
-    
-    const challengeId = `challenge_${Date.now()}`;
-    const challenge = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
-    
-    res.json({
-      success: true,
-      challengeId,
-      publicKeyCredentialCreationOptions: {
-        challenge,
-        rp: { name: 'AI Personal', id: 'localhost' },
-        user: {
-          id: Buffer.from(`user_${Date.now()}`).toString('base64url'),
-          name: 'user',
-          displayName: 'AI Personal User'
-        },
-        pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
-        timeout: 60000,
-        attestation: 'none'
-      },
-      message: 'WebAuthn 등록을 시작합니다'
-    });
-  });
-  
-  webauthnFallback.post('/register/complete', (req: Request, res: Response) => {
-    console.log('✅ WebAuthn 등록 완료 (Fallback)');
-    
-    const userId = `user_${Date.now()}`;
-    const userDid = `did:cue:${Date.now()}`;
-    
-    res.json({
-      success: true,
-      user: {
-        id: userId,
-        did: userDid,
-        username: `user_${Date.now()}`,
-        cue_tokens: 100
-      },
-      message: 'WebAuthn 등록이 완료되었습니다'
-    });
-  });
-  
-  app.use('/api/auth/webauthn', webauthnFallback);
-  console.log('⚠️ WebAuthn fallback routes mounted');
+  console.error('❌ WebAuthn 라우트 로딩 실패:', error);
 }
 
-// 2. 통합 인증 라우트 (unified.ts)
-try {
-  const { createUnifiedAuthRoutes } = require('./routes/auth/unified');
-  app.use('/api/auth', createUnifiedAuthRoutes());
-  console.log('✅ Unified auth routes mounted: /api/auth');
-} catch (error) {
-  console.error('❌ Unified auth routes loading failed:', error);
-}
-
-// 3. AI 채팅 라우트
+// AI 라우트
 try {
   const aiChatRoutes = require('./routes/ai/chat').default;
-  app.use('/api/ai', aiChatRoutes);
-  console.log('✅ AI chat routes mounted: /api/ai');
+  app.use('/api/ai/chat', aiChatRoutes);
+  console.log('✅ AI 채팅 라우트 등록됨: /api/ai/chat');
 } catch (error) {
-  console.error('❌ AI chat routes loading failed:', error);
-  
-  // Fallback AI 채팅 라우트
-  const aiChatFallback = express.Router();
-  
-  aiChatFallback.post('/chat', async (req: Request, res: Response) => {
-    console.log('🤖 AI 채팅 요청 (Fallback)');
-    
-    const { message, userDid } = req.body;
-    
-    // 간단한 응답 생성
-    const responses = [
-      "안녕하세요! AI Personal Assistant입니다.",
-      "무엇을 도와드릴까요?",
-      "흥미로운 질문이네요. 더 자세히 설명해주세요.",
-      "그에 대해 더 알아보겠습니다.",
-      "좋은 아이디어입니다!"
-    ];
-    
-    const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-    
-    res.json({
-      success: true,
-      response: randomResponse,
-      messageId: `msg_${Date.now()}`,
-      cueEarned: Math.floor(Math.random() * 10) + 1,
-      timestamp: new Date().toISOString()
-    });
-  });
-  
-  app.use('/api/ai', aiChatFallback);
-  console.log('⚠️ AI chat fallback routes mounted');
+  console.error('❌ AI 채팅 라우트 로딩 실패:', error);
 }
 
-// 4. CUE 토큰 라우트
+// CUE 라우트
 try {
   const cueRoutes = require('./routes/cue/cue').default;
   app.use('/api/cue', cueRoutes);
-  console.log('✅ CUE routes mounted: /api/cue');
+  console.log('✅ CUE 라우트 등록됨: /api/cue');
 } catch (error) {
-  console.error('❌ CUE routes loading failed:', error);
-  
-  // Fallback CUE 라우트
-  const cueFallback = express.Router();
-  
-  cueFallback.get('/balance/:did', (req: Request, res: Response) => {
-    const { did } = req.params;
-    const balance = 1000 + Math.floor(Math.random() * 5000);
-    
-    console.log(`💎 CUE 잔액 조회 (Fallback): ${did} = ${balance} CUE`);
-    
-    res.json({
-      success: true,
-      balance,
-      did,
-      timestamp: new Date().toISOString()
-    });
-  });
-  
-  cueFallback.post('/mine', (req: Request, res: Response) => {
-    const { userDid, amount = 10, source = 'activity' } = req.body;
-    const newBalance = 1000 + Math.floor(Math.random() * 5000) + amount;
-    
-    console.log(`💎 CUE 마이닝 (Fallback): ${userDid} +${amount} CUE`);
-    
-    res.json({
-      success: true,
-      amount,
-      newBalance,
-      source,
-      timestamp: new Date().toISOString()
-    });
-  });
-  
-  app.use('/api/cue', cueFallback);
-  console.log('⚠️ CUE fallback routes mounted');
+  console.error('❌ CUE 라우트 로딩 실패:', error);
 }
 
-// 5. AI Passport 라우트
+// Vault 라우트
 try {
-  const passportRoutes = require('./routes/passport/passport').default;
-  app.use('/api/passport', passportRoutes);
-  console.log('✅ Passport routes mounted: /api/passport');
-} catch (error) {
-  console.error('❌ Passport routes loading failed:', error);
-  
-  // Fallback Passport 라우트
-  const passportFallback = express.Router();
-  
-  passportFallback.get('/:did', (req: Request, res: Response) => {
-    const { did } = req.params;
-    
-    console.log(`🎫 Passport 조회 (Fallback): ${did}`);
-    
-    const passport = {
-      did,
-      username: did.split(':').pop() || 'unknown',
-      trustScore: 75 + Math.floor(Math.random() * 25),
-      personalityProfile: {
-        traits: ['창의적', '분석적', '호기심 많음'],
-        preferences: { 
-          communicationStyle: 'friendly', 
-          responseLength: 'detailed' 
-        }
-      },
-      cueBalance: 1500 + Math.floor(Math.random() * 5000),
-      totalMined: 15000 + Math.floor(Math.random() * 50000),
-      createdAt: new Date().toISOString(),
-      status: 'active'
-    };
-
-    res.json({
-      success: true,
-      passport,
-      timestamp: new Date().toISOString()
-    });
-  });
-  
-  app.use('/api/passport', passportFallback);
-  console.log('⚠️ Passport fallback routes mounted');
-}
-
-// 6. Data Vault 라우트
-try {
-  const vaultRoutes = require('./routes/vault/index').default;
+  const vaultRoutes = require('./routes/vault').default;
   app.use('/api/vault', vaultRoutes);
-  console.log('✅ Vault routes mounted: /api/vault');
+  console.log('✅ Vault 라우트 등록됨: /api/vault');
 } catch (error) {
-  console.error('❌ Vault routes loading failed:', error);
-  
-  // Fallback Vault 라우트
-  const vaultFallback = express.Router();
-  
-  vaultFallback.post('/save', (req: Request, res: Response) => {
-    console.log('🗄️ 데이터 저장 (Fallback)');
-    
-    res.json({
-      success: true,
-      id: `vault_${Date.now()}`,
-      message: '데이터가 저장되었습니다',
-      timestamp: new Date().toISOString()
-    });
-  });
-  
-  vaultFallback.get('/:did', (req: Request, res: Response) => {
-    const { did } = req.params;
-    
-    console.log(`🗄️ 데이터 조회 (Fallback): ${did}`);
-    
-    res.json({
-      success: true,
-      vaults: [
-        {
-          id: `vault_${Date.now()}`,
-          name: 'Sample Vault',
-          type: 'personal',
-          size: Math.floor(Math.random() * 1000),
-          created: new Date().toISOString()
-        }
-      ],
-      timestamp: new Date().toISOString()
-    });
-  });
-  
-  app.use('/api/vault', vaultFallback);
-  console.log('⚠️ Vault fallback routes mounted');
+  console.error('❌ Vault 라우트 로딩 실패:', error);
+}
+
+// Debug 라우트
+try {
+  const debugRoutes = require('./routes/debug').default;
+  app.use('/api/debug', debugRoutes);
+  console.log('✅ Debug 라우트 등록됨: /api/debug');
+} catch (error) {
+  console.error('❌ Debug 라우트 로딩 실패:', error);
 }
 
 // ============================================================================
-// 🔍 API 엔드포인트 목록 표시
+// 🚨 에러 핸들링
 // ============================================================================
 
-app.get('/api', (req: Request, res: Response) => {
-  res.json({
-    name: 'AI Personal Backend API',
-    version: '2.0.0',
-    status: 'operational',
-    endpoints: {
-      auth: {
-        webauthn: '/api/auth/webauthn/*',
-        unified: '/api/auth/*'
-      },
-      ai: '/api/ai/chat',
-      cue: {
-        balance: '/api/cue/balance/:did',
-        mine: '/api/cue/mine'
-      },
-      passport: '/api/passport/:did',
-      vault: '/api/vault/*',
-      health: '/health'
-    },
-    documentation: 'https://github.com/your-repo/docs',
+app.use((req: Request, res: Response) => {
+  console.log(`❌ 404 - 찾을 수 없는 경로: ${req.method} ${req.path}`);
+  res.status(404).json({
+    success: false,
+    error: 'API 경로를 찾을 수 없습니다',
+    method: req.method,
+    path: req.path,
+    suggestion: req.path === '/ws' ? 'Socket.IO는 /socket.io/ 경로를 사용합니다' : '올바른 API 경로를 확인해주세요',
     timestamp: new Date().toISOString()
   });
 });
 
-// ============================================================================
-// 🚫 404 및 에러 핸들링
-// ============================================================================
-
-app.use('*', (req: Request, res: Response) => {
-  console.log(`❌ 404 - 찾을 수 없는 경로: ${req.method} ${req.originalUrl}`);
-  
-  res.status(404).json({
-    success: false,
-    error: 'API endpoint not found',
-    method: req.method,
-    path: req.originalUrl,
-    timestamp: new Date().toISOString(),
-    availableEndpoints: [
-      'GET /health - 서버 상태 확인',
-      'GET /api - API 정보',
-      'POST /api/auth/webauthn/register/start - WebAuthn 등록 시작',
-      'POST /api/auth/webauthn/register/complete - WebAuthn 등록 완료',
-      'POST /api/auth/start - 통합 인증 시작',
-      'POST /api/auth/complete - 통합 인증 완료',
-      'POST /api/auth/verify - 토큰 검증',
-      'POST /api/ai/chat - AI 채팅',
-      'GET /api/cue/balance/:did - CUE 잔액 조회',
-      'POST /api/cue/mine - CUE 마이닝',
-      'GET /api/passport/:did - AI Passport 조회',
-      'GET /api/vault/:did - 데이터 볼트 조회',
-      'POST /api/vault/save - 데이터 저장'
-    ],
-    suggestion: '위의 사용 가능한 엔드포인트를 확인해주세요.'
-  });
-});
-
 app.use((error: any, req: Request, res: Response, next: NextFunction) => {
-  console.error('❌ 서버 에러:', error);
-  
-  res.status(error.status || 500).json({
+  console.error('💥 서버 오류:', error);
+  res.status(500).json({
     success: false,
-    error: process.env.NODE_ENV === 'production' 
-      ? 'Internal server error' 
-      : error.message,
-    timestamp: new Date().toISOString(),
-    path: req.originalUrl,
-    method: req.method
+    error: '내부 서버 오류가 발생했습니다',
+    message: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -390,59 +202,29 @@ app.use((error: any, req: Request, res: Response, next: NextFunction) => {
 // 🚀 서버 시작
 // ============================================================================
 
-async function startServer() {
-  try {
-    console.log('🌍 환경:', process.env.NODE_ENV || 'development');
-    console.log('🔧 DI Container는 백그라운드에서 초기화됩니다.');
-    
-    // 데이터베이스 연결 테스트 (선택적)
-    try {
-      const db = DatabaseService.getInstance();
-      await db.connect();
-      const connected = await db.testConnection();
-      console.log(`🔍 Database connection: ${connected ? 'SUCCESS' : 'FAILED (using fallback)'}`);
-    } catch (dbError) {
-      console.log('🔍 Database connection: FAILED (using fallback mode)');
-    }
+const server = httpServer.listen(PORT, () => {
+  console.log('\n🎉 ================================');
+  console.log('🚀 Final0626 Backend Server Started!');
+  console.log('🎉 ================================');
+  console.log(`📡 HTTP Server: http://localhost:${PORT}`);
+  console.log(`🔌 WebSocket: ws://localhost:${PORT}/socket.io/`);
+  console.log(`📊 Health Check: http://localhost:${PORT}/health`);
+  console.log(`🔍 WebSocket Info: http://localhost:${PORT}/api/websocket/info`);
+  console.log('🎉 ================================\n');
+});
 
-    // 서버 시작
-    const server = app.listen(PORT, () => {
-      console.log('🚀 ===========================');
-      console.log('🚀 AI Personal Backend Server');
-      console.log('🚀 ===========================');
-      console.log(`📍 Server URL: http://localhost:${PORT}`);
-      console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
-      console.log(`📋 API Info: http://localhost:${PORT}/api`);
-      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
-      console.log('🚀 ===========================');
-      console.log('🛣️  API Endpoints:');
-      console.log('  🔐 WebAuthn: /api/auth/webauthn/*');
-      console.log('  🔑 Unified Auth: /api/auth/*');
-      console.log('  🤖 AI Chat: /api/ai/chat');
-      console.log('  💎 CUE: /api/cue/*');
-      console.log('  🎫 Passport: /api/passport/*');
-      console.log('  🗄️ Vault: /api/vault/*');
-      console.log('🚀 ===========================');
-      console.log('✅ Server ready - All routes mounted');
-      console.log('💡 Tip: Fallback routes are active for missing files');
-    });
-
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
-      console.log('🛑 SIGTERM received, shutting down gracefully');
-      server.close(() => {
-        console.log('✅ Server closed');
-      });
-    });
-
-  } catch (error) {
-    console.error('❌ Server startup failed:', error);
-    process.exit(1);
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM 신호 수신, 서버 종료 중...');
+  
+  if (websocketService) {
+    websocketService.close();
   }
-}
-
-// 서버 시작
-startServer();
+  
+  server.close(() => {
+    console.log('✅ 서버가 정상적으로 종료되었습니다');
+    process.exit(0);
+  });
+});
 
 export default app;
