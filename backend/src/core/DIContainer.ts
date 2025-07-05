@@ -609,106 +609,194 @@ export class DIContainer {
   /**
    * 라우터 등록 (Mock 제거, 실제 에러만 표시)
    */
-  private async registerRoutes(): Promise<void> {
-    console.log('🛣️ 라우터 등록 시작 (실제 에러만 표시)...');
+// ============================================================================
+// 🔧 DIContainer.ts - 라우트 경로 수정 (registerRoutes 함수 부분만)
+// 파일: backend/src/core/DIContainer.ts
+// 수정 위치: registerRoutes() 함수 내부
+// 문제: 실제 존재하는 라우트 파일과 DIContainer의 require 경로 불일치
+// 해결: 실제 파일 경로에 맞춰 require 경로 수정
+// ============================================================================
 
-    // ✅ 직접 export 방식 라우터들
-    const directRoutes = [
-      { key: 'AuthWebAuthnRoutes', path: '../routes/auth/webauthn', description: 'WebAuthn 라우트' },
-      { key: 'AuthSessionRoutes', path: '../routes/auth/session-restore', description: '세션 복원 라우트' },
-      { key: 'AIChatRoutes', path: '../routes/ai/chat', description: 'AI 채팅 라우트' },
-      { key: 'AIIndexRoutes', path: '../routes/ai/index', description: 'AI 통합 라우트' },
-      { key: 'CUEMiningRoutes', path: '../routes/cue/mining', description: 'CUE 마이닝 라우트' },
-      { key: 'CUECompleteRoutes', path: '../routes/cue/complete', description: 'CUE 완료 라우트' },
-      { key: 'DebugRoutes', path: '../routes/debug/index', description: '디버그 라우트' },
-      { key: 'VaultRoutes', path: '../routes/vault/index', description: 'Vault 라우트' }
-    ];
+/**
+ * 라우터 등록 (실제 파일 경로에 맞춰 수정)
+ */
+private async registerRoutes(): Promise<void> {
+  console.log('🛣️ 라우터 등록 시작 (실제 파일 경로 기준)...');
 
-    // 직접 export 라우터 등록
-    for (const { key, path, description } of directRoutes) {
-      this.registerSingleton(key, () => {
-        console.log(`🔄 ${key}: 직접 export 라우터 로딩 - ${path}`);
+  // ============================================================================
+  // 🔍 실제 존재하는 라우트 파일들 확인
+  // ============================================================================
+  
+  // 실제 파일 경로:
+  // ✅ backend/src/routes/auth/webauthn.ts (존재함)
+  // ✅ backend/src/routes/auth/unified.ts (존재함)
+  // ✅ backend/src/routes/ai/chat.ts (존재함)
+  // ✅ backend/src/routes/ai/index.ts (존재함)
+  // ✅ backend/src/routes/cue/cue.ts (존재함) 
+  // ✅ backend/src/routes/cue/mining.ts (존재함)
+  // ✅ backend/src/routes/passport/passport.ts (존재함)
+  // ✅ backend/src/routes/vault/index.ts (존재함)
+
+  // ✅ 직접 export 방식 라우터들 (정확한 경로)
+  const directRoutes = [
+    { key: 'AuthWebAuthnRoutes', path: '../routes/auth/webauthn', description: 'WebAuthn 라우트' },
+    { key: 'AIChatRoutes', path: '../routes/ai/chat', description: 'AI 채팅 라우트' },
+    { key: 'AIIndexRoutes', path: '../routes/ai/index', description: 'AI 통합 라우트' },
+    { key: 'CUEMiningRoutes', path: '../routes/cue/mining', description: 'CUE 마이닝 라우트' },
+    { key: 'PassportMainRoutes', path: '../routes/passport/passport', description: 'Passport 메인 라우트' },
+    { key: 'VaultRoutes', path: '../routes/vault/index', description: 'Vault 라우트' }
+  ];
+
+  // 직접 export 라우터 등록
+  for (const { key, path, description } of directRoutes) {
+    this.registerSingleton(key, () => {
+      console.log(`🔄 ${key}: 실제 경로로 라우터 로딩 - ${path}`);
+      
+      try {
+        const routeModule = require(path);
         
-        try {
-          const routeModule = require(path);
+        // 다양한 export 패턴 확인 (우선순위 순서)
+        const router = routeModule.default || routeModule.router || routeModule;
+        
+        if (this.isValidExpressRouter(router)) {
+          console.log(`✅ ${key}: Express Router 로딩 성공`);
+          return router;
+        } else {
+          console.error(`❌ ${key}: 유효하지 않은 Router. 타입: ${typeof router}`);
+          console.error(`   - routeModule keys: ${Object.keys(routeModule).join(', ')}`);
           
-          // 다양한 export 패턴 확인
+          // 개별 export 함수들 확인
+          const possibleRouters = Object.keys(routeModule)
+            .filter(key => typeof routeModule[key] === 'function')
+            .map(key => ({ key, value: routeModule[key] }));
+          
+          for (const { key: exportKey, value } of possibleRouters) {
+            if (this.isValidExpressRouter(value)) {
+              console.log(`✅ ${key}: 대체 Router 발견 (${exportKey})`);
+              return value;
+            }
+          }
+          
+          throw new Error(`유효한 Express Router를 찾을 수 없음. exports: ${Object.keys(routeModule).join(', ')}`);
+        }
+      } catch (error: any) {
+        this.logError(key, error);
+        console.error(`❌ ${key} 라우터 로딩 완전 실패:`);
+        console.error(`   경로: ${path}`);
+        console.error(`   오류: ${error.message}`);
+        
+        // 파일 존재 여부 확인
+        try {
+          const fs = require('fs');
+          const fullPath = require('path').resolve(__dirname, path + '.ts');
+          const jsPath = require('path').resolve(__dirname, path + '.js');
+          
+          console.error(`   파일 존재 확인:`);
+          console.error(`   - ${fullPath}: ${fs.existsSync(fullPath) ? '✅' : '❌'}`);
+          console.error(`   - ${jsPath}: ${fs.existsSync(jsPath) ? '✅' : '❌'}`);
+        } catch (fsError) {
+          console.error(`   파일 시스템 확인 실패: ${fsError}`);
+        }
+        
+        throw new Error(`${key} 라우터 로딩 실패: ${error.message}`);
+      }
+    }, [], {
+      description,
+      category: 'router',
+      routerType: 'direct'
+    });
+  }
+
+  // ✅ 팩토리 함수 방식 라우터들 (정확한 경로)
+  const factoryRoutes = [
+    { key: 'AuthUnifiedRoutes', path: '../routes/auth/unified', description: '통합 인증 라우트' },
+    { key: 'CUERoutes', path: '../routes/cue/cue', description: 'CUE 토큰 라우트' }
+  ];
+
+  // 팩토리 함수 라우터 등록
+  for (const { key, path, description } of factoryRoutes) {
+    this.registerSingleton(key, (container: DIContainer) => {
+      console.log(`🔄 ${key}: 팩토리 라우터 로딩 - ${path}`);
+      
+      try {
+        const routeModule = require(path);
+        
+        // 팩토리 함수 찾기
+        const createFunction = this.findCreateFunction(routeModule);
+        
+        if (createFunction) {
+          console.log(`🏭 ${key}: 팩토리 함수 실행 중...`);
+          
+          try {
+            const router = createFunction(container);
+            
+            if (this.isValidExpressRouter(router)) {
+              console.log(`✅ ${key}: 팩토리 라우터 생성 성공`);
+              return router;
+            } else {
+              throw new Error(`팩토리 함수가 유효한 Router를 반환하지 않음. 반환 타입: ${typeof router}`);
+            }
+          } catch (factoryError: any) {
+            throw new Error(`${key} 팩토리 함수 실행 실패: ${factoryError.message}`);
+          }
+        } else {
+          // 팩토리 함수가 없으면 직접 export 시도
+          console.log(`⚠️ ${key}: 팩토리 함수 없음, 직접 export 시도`);
           const router = routeModule.default || routeModule.router || routeModule;
           
           if (this.isValidExpressRouter(router)) {
-            console.log(`✅ ${key}: Express Router 로딩 성공`);
+            console.log(`✅ ${key}: 직접 export Router 발견`);
             return router;
           } else {
-            const error = new Error(`유효한 Express Router가 아닙니다. 받은 타입: ${typeof router}`);
-            this.logError(key, error);
-            throw error;
+            throw new Error(`팩토리 함수와 직접 export 모두 실패. exports: ${Object.keys(routeModule).join(', ')}`);
           }
-        } catch (error: any) {
-          this.logError(key, error);
-          throw new Error(`${key} 라우터 로딩 실패: ${error.message}`);
         }
-      }, [], {
-        description,
-        category: 'router',
-        routerType: 'direct'
-      });
-    }
-
-    // ✅ 팩토리 함수 방식 라우터들
-    const factoryRoutes = [
-      { key: 'AuthUnifiedRoutes', path: '../routes/auth/unified', description: '통합 인증 라우트' },
-      { key: 'PassportRoutes', path: '../routes/passport/passport', description: 'AI Passport 라우트' },
-      { key: 'CUERoutes', path: '../routes/cue/cue', description: 'CUE 토큰 라우트' },
-      { key: 'PlatformRoutes', path: '../routes/platform/index', description: '플랫폼 라우트' }
-    ];
-
-    // 팩토리 함수 라우터 등록
-    for (const { key, path, description } of factoryRoutes) {
-      this.registerSingleton(key, (container: DIContainer) => {
-        console.log(`🔄 ${key}: 팩토리 라우터 로딩 - ${path}`);
-        
-        try {
-          const routeModule = require(path);
-          
-          // 팩토리 함수 찾기
-          const createFunction = this.findCreateFunction(routeModule);
-          
-          if (createFunction) {
-            console.log(`🏭 ${key}: 팩토리 함수 실행 중...`);
-            
-            try {
-              const router = createFunction(container);
-              
-              if (this.isValidExpressRouter(router)) {
-                console.log(`✅ ${key}: 팩토리 라우터 생성 성공`);
-                return router;
-              } else {
-                const error = new Error(`팩토리 함수가 유효한 Router를 반환하지 않음. 반환 타입: ${typeof router}`);
-                this.logError(key, error);
-                throw error;
-              }
-            } catch (factoryError: any) {
-              this.logError(key, factoryError);
-              throw new Error(`${key} 팩토리 함수 실행 실패: ${factoryError.message}`);
-            }
-          } else {
-            const error = new Error(`팩토리 함수를 찾을 수 없습니다. 사용 가능한 exports: ${Object.keys(routeModule).join(', ')}`);
-            this.logError(key, error);
-            throw error;
-          }
-        } catch (error: any) {
-          this.logError(key, error);
-          throw new Error(`${key} 팩토리 라우터 로딩 실패: ${error.message}`);
-        }
-      }, [], {
-        description,
-        category: 'router',
-        routerType: 'factory'
-      });
-    }
-
-    console.log('✅ 라우터 등록 완료');
+      } catch (error: any) {
+        this.logError(key, error);
+        console.error(`❌ ${key} 팩토리 라우터 로딩 완전 실패:`);
+        console.error(`   경로: ${path}`);
+        console.error(`   오류: ${error.message}`);
+        throw new Error(`${key} 팩토리 라우터 로딩 실패: ${error.message}`);
+      }
+    }, [], {
+      description,
+      category: 'router',
+      routerType: 'factory'
+    });
   }
+
+  console.log('✅ 라우터 등록 완료 (실제 파일 경로 기준)');
+}
+
+// ============================================================================
+// 🔍 개선된 Express Router 유효성 검사
+// ============================================================================
+
+private isValidExpressRouter(router: any): boolean {
+  if (!router) {
+    console.error(`❌ Router 검증: router가 null/undefined`);
+    return false;
+  }
+  
+  if (typeof router !== 'function') {
+    console.error(`❌ Router 검증: 함수가 아님. 타입: ${typeof router}, 값: ${router}`);
+    return false;
+  }
+
+  // Express Router의 핵심 메서드들 확인
+  const requiredMethods = ['use', 'get', 'post'];
+  const missingMethods = requiredMethods.filter(method => typeof router[method] !== 'function');
+  
+  if (missingMethods.length > 0) {
+    console.error(`❌ Router 검증: 필수 메서드 누락: ${missingMethods.join(', ')}`);
+    console.error(`   사용 가능한 메서드: ${Object.getOwnPropertyNames(router).filter(prop => typeof router[prop] === 'function').join(', ')}`);
+    return false;
+  }
+  
+  console.log(`✅ Router 검증 통과: 필수 메서드 모두 존재`);
+  return true;
+}
+
 
   // ============================================================================
   // 🔧 유틸리티 메서드들 (isValidExpressRouter 문법 오류 완전 해결)
