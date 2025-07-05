@@ -1,28 +1,80 @@
 // ============================================================================
-// 🔐 CryptoService (통합된 완전한 구현)
-// 파일: backend/src/services/encryption/CryptoService.ts
-// 역할: 데이터 암호화/복호화, 해시 생성, Node.js 암호화 안전성 보장
-// 특징: Singleton 패턴, deprecated API 제거, 안전한 암호화 알고리즘 사용
+// 📁 backend/src/services/encryption/CryptoService.ts
+// 🔐 올바른 ES 모듈 방식의 CryptoService (Node.js 내장 모듈)
 // ============================================================================
 
-import crypto from 'crypto';
+import * as crypto from 'crypto';
+// 또는 Node.js 18+ 환경에서는:
+// import { randomBytes, createCipherGCM, createDecipherGCM, createHash, randomUUID, pbkdf2Sync } from 'crypto';
 
+/**
+ * 암호화 설정 인터페이스
+ */
+interface CryptoConfig {
+  algorithm: string;
+  ivLength: number;
+  saltLength: number;
+  tagLength: number;
+  iterations: number;
+}
+
+/**
+ * 암호화 상태 인터페이스
+ */
+interface CryptoStatus {
+  status: 'healthy' | 'warning' | 'error';
+  keyConfigured: boolean;
+  keyLength: number;
+  algorithm: string;
+  featuresAvailable: string[];
+  lastOperation: string | null;
+  operationCount: number;
+  errors: number;
+  timestamp: string;
+}
+
+/**
+ * 🔐 완전 개선된 CryptoService (Singleton + DI 호환) - 올바른 ES 모듈 방식
+ */
 export class CryptoService {
   private static instance: CryptoService;
-  private static readonly ALGORITHM = 'aes-256-gcm';
-  private static readonly IV_LENGTH = 16;
-  private static readonly SALT_LENGTH = 32;
-  private static readonly TAG_LENGTH = 16;
+  
+  // 기본 설정
+  private readonly config: CryptoConfig = {
+    algorithm: process.env.CRYPTO_ALGORITHM || 'aes-256-gcm',
+    ivLength: parseInt(process.env.CRYPTO_IV_LENGTH || '16'),
+    saltLength: parseInt(process.env.CRYPTO_SALT_LENGTH || '32'),
+    tagLength: parseInt(process.env.CRYPTO_TAG_LENGTH || '16'),
+    iterations: 100000
+  };
+  
+  // 상태 추적
   private encryptionKey: string;
-  private initialized: boolean = false;
+  private operationCount: number = 0;
+  private errorCount: number = 0;
+  private lastOperation: string | null = null;
+  private isInitialized: boolean = false;
 
-  // ============================================================================
-  // 🔧 Singleton 패턴 구현
-  // ============================================================================
+  /**
+   * private 생성자 (Singleton)
+   */
   private constructor() {
-    this.initializeService();
+    console.log('🔐 CryptoService 초기화 중 (ES 모듈 방식)...');
+    
+    try {
+      this.encryptionKey = this.initializeEncryptionKey();
+      this.isInitialized = true;
+      console.log('✅ CryptoService 초기화 완료');
+    } catch (error: any) {
+      console.error('❌ CryptoService 초기화 실패:', error.message);
+      this.errorCount++;
+      throw error;
+    }
   }
 
+  /**
+   * Singleton 인스턴스 반환
+   */
   public static getInstance(): CryptoService {
     if (!CryptoService.instance) {
       CryptoService.instance = new CryptoService();
@@ -30,463 +82,424 @@ export class CryptoService {
     return CryptoService.instance;
   }
 
-  private initializeService(): void {
-    try {
-      // 환경변수 확인 및 키 설정
-      this.encryptionKey = process.env.ENCRYPTION_KEY || this.generateSecureKey();
-      
-      if (!process.env.ENCRYPTION_KEY) {
-        console.warn('⚠️ ENCRYPTION_KEY 환경변수가 없습니다. 임시 키를 사용합니다.');
-        console.log('🔑 임시 암호화 키 생성됨');
-      }
-      
-      this.initialized = true;
-      console.log('✅ CryptoService 초기화 완료');
-    } catch (error) {
-      console.error('❌ CryptoService 초기화 실패:', error);
-      this.initialized = false;
+  /**
+   * 암호화 키 초기화 (환경변수 + 기본값)
+   */
+  private initializeEncryptionKey(): string {
+    const envKey = process.env.ENCRYPTION_KEY;
+    
+    if (envKey && envKey.length === 32) {
+      console.log('✅ 환경변수에서 ENCRYPTION_KEY 로드됨');
+      return envKey;
     }
+    
+    if (envKey && envKey.length !== 32) {
+      console.warn(`⚠️ ENCRYPTION_KEY 길이가 잘못됨: ${envKey.length}/32`);
+    }
+    
+    // 기본 키 생성 (개발용)
+    const defaultKey = 'dev_key_1234567890abcdef1234567890';
+    console.warn('⚠️ ENCRYPTION_KEY 환경변수가 없습니다. 기본 개발 키를 사용합니다.');
+    console.warn('🔧 프로덕션에서는 반드시 안전한 32자리 키를 설정하세요!');
+    
+    return defaultKey;
   }
-
-  private generateSecureKey(): string {
-    return crypto.randomBytes(32).toString('hex');
-  }
-
-  // ============================================================================
-  // 🔒 안전한 암호화 메서드들 (deprecated API 제거)
-  // ============================================================================
 
   /**
-   * 안전한 키 생성 (PBKDF2 사용)
+   * 키 유도 함수 (PBKDF2)
    */
   private deriveKey(salt: Buffer): Buffer {
-    return crypto.pbkdf2Sync(this.encryptionKey, salt, 100000, 32, 'sha256');
+    return crypto.pbkdf2Sync(this.encryptionKey, salt, this.config.iterations, 32, 'sha256');
   }
 
   /**
-   * 고급 암호화 (AES-256-GCM)
+   * 🔒 데이터 암호화
    */
-  encrypt(data: string): string {
+  public encrypt(text: string): string {
     try {
-      const iv = crypto.randomBytes(CryptoService.IV_LENGTH);
-      const salt = crypto.randomBytes(CryptoService.SALT_LENGTH);
+      this.lastOperation = 'encrypt';
+      this.operationCount++;
+      
+      if (!text || typeof text !== 'string') {
+        throw new Error('암호화할 텍스트가 유효하지 않습니다');
+      }
+      
+      const iv = crypto.randomBytes(this.config.ivLength);
+      const salt = crypto.randomBytes(this.config.saltLength);
       const key = this.deriveKey(salt);
       
-      const cipher = crypto.createCipher('aes-256-gcm', key);
-      cipher.setAAD(Buffer.from('CUE-Protocol')); // 추가 인증 데이터
+      const cipher = crypto.createCipherGCM(this.config.algorithm, key, iv);
       
-      let encrypted = cipher.update(data, 'utf8', 'hex');
+      let encrypted = cipher.update(text, 'utf8', 'hex');
       encrypted += cipher.final('hex');
       
       const authTag = cipher.getAuthTag();
       
-      // salt + iv + authTag + encrypted 결합
-      return salt.toString('hex') + ':' + 
-             iv.toString('hex') + ':' + 
-             authTag.toString('hex') + ':' + 
-             encrypted;
-    } catch (error) {
-      console.warn('❌ GCM 암호화 실패, 대체 방식 사용:', error);
+      // 결합: salt + iv + authTag + encrypted
+      const result = salt.toString('hex') + ':' + 
+                    iv.toString('hex') + ':' + 
+                    authTag.toString('hex') + ':' + 
+                    encrypted;
       
-      // 안전한 대체 방식: AES-256-CBC
-      try {
-        const iv = crypto.randomBytes(16);
-        const salt = crypto.randomBytes(32);
-        const key = this.deriveKey(salt);
-        
-        const cipher = crypto.createCipher('aes-256-cbc', key);
-        let encrypted = cipher.update(data, 'utf8', 'hex');
-        encrypted += cipher.final('hex');
-        
-        return salt.toString('hex') + ':' + 
-               iv.toString('hex') + ':' + 
-               'cbc:' + 
-               encrypted;
-      } catch (fallbackError) {
-        console.error('❌ 모든 암호화 방식 실패:', fallbackError);
-        // 최후의 수단: Base64 인코딩 (암호화 아님)
-        return 'base64:' + Buffer.from(data).toString('base64');
-      }
+      console.log(`🔒 데이터 암호화 성공 (길이: ${text.length} → ${result.length})`);
+      return result;
+      
+    } catch (error: any) {
+      this.errorCount++;
+      console.error('❌ 암호화 실패:', error.message);
+      throw new Error(`데이터 암호화 실패: ${error.message}`);
     }
   }
 
   /**
-   * 안전한 복호화
+   * 🔓 데이터 복호화
    */
-  decrypt(encryptedData: string): string {
+  public decrypt(encryptedData: string): string {
     try {
-      // Base64 fallback 처리
-      if (encryptedData.startsWith('base64:')) {
-        return Buffer.from(encryptedData.replace('base64:', ''), 'base64').toString();
+      this.lastOperation = 'decrypt';
+      this.operationCount++;
+      
+      if (!encryptedData || typeof encryptedData !== 'string') {
+        throw new Error('복호화할 데이터가 유효하지 않습니다');
+      }
+      
+      const parts = encryptedData.split(':');
+      if (parts.length !== 4) {
+        throw new Error('암호화된 데이터 형식이 잘못되었습니다');
       }
 
-      const parts = encryptedData.split(':');
+      const salt = Buffer.from(parts[0], 'hex');
+      const iv = Buffer.from(parts[1], 'hex');
+      const authTag = Buffer.from(parts[2], 'hex');
+      const encrypted = parts[3];
+
+      const key = this.deriveKey(salt);
       
-      if (parts.length === 4 && parts[2] === 'cbc') {
-        // CBC 모드 복호화
-        const salt = Buffer.from(parts[0], 'hex');
-        const iv = Buffer.from(parts[1], 'hex');
-        const encrypted = parts[3];
-        const key = this.deriveKey(salt);
-        
-        const decipher = crypto.createDecipher('aes-256-cbc', key);
-        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
-        
-        return decrypted;
-      } 
-      else if (parts.length === 4) {
-        // GCM 모드 복호화
-        const salt = Buffer.from(parts[0], 'hex');
-        const iv = Buffer.from(parts[1], 'hex');
-        const authTag = Buffer.from(parts[2], 'hex');
-        const encrypted = parts[3];
-        const key = this.deriveKey(salt);
-        
-        const decipher = crypto.createDecipher('aes-256-gcm', key);
-        decipher.setAuthTag(authTag);
-        decipher.setAAD(Buffer.from('CUE-Protocol'));
-        
-        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
-        
-        return decrypted;
-      } else {
-        throw new Error('지원되지 않는 암호화 형식');
-      }
-    } catch (error) {
-      console.error('❌ 복호화 실패:', error);
-      // 복호화 실패 시 원본 데이터 반환 (임시 조치)
-      return encryptedData;
+      const decipher = crypto.createDecipherGCM(this.config.algorithm, key, iv);
+      decipher.setAuthTag(authTag);
+      
+      let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+      
+      console.log(`🔓 데이터 복호화 성공 (길이: ${encryptedData.length} → ${decrypted.length})`);
+      return decrypted;
+      
+    } catch (error: any) {
+      this.errorCount++;
+      console.error('❌ 복호화 실패:', error.message);
+      throw new Error(`데이터 복호화 실패: ${error.message}`);
     }
   }
 
-  // ============================================================================
-  // 🏷️ Static 메서드들 (기존 호환성 유지)
-  // ============================================================================
-
-  static encrypt(text: string): string {
-    return CryptoService.getInstance().encrypt(text);
-  }
-
-  static decrypt(encryptedData: string): string {
-    return CryptoService.getInstance().decrypt(encryptedData);
-  }
-
-  static hash(data: string): string {
-    return crypto.createHash('sha256').update(data).digest('hex');
-  }
-
-  static generateRandomBytes(length: number): string {
-    return crypto.randomBytes(length).toString('hex');
-  }
-
-  static generateSecureToken(): string {
-    return crypto.randomBytes(32).toString('hex');
-  }
-
-  // ============================================================================
-  // 🆕 인스턴스 메서드들
-  // ============================================================================
-
   /**
-   * 인스턴스를 통한 암호화
+   * 🔨 데이터 해시 생성
    */
-  public encryptData(text: string): string {
-    return this.encrypt(text);
+  public hash(data: string): string {
+    try {
+      this.lastOperation = 'hash';
+      this.operationCount++;
+      
+      if (!data || typeof data !== 'string') {
+        throw new Error('해시할 데이터가 유효하지 않습니다');
+      }
+      
+      const hash = crypto.createHash('sha256').update(data).digest('hex');
+      console.log(`🔨 해시 생성 성공 (길이: ${data.length} → ${hash.length})`);
+      return hash;
+      
+    } catch (error: any) {
+      this.errorCount++;
+      console.error('❌ 해시 생성 실패:', error.message);
+      throw new Error(`해시 생성 실패: ${error.message}`);
+    }
   }
 
   /**
-   * 인스턴스를 통한 복호화
-   */
-  public decryptData(encryptedData: string): string {
-    return this.decrypt(encryptedData);
-  }
-
-  /**
-   * 해시 생성
-   */
-  public hashData(data: string): string {
-    return CryptoService.hash(data);
-  }
-
-  /**
-   * UUID 생성 (암호학적으로 안전)
+   * 🎲 UUID 생성
    */
   public generateUUID(): string {
-    return crypto.randomUUID();
+    try {
+      this.lastOperation = 'generateUUID';
+      this.operationCount++;
+      
+      const uuid = crypto.randomUUID();
+      console.log(`🎲 UUID 생성 성공: ${uuid}`);
+      return uuid;
+      
+    } catch (error: any) {
+      this.errorCount++;
+      console.error('❌ UUID 생성 실패:', error.message);
+      
+      // fallback UUID 생성
+      const fallbackUuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+      
+      console.log(`🔄 fallback UUID 생성: ${fallbackUuid}`);
+      return fallbackUuid;
+    }
   }
 
   /**
-   * 랜덤 바이트 생성
+   * 🎯 랜덤 바이트 생성
    */
   public generateRandomBytes(length: number): string {
-    return CryptoService.generateRandomBytes(length);
+    try {
+      this.lastOperation = 'generateRandomBytes';
+      this.operationCount++;
+      
+      if (length <= 0 || length > 1024) {
+        throw new Error('잘못된 바이트 길이입니다 (1-1024)');
+      }
+      
+      const bytes = crypto.randomBytes(length).toString('hex');
+      console.log(`🎯 랜덤 바이트 생성 성공 (길이: ${length} → ${bytes.length})`);
+      return bytes;
+      
+    } catch (error: any) {
+      this.errorCount++;
+      console.error('❌ 랜덤 바이트 생성 실패:', error.message);
+      throw new Error(`랜덤 바이트 생성 실패: ${error.message}`);
+    }
   }
 
   /**
-   * 보안 토큰 생성
+   * 🔑 보안 토큰 생성
    */
   public generateSecureToken(): string {
-    return CryptoService.generateSecureToken();
+    try {
+      this.lastOperation = 'generateSecureToken';
+      this.operationCount++;
+      
+      const token = crypto.randomBytes(32).toString('hex');
+      console.log(`🔑 보안 토큰 생성 성공 (길이: ${token.length})`);
+      return token;
+      
+    } catch (error: any) {
+      this.errorCount++;
+      console.error('❌ 보안 토큰 생성 실패:', error.message);
+      throw new Error(`보안 토큰 생성 실패: ${error.message}`);
+    }
   }
 
-  // ============================================================================
-  // 🗄️ 데이터 볼트용 특화 메서드
-  // ============================================================================
-
   /**
-   * 볼트 데이터 암호화 (메타데이터 포함)
+   * 🗄️ Vault 데이터 전용 암호화 (추가 보안 레이어)
    */
-  public encryptVaultData(data: any, vaultId: string, userDid: string): {
-    encryptedData: string;
-    metadata: {
-      vaultId: string;
-      userDid: string;
-      timestamp: string;
-      algorithm: string;
-    };
-  } {
+  public encryptVaultData(data: any): string {
     try {
+      this.lastOperation = 'encryptVaultData';
+      
       const jsonData = JSON.stringify(data);
-      const encryptedData = this.encryptData(jsonData);
-
-      return {
-        encryptedData,
-        metadata: {
-          vaultId,
-          userDid,
-          timestamp: new Date().toISOString(),
-          algorithm: CryptoService.ALGORITHM
-        }
-      };
-    } catch (error) {
-      console.error('❌ 볼트 데이터 암호화 실패:', error);
-      throw new Error('볼트 데이터 암호화에 실패했습니다');
-    }
-  }
-
-  /**
-   * 볼트 데이터 복호화
-   */
-  public decryptVaultData(encryptedData: string, metadata: any): any {
-    try {
-      const decryptedJson = this.decryptData(encryptedData);
-      return JSON.parse(decryptedJson);
-    } catch (error) {
-      console.error('❌ 볼트 데이터 복호화 실패:', error);
-      throw new Error('볼트 데이터 복호화에 실패했습니다');
-    }
-  }
-
-  // ============================================================================
-  // 🔧 간단하고 안전한 암호화 (추가 백업 방법)
-  // ============================================================================
-
-  /**
-   * 간단하고 안전한 암호화 (AES-192)
-   */
-  public simpleEncrypt(text: string): string {
-    try {
-      const cipher = crypto.createCipher('aes192', this.encryptionKey);
-      let encrypted = cipher.update(text, 'utf8', 'hex');
-      encrypted += cipher.final('hex');
-      return encrypted;
-    } catch (error) {
-      console.error('Simple encryption error:', error);
-      // Base64 인코딩으로 fallback (암호화 아님, 단순 인코딩)
-      return Buffer.from(text, 'utf8').toString('base64');
-    }
-  }
-
-  /**
-   * 간단하고 안전한 복호화
-   */
-  public simpleDecrypt(encryptedText: string): string {
-    try {
-      const decipher = crypto.createDecipher('aes192', this.encryptionKey);
-      let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
-      decrypted += decipher.final('utf8');
-      return decrypted;
-    } catch (error) {
-      console.error('Simple decryption error:', error);
-      // Base64 디코딩으로 fallback
-      try {
-        return Buffer.from(encryptedText, 'base64').toString('utf8');
-      } catch (base64Error) {
-        console.error('Base64 decoding also failed:', base64Error);
-        return encryptedText; // 실패시 원본 반환
-      }
-    }
-  }
-
-  // ============================================================================
-  // 📊 상태 및 유틸리티 메서드
-  // ============================================================================
-
-  /**
-   * 서비스 초기화 상태 확인
-   */
-  public isInitialized(): boolean {
-    return this.initialized;
-  }
-
-  /**
-   * 종합적인 암호화 테스트
-   */
-  public async testEncryption(): Promise<{
-    success: boolean;
-    performance: number;
-    details: string;
-  }> {
-    const startTime = Date.now();
-    
-    try {
-      console.log('🧪 CryptoService 암호화 테스트 시작...');
-      const testData = 'CryptoService 종합 테스트 데이터 🔐';
+      const timestamp = Date.now().toString();
+      const dataWithTimestamp = `${timestamp}:${jsonData}`;
       
-      // 1. 기본 암호화 테스트
+      return this.encrypt(dataWithTimestamp);
+      
+    } catch (error: any) {
+      this.errorCount++;
+      console.error('❌ Vault 데이터 암호화 실패:', error.message);
+      throw new Error(`Vault 데이터 암호화 실패: ${error.message}`);
+    }
+  }
+
+  /**
+   * 🗄️ Vault 데이터 전용 복호화
+   */
+  public decryptVaultData<T = any>(encryptedData: string): T {
+    try {
+      this.lastOperation = 'decryptVaultData';
+      
+      const decryptedData = this.decrypt(encryptedData);
+      const [timestamp, jsonData] = decryptedData.split(':', 2);
+      
+      if (!timestamp || !jsonData) {
+        throw new Error('Vault 데이터 형식이 잘못되었습니다');
+      }
+      
+      const data = JSON.parse(jsonData);
+      console.log(`🗄️ Vault 데이터 복호화 성공 (타임스탬프: ${new Date(parseInt(timestamp)).toISOString()})`);
+      
+      return data;
+      
+    } catch (error: any) {
+      this.errorCount++;
+      console.error('❌ Vault 데이터 복호화 실패:', error.message);
+      throw new Error(`Vault 데이터 복호화 실패: ${error.message}`);
+    }
+  }
+
+  /**
+   * 🧪 암호화 기능 테스트
+   */
+  public testEncryption(): { success: boolean; message: string; details: any } {
+    try {
+      console.log('🧪 암호화 기능 테스트 시작...');
+      
+      const testData = 'Hello, CryptoService Test! 🔐';
+      const testObject = { test: true, timestamp: Date.now(), data: [1, 2, 3] };
+      
+      // 1. 기본 암호화/복호화 테스트
       const encrypted = this.encrypt(testData);
-      console.log('✅ 기본 암호화 성공');
-      
-      // 2. 복호화 테스트
       const decrypted = this.decrypt(encrypted);
-      console.log('✅ 기본 복호화 성공');
       
-      // 3. 데이터 일치 확인
       if (decrypted !== testData) {
-        throw new Error('복호화된 데이터가 원본과 다릅니다');
+        throw new Error('기본 암호화/복호화 테스트 실패');
       }
-      console.log('✅ 데이터 일치 확인');
       
-      // 4. 간단 암호화 테스트
-      const simpleEncrypted = this.simpleEncrypt(testData);
-      const simpleDecrypted = this.simpleDecrypt(simpleEncrypted);
-      if (simpleDecrypted !== testData) {
-        throw new Error('간단 암호화 데이터 불일치');
+      // 2. 해시 테스트
+      const hash1 = this.hash(testData);
+      const hash2 = this.hash(testData);
+      
+      if (hash1 !== hash2) {
+        throw new Error('해시 일관성 테스트 실패');
       }
-      console.log('✅ 간단 암호화 테스트 성공');
       
-      // 5. 해시 테스트
-      const hash = this.hashData(testData);
-      if (hash.length !== 64) {
-        throw new Error('해시 길이가 올바르지 않습니다');
-      }
-      console.log('✅ 해시 생성 테스트 성공');
-      
-      // 6. UUID 생성 테스트
+      // 3. UUID 테스트
       const uuid = this.generateUUID();
-      if (!uuid || uuid.length !== 36) {
-        throw new Error('UUID 생성 실패');
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      
+      if (!uuidRegex.test(uuid)) {
+        throw new Error('UUID 형식 테스트 실패');
       }
-      console.log('✅ UUID 생성 테스트 성공');
       
-      // 7. 볼트 데이터 암호화 테스트
-      const vaultData = { test: 'vault data', items: ['item1', 'item2'] };
-      const vaultEncrypted = this.encryptVaultData(vaultData, 'test-vault', 'test-did');
-      const vaultDecrypted = this.decryptVaultData(
-        vaultEncrypted.encryptedData, 
-        vaultEncrypted.metadata
-      );
+      // 4. Vault 데이터 테스트
+      const encryptedVault = this.encryptVaultData(testObject);
+      const decryptedVault = this.decryptVaultData(encryptedVault);
       
-      if (JSON.stringify(vaultData) !== JSON.stringify(vaultDecrypted)) {
-        throw new Error('볼트 데이터 불일치');
+      if (JSON.stringify(decryptedVault) !== JSON.stringify(testObject)) {
+        throw new Error('Vault 데이터 테스트 실패');
       }
-      console.log('✅ 볼트 데이터 암호화 테스트 성공');
       
-      const endTime = Date.now();
-      const performance = endTime - startTime;
-      
-      const details = `모든 암호화 테스트 통과 (기본: ${encrypted.length}chars, 해시: ${hash.substring(0, 8)}..., UUID: ${uuid.substring(0, 8)}...)`;
-      
-      console.log(`🎯 암호화 테스트 완료: ${performance}ms`);
+      console.log('✅ 모든 암호화 기능 테스트 통과');
       
       return {
         success: true,
-        performance,
-        details
+        message: '모든 암호화 기능이 정상 작동합니다',
+        details: {
+          basicEncryption: true,
+          hashConsistency: true,
+          uuidGeneration: true,
+          vaultEncryption: true,
+          testDataLength: testData.length,
+          encryptedLength: encrypted.length,
+          hashLength: hash1.length,
+          uuid,
+          operationCount: this.operationCount
+        }
       };
+      
     } catch (error: any) {
-      const performance = Date.now() - startTime;
-      console.error('❌ 암호화 테스트 실패:', error.message);
+      this.errorCount++;
+      console.error('❌ 암호화 기능 테스트 실패:', error.message);
       
       return {
         success: false,
-        performance,
-        details: `테스트 실패: ${error.message}`
+        message: `암호화 기능 테스트 실패: ${error.message}`,
+        details: {
+          error: error.message,
+          operationCount: this.operationCount,
+          errorCount: this.errorCount
+        }
       };
     }
   }
 
   /**
-   * 서비스 정보 조회
+   * 📊 서비스 상태 조회 (헬스체크 호환)
    */
-  public getServiceInfo(): {
-    initialized: boolean;
-    algorithm: string;
-    hasEncryptionKey: boolean;
-    deprecationWarnings: boolean;
-    version: string;
-    features: string[];
-  } {
-    return {
-      initialized: this.initialized,
-      algorithm: CryptoService.ALGORITHM,
-      hasEncryptionKey: !!process.env.ENCRYPTION_KEY,
-      deprecationWarnings: false, // deprecated API 제거됨
-      version: '2.1.0',
-      features: [
-        'AES-256-GCM encryption',
-        'AES-256-CBC fallback',
-        'PBKDF2 key derivation',
-        'SHA-256 hashing',
-        'Secure random generation',
-        'Vault data encryption',
-        'Simple backup encryption',
-        'UUID generation',
-        'No deprecated APIs'
-      ]
+  public getStatus(): CryptoStatus {
+    const featuresAvailable = [];
+    
+    // 기능 가용성 체크
+    try {
+      crypto.randomBytes(1);
+      featuresAvailable.push('randomBytes');
+    } catch { /* ignore */ }
+    
+    try {
+      crypto.createHash('sha256');
+      featuresAvailable.push('hash');
+    } catch { /* ignore */ }
+    
+    try {
+      crypto.createCipherGCM('aes-256-gcm', Buffer.alloc(32), Buffer.alloc(16));
+      featuresAvailable.push('encryption');
+    } catch { /* ignore */ }
+    
+    try {
+      crypto.randomUUID();
+      featuresAvailable.push('uuid');
+    } catch { /* ignore */ }
+
+    const status: CryptoStatus = {
+      status: this.isInitialized ? (this.errorCount === 0 ? 'healthy' : 'warning') : 'error',
+      keyConfigured: !!this.encryptionKey && this.encryptionKey.length === 32,
+      keyLength: this.encryptionKey?.length || 0,
+      algorithm: this.config.algorithm,
+      featuresAvailable,
+      lastOperation: this.lastOperation,
+      operationCount: this.operationCount,
+      errors: this.errorCount,
+      timestamp: new Date().toISOString()
     };
+    
+    return status;
   }
 
   /**
-   * 서비스 상태 확인 (헬스체크용)
+   * 🧹 서비스 정리 (dispose 패턴)
    */
-  public getStatus(): any {
-    return {
-      initialized: this.initialized,
-      algorithm: CryptoService.ALGORITHM,
-      hasEncryptionKey: !!process.env.ENCRYPTION_KEY,
-      deprecationWarnings: false,
-      version: '2.1.0'
-    };
+  public dispose(): void {
+    console.log('🧹 CryptoService 정리 중...');
+    
+    // 메모리에서 키 제거 (보안)
+    if (this.encryptionKey) {
+      this.encryptionKey = '';
+    }
+    
+    this.isInitialized = false;
+    console.log('✅ CryptoService 정리 완료');
+  }
+
+  /**
+   * 🔄 서비스 재시작
+   */
+  public restart(): void {
+    console.log('🔄 CryptoService 재시작 중...');
+    
+    this.dispose();
+    
+    try {
+      this.encryptionKey = this.initializeEncryptionKey();
+      this.isInitialized = true;
+      this.operationCount = 0;
+      this.errorCount = 0;
+      this.lastOperation = null;
+      
+      console.log('✅ CryptoService 재시작 완료');
+    } catch (error: any) {
+      console.error('❌ CryptoService 재시작 실패:', error.message);
+      throw error;
+    }
   }
 }
 
 // ============================================================================
-// 🚀 기본 인스턴스 생성 및 Export
-// ============================================================================
-
-// 기본 인스턴스 생성
-export const cryptoService = CryptoService.getInstance();
-
-// 개발 환경에서 자동 테스트 실행
-if (process.env.NODE_ENV === 'development') {
-  cryptoService.testEncryption().then(testResult => {
-    console.log('🧪 CryptoService 테스트 결과:', testResult);
-    
-    if (testResult.success) {
-      console.log('🎉 CryptoService 완전 준비됨!');
-    } else {
-      console.log('⚠️ CryptoService 제한적 모드로 실행');
-    }
-  }).catch(error => {
-    console.error('❌ CryptoService 테스트 중 오류:', error);
-  });
-}
-
-// ============================================================================
-// 📋 Export
+// 📤 Export
 // ============================================================================
 
 export default CryptoService;
+
+// 하위 호환성을 위한 static 방식 접근
+export const CryptoUtils = {
+  encrypt: (text: string) => CryptoService.getInstance().encrypt(text),
+  decrypt: (encryptedData: string) => CryptoService.getInstance().decrypt(encryptedData),
+  hash: (data: string) => CryptoService.getInstance().hash(data),
+  generateUUID: () => CryptoService.getInstance().generateUUID(),
+  generateRandomBytes: (length: number) => CryptoService.getInstance().generateRandomBytes(length),
+  generateSecureToken: () => CryptoService.getInstance().generateSecureToken()
+};
+
+console.log('✅ CryptoService (올바른 ES 모듈 방식) 로드 완료');

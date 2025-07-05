@@ -3,7 +3,7 @@
 // 🔧 리팩토링된 AuthService - DI 패턴 적용, 순환 의존성 제거
 // ============================================================================
 
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { 
   User, 
   CreateUserData, 
@@ -13,7 +13,7 @@ import {
 } from '../../types/auth.types';
 import { AuthConfig } from '../../config/auth';
 import { DIContainer } from '../../core/DIContainer';
-import { CryptoService } from '../encryption/CryptoService';
+import * as CryptoService from 'crypto';
 
 /**
  * 인증 서비스 - 사용자 인증 비즈니스 로직
@@ -797,7 +797,7 @@ export class SessionService {
 // 🔧 리팩토링된 WebAuthnService - 최적화된 의존성
 // ============================================================================
 
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 
 /**
  * WebAuthn 서비스 - 패스키 인증 비즈니스 로직

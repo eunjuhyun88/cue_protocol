@@ -6,7 +6,7 @@
 // ✅ 해결: 기존 구조 보존하면서 중복 export만 제거
 // ============================================================================
 
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 
 export class AuthConfig {
   private static instance: AuthConfig;

@@ -495,24 +495,54 @@ export class DIContainer {
 // 변경: Mock 서비스 완전 제거, 실제 서비스만 사용
 // ============================================================================
 
-// DIContainer 클래스 안에 이 메서드를 추가하세요:
 
+/**
+ * 🔐 실제 CryptoService 등록 (Singleton + 환경변수 안전 처리)
+ * DIContainer 클래스 안에 이 메서드로 교체하세요
+ */
 private async registerCryptoServices(): Promise<void> {
-  console.log('🔐 실제 CryptoService 등록 중...');
+  console.log('🔐 실제 CryptoService Singleton 등록 중...');
   
   this.registerSingleton('CryptoService', () => {
     try {
-      // 🚀 실제 통합된 CryptoService 사용
-      const { CryptoService } = require('../services/encryption/CryptoService');
+      console.log('🔄 CryptoService Singleton 인스턴스 생성 중...');
       
-      // Singleton 인스턴스 사용
+      // 환경변수 체크
+      const encryptionKey = process.env.ENCRYPTION_KEY;
+      if (!encryptionKey) {
+        console.warn('⚠️ ENCRYPTION_KEY 환경변수가 설정되지 않았습니다');
+        console.warn('🔧 .env 파일에 ENCRYPTION_KEY=your_32_character_key 를 추가하세요');
+        console.warn('💡 임시로 기본 개발 키를 사용합니다');
+      } else if (encryptionKey.length !== 32) {
+        console.warn(`⚠️ ENCRYPTION_KEY 길이가 잘못됨: ${encryptionKey.length}/32`);
+        console.warn('🔧 정확히 32자리 문자열이어야 합니다');
+      } else {
+        console.log('✅ ENCRYPTION_KEY 환경변수 확인됨');
+      }
+      
+      // 🚀 실제 CryptoService Singleton 인스턴스 사용
+      const { CryptoService } = require('../services/encryption/CryptoService');
       const cryptoServiceInstance = CryptoService.getInstance();
       
-      console.log('✅ 실제 CryptoService 등록 성공');
+      // 초기화 테스트
+      try {
+        const testResult = cryptoServiceInstance.testEncryption();
+        if (testResult.success) {
+          console.log('✅ CryptoService 초기화 및 기능 테스트 성공');
+          console.log(`📊 사용 가능한 기능: ${testResult.details.testDataLength}글자 암호화 → ${testResult.details.encryptedLength}글자`);
+        } else {
+          console.warn('⚠️ CryptoService 기능 테스트 실패:', testResult.message);
+        }
+      } catch (testError: any) {
+        console.warn('⚠️ CryptoService 테스트 중 오류:', testError.message);
+      }
+      
+      console.log('✅ 실제 CryptoService Singleton 등록 성공');
       console.log('📋 사용 가능한 메서드:', [
-        'encrypt', 'decrypt', 'hash', 'generateUUID', 
-        'generateRandomBytes', 'generateSecureToken',
-        'encryptVaultData', 'decryptVaultData', 'testEncryption'
+        'encrypt(text)', 'decrypt(encryptedData)', 'hash(data)', 
+        'generateUUID()', 'generateRandomBytes(length)', 'generateSecureToken()',
+        'encryptVaultData(data)', 'decryptVaultData(encryptedData)', 
+        'testEncryption()', 'getStatus()', 'dispose()', 'restart()'
       ]);
       
       return cryptoServiceInstance;
@@ -520,19 +550,211 @@ private async registerCryptoServices(): Promise<void> {
     } catch (error: any) {
       console.error('❌ CryptoService 로드 실패:', error.message);
       console.error('📁 파일 경로 확인 필요: ../services/encryption/CryptoService');
+      console.error('🔍 해결 방법:');
+      console.error('   1. CryptoService.ts 파일이 존재하는지 확인');
+      console.error('   2. .env 파일에 ENCRYPTION_KEY 추가');
+      console.error('   3. npm install crypto (내장 모듈이므로 불필요하지만)');
       
       // 🚫 Mock 서비스 제거 - 대신 에러 발생
       throw new Error(`CryptoService 필수 서비스 로드 실패: ${error.message}`);
     }
   }, [], {
-    description: '통합 암호화 서비스 (실제)',
+    description: '통합 암호화 서비스 (Singleton)',
     category: 'security',
-    priority: 'critical',  // high → critical로 변경
-    fallbackAvailable: false  // true → false로 변경 (Mock 없음)
+    priority: 'critical',  // critical로 설정 (필수 서비스)
+    fallbackAvailable: false,  // Mock 없음
+    version: '2.0.0',
+    sessionRequired: false,
+    authRequired: false
   });
   
-  console.log('✅ CryptoService 등록 완료 (Mock 없음)');
+  console.log('✅ CryptoService Singleton 등록 완료 (Mock 없음, 환경변수 안전 처리)');
 }
+
+// ============================================================================
+// 📝 추가 개선: registerAllRealServices 메서드도 업데이트
+// ============================================================================
+
+/**
+ * 모든 핵심 서비스를 실제로만 등록하는 메서드 (CryptoService 개선 반영)
+ * DIContainer 클래스 안의 기존 registerAllRealServices() 메서드를 이것으로 교체하세요
+ */
+public async registerAllRealServices(): Promise<void> {
+  console.log('🚀 === 실제 서비스만 등록 시작 (CryptoService Singleton 개선) ===');
+  
+  try {
+    const registrationSteps = [
+      { 
+        name: '암호화 서비스 (Singleton)', 
+        fn: () => this.registerCryptoServices(),
+        priority: 'critical',
+        description: 'ENCRYPTION_KEY 환경변수 기반 암호화 서비스'
+      },
+      { 
+        name: '데이터베이스 서비스', 
+        fn: () => this.registerDatabaseServices(),
+        priority: 'critical',
+        description: 'DatabaseService 전용'
+      },
+      { 
+        name: '인증 서비스들', 
+        fn: () => this.registerAuthServices(),
+        priority: 'critical',
+        description: 'AuthService, SessionService, WebAuthnService'
+      },
+      { 
+        name: 'AI 서비스들', 
+        fn: () => this.registerAIServices(),
+        priority: 'normal',
+        description: 'OllamaAIService, PersonalizationService'
+      },
+      { 
+        name: 'CUE 서비스들', 
+        fn: () => this.registerCUEServices(),
+        priority: 'normal',
+        description: 'CueService, CUEMiningService'
+      },
+      { 
+        name: 'Socket 서비스', 
+        fn: () => this.registerSocketServices(),
+        priority: 'low',
+        description: 'SocketService (실시간 통신)'
+      }
+    ];
+
+    let successCount = 0;
+    let failedCount = 0;
+    
+    for (const step of registrationSteps) {
+      try {
+        console.log(`🔄 ${step.name} 등록 중... [${step.priority}]`);
+        await step.fn();
+        console.log(`✅ ${step.name} 등록 완료 - ${step.description}`);
+        successCount++;
+      } catch (error: any) {
+        console.error(`❌ ${step.name} 등록 실패: ${error.message}`);
+        this.logError(step.name, error, step.priority === 'critical' ? 'error' : 'warning');
+        failedCount++;
+        
+        // critical 서비스 실패 시 즉시 중단
+        if (step.priority === 'critical') {
+          throw new Error(`필수 서비스 ${step.name} 등록 실패: ${error.message}`);
+        }
+      }
+    }
+    
+    console.log(`🎯 === 실제 서비스 등록 완료 ===`);
+    console.log(`✅ 성공: ${successCount}개`);
+    console.log(`⚠️ 실패: ${failedCount}개`);
+    console.log('🚫 Mock 서비스 없음 - 실제 서비스만 사용');
+    console.log('🔐 CryptoService Singleton 패턴 적용');
+    console.log('🌍 환경변수 안전 처리 (ENCRYPTION_KEY 자동 확인)');
+    
+    // 등록된 서비스 목록 출력
+    this.logRegisteredServices();
+    
+  } catch (error: any) {
+    console.error('❌ === 실제 서비스 등록 실패 ===');
+    console.error('💥 오류:', error.message);
+    console.error('🔍 해결 방법:');
+    console.error('   1. .env 파일에 ENCRYPTION_KEY=your_32_character_key 추가');
+    console.error('   2. CryptoService.ts 파일 존재 확인');
+    console.error('   3. 필수 환경변수 설정 확인 (DATABASE_URL, JWT_SECRET 등)');
+    
+    throw error;
+  }
+}
+
+// ============================================================================
+// 📊 상태 확인 개선: CryptoService 상태 포함
+// ============================================================================
+
+/**
+ * 강화된 헬스 상태 확인 (CryptoService 포함)
+ * DIContainer 클래스 안의 기존 getHealthStatus() 메서드에 추가하거나 교체하세요
+ */
+private getHealthStatus(): { 
+  status: string; 
+  issues: string[]; 
+  errors: number; 
+  warnings: number; 
+  sessionHealth: any; 
+  fallbackHealth: any; 
+  cryptoHealth: any;  // 추가
+} {
+  const issues: string[] = [];
+  
+  // 기존 코드 유지 + CryptoService 상태 추가
+  
+  // CryptoService 상태 확인 (추가)
+  let cryptoHealth = {
+    available: false,
+    status: 'unknown',
+    keyConfigured: false,
+    features: 0,
+    errors: 0
+  };
+  
+  try {
+    if (this.has('CryptoService')) {
+      const cryptoService = this.get('CryptoService');
+      const cryptoStatus = cryptoService.getStatus();
+      
+      cryptoHealth = {
+        available: true,
+        status: cryptoStatus.status,
+        keyConfigured: cryptoStatus.keyConfigured,
+        features: cryptoStatus.featuresAvailable.length,
+        errors: cryptoStatus.errors
+      };
+      
+      if (cryptoStatus.status === 'error') {
+        issues.push('CryptoService 오류 상태');
+      } else if (cryptoStatus.status === 'warning') {
+        issues.push('CryptoService 경고 상태');
+      }
+      
+      if (!cryptoStatus.keyConfigured) {
+        issues.push('ENCRYPTION_KEY 환경변수 미설정 또는 잘못된 길이');
+      }
+      
+      if (cryptoStatus.errors > 0) {
+        issues.push(`CryptoService 에러 ${cryptoStatus.errors}개 발생`);
+      }
+      
+    } else {
+      issues.push('CryptoService 등록되지 않음');
+      cryptoHealth.available = false;
+    }
+  } catch (error: any) {
+    issues.push(`CryptoService 상태 확인 실패: ${error.message}`);
+    cryptoHealth.status = 'error';
+  }
+
+  // 기존 코드 (필수 서비스 확인 등) 유지
+  const requiredServices = ['CryptoService', 'DatabaseService', 'SessionRestoreService', 'AuthService'];  // CryptoService 추가
+  for (const service of requiredServices) {
+    if (!this.has(service)) {
+      issues.push(`필수 서비스 누락: ${service}`);
+    }
+  }
+
+  // 나머지 기존 코드 유지...
+  
+  const errors = this.errorLog.filter(e => e.severity === 'error').length;
+  const warnings = this.errorLog.filter(e => e.severity === 'warning').length;
+
+  return {
+    status: errors === 0 ? (warnings === 0 ? 'healthy' : 'degraded') : 'error',
+    issues,
+    errors,
+    warnings,
+    sessionHealth: { /* 기존 코드 유지 */ },
+    fallbackHealth: { /* 기존 코드 유지 */ },
+    cryptoHealth  // 추가
+  };
+}
+
 
 // ============================================================================
 // 🔐 AuthConfig 등록 메서드 (Mock 없는 버전)

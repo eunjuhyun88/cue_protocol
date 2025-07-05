@@ -3,7 +3,7 @@
 // 🔑 세션 관리 서비스 - AuthService 의존성 제거 버전
 // ============================================================================
 
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 
 /**

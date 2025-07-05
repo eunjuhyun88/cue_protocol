@@ -20,7 +20,7 @@ console.log('🗄️ Vault routes initialized');
 // GET /api/vault/:did
 // ============================================================================
 
-router.get('/:did', async (req: Request, res: Response) => {
+router.get('/:did', async (req: Request, res: Response): Promise<void> => {
   try {
     const { did } = req.params;
     const { category, search, limit = 20, offset = 0 } = req.query;
@@ -100,7 +100,7 @@ router.get('/:did', async (req: Request, res: Response) => {
 // POST /api/vault
 // ============================================================================
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
     const {
       userDid,
@@ -207,7 +207,7 @@ router.post('/', async (req: Request, res: Response) => {
 // POST /api/vault/search
 // ============================================================================
 
-router.post('/search', async (req: Request, res: Response) => {
+router.post('/search', async (req: Request, res: Response): Promise<void> => {
   try {
     const { userDid, query, categories = [], limit = 10 } = req.body;
 
@@ -264,7 +264,7 @@ router.post('/search', async (req: Request, res: Response) => {
 // PUT /api/vault/:vaultId
 // ============================================================================
 
-router.put('/:vaultId', async (req: Request, res: Response) => {
+router.put('/:vaultId', async (req: Request, res: Response): Promise<void> => {
   try {
     const { vaultId } = req.params;
     const updates = req.body;
@@ -331,7 +331,7 @@ router.put('/:vaultId', async (req: Request, res: Response) => {
 // DELETE /api/vault/:vaultId
 // ============================================================================
 
-router.delete('/:vaultId', async (req: Request, res: Response) => {
+router.delete('/:vaultId', async (req: Request, res: Response): Promise<void> => {
   try {
     const { vaultId } = req.params;
     const { userDid } = req.query;
@@ -390,7 +390,7 @@ router.delete('/:vaultId', async (req: Request, res: Response) => {
 // GET /api/vault/:did/stats
 // ============================================================================
 
-router.get('/:did/stats', async (req: Request, res: Response) => {
+router.get('/:did/stats', async (req: Request, res: Response): Promise<void> => {
   try {
     const { did } = req.params;
 

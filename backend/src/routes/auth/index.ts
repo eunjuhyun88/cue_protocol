@@ -9,7 +9,7 @@ import databaseService from '../../services/database/DatabaseService';
 import { authMiddleware } from '../../middleware/authMiddleware';
 import { asyncHandler } from '../../middleware/errorHandler';
 import { v4 as uuidv4 } from 'uuid';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 
 const router: Router = express.Router();

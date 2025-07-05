@@ -14,6 +14,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { getDatabaseService } from '../../services/database/DatabaseService'; // ✅ 실제 DatabaseService 사용
+import * as crypto from 'crypto';
 
 const router = Router();
 
@@ -709,4 +710,4 @@ setInterval(() => {
 console.log('✅ WebAuthn 라우트 로딩 완료 (실제 DB 연동)');
 
 // ✅ 올바른 기본 내보내기
-export default router;
+export default WebAuthnService;

@@ -24,7 +24,6 @@ let Database: any;
 try {
   Database = require('../../types/database.types').Database;
 } catch {
-  Database = any;
   console.log('⚠️ database.types를 찾을 수 없어 any 타입 사용');
 }
 

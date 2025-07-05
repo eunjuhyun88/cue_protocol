@@ -1,11 +1,10 @@
 // ============================================================================
-// 📁 src/services/api/BackendAPIClient.ts
-// 🔧 완전한 백엔드 API 클라이언트 (영구 세션 + 자동 복원 + Mock 폴백)
+// 📁 frontend/src/services/api/BackendAPIClient.ts
+// 🔧 완전한 백엔드 API 클라이언트 (Mock 응답 제거, 모든 기능 유지)
 // ============================================================================
 
 'use client';
 
-import { PersistentDataAPIClient } from './PersistentDataAPIClient';
 import type { 
   HealthCheckResult, 
   SessionRestoreResult, 
@@ -13,16 +12,29 @@ import type {
   AuthConfig 
 } from '../../types/auth.types';
 
-export class BackendAPIClient extends PersistentDataAPIClient {
+export class BackendAPIClient {
+  protected baseURL: string;
+  protected headers: Record<string, string>;
+  protected websocket: WebSocket | null = null;
+  protected listeners: Map<string, (data: any) => void> = new Map();
+  protected reconnectAttempts: number = 0;
+  protected maxReconnectAttempts: number = 5;
+  
   private config: AuthConfig;
   private requestStats: any;
 
-  constructor(baseURL = 'http://localhost:3001') {
-    super(baseURL);
+  constructor(baseURL?: string) {
+    // 환경 변수 또는 기본 URL 사용
+    this.baseURL = baseURL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    this.headers = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Origin': typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+    };
     
     this.config = {
-      backendURL: baseURL,
-      enableMockMode: true,
+      backendURL: this.baseURL,
+      enableMockMode: false, // Mock 비활성화
       sessionTimeout: 30 * 24 * 60 * 60 * 1000, // 30일
       maxRetryAttempts: 3,
       retryDelay: 1000
@@ -38,6 +50,9 @@ export class BackendAPIClient extends PersistentDataAPIClient {
     
     console.log(`🔗 BackendAPIClient 초기화: ${this.baseURL}`);
     
+    // 페이지 로드 시 세션 토큰 확인
+    this.initializeSession();
+    
     // 페이지 숨김/복원 시 자동 재연결
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
@@ -49,345 +64,356 @@ export class BackendAPIClient extends PersistentDataAPIClient {
   }
 
   // ============================================================================
-  // 🔧 확장된 API 메서드들
+  // 🔧 세션 관리
+  // ============================================================================
+
+  private initializeSession(): void {
+    if (typeof window !== 'undefined') {
+      const token = this.getSessionToken();
+      if (token) {
+        this.setAuthHeader(token);
+        console.log('💾 기존 세션 토큰 로드됨');
+      }
+    }
+  }
+
+  setSessionToken(token: string): void {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('ai_passport_session_token', token);
+      this.setAuthHeader(token);
+      console.log('💾 세션 토큰 저장됨');
+    }
+  }
+
+  getSessionToken(): string | null {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('ai_passport_session_token');
+    }
+    return null;
+  }
+
+  clearSessionToken(): void {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('ai_passport_session_token');
+      this.removeAuthHeader();
+      console.log('🗑️ 세션 토큰 삭제됨');
+    }
+  }
+
+  private setAuthHeader(token: string): void {
+    this.headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  private removeAuthHeader(): void {
+    delete this.headers['Authorization'];
+  }
+
+  // ============================================================================
+  // 🌐 기본 HTTP 메서드들
+  // ============================================================================
+
+  protected async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const startTime = Date.now();
+    this.requestStats.totalRequests++;
+    
+    try {
+      const url = `${this.baseURL}${endpoint}`;
+      console.log(`🌐 API 요청: ${options.method || 'GET'} ${url}`);
+      
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...this.headers,
+          ...options.headers
+        },
+        mode: 'cors',
+        credentials: 'include'
+      });
+
+      const responseTime = Date.now() - startTime;
+      console.log(`📡 응답 상태: ${response.status} ${response.statusText} (${responseTime}ms)`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ HTTP 오류: ${response.status}`, errorText);
+        
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { error: errorText || `HTTP ${response.status}` };
+        }
+        
+        this.requestStats.failedRequests++;
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log(`✅ API 응답 성공:`, data);
+      
+      this.requestStats.successfulRequests++;
+      this.updateRequestStats(true, responseTime);
+      
+      return data;
+    } catch (error: any) {
+      const responseTime = Date.now() - startTime;
+      console.error(`❌ API 오류 (${endpoint}):`, error);
+      
+      this.requestStats.failedRequests++;
+      this.updateRequestStats(false, responseTime);
+      
+      // 네트워크 오류 처리
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        throw new Error(`네트워크 연결 오류: 백엔드 서버(${this.baseURL})에 연결할 수 없습니다.`);
+      }
+      
+      throw error;
+    }
+  }
+
+  async get<T = any>(endpoint: string): Promise<T> {
+    return this.request<T>(endpoint, { method: 'GET' });
+  }
+
+  async post<T = any>(endpoint: string, data?: any): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'POST',
+      body: data ? JSON.stringify(data) : undefined
+    });
+  }
+
+  async put<T = any>(endpoint: string, data?: any): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'PUT',
+      body: data ? JSON.stringify(data) : undefined
+    });
+  }
+
+  async delete<T = any>(endpoint: string): Promise<T> {
+    return this.request<T>(endpoint, { method: 'DELETE' });
+  }
+
+  // ============================================================================
+  // 🔧 확장된 API 메서드들 (실제 구현만)
   // ============================================================================
 
   /**
    * 파일 업로드 (멀티파트 지원)
    */
   async uploadFile(file: File, userDid: string): Promise<any> {
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('userDid', userDid);
-      formData.append('timestamp', new Date().toISOString());
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('userDid', userDid);
+    formData.append('timestamp', new Date().toISOString());
 
-      return await this.request('/api/files/upload', {
-        method: 'POST',
-        body: formData,
-        headers: {} // FormData는 Content-Type 자동 설정
-      });
-    } catch (error) {
-      return {
-        success: false,
-        error: 'File upload failed',
-        fallback: true,
-        mockUrl: `mock://uploads/${file.name}`,
-        fileId: `mock_${Date.now()}_${file.name}`
-      };
-    }
+    return await this.request('/api/files/upload', {
+      method: 'POST',
+      body: formData,
+      headers: {} // FormData는 Content-Type 자동 설정
+    });
   }
 
   /**
    * 사용자 프로필 조회
    */
   async getUserProfile(userId: string): Promise<any> {
-    try {
-      return await this.get(`/api/users/${userId}/profile`);
-    } catch (error) {
-      return {
-        id: userId,
-        username: `User_${userId.slice(-4)}`,
-        email: 'mock@cueprotocol.ai',
-        display_name: 'Mock User',
-        avatar_url: null,
-        bio: 'Mock user profile for testing',
-        location: 'Virtual Space',
-        website: 'https://cueprotocol.ai',
-        twitter_handle: null,
-        github_username: null,
-        preferences: {
-          theme: 'auto',
-          language: 'ko',
-          notifications: true,
-          privacy_level: 'private'
-        },
-        stats: {
-          total_conversations: Math.floor(Math.random() * 500) + 50,
-          cue_tokens_earned: Math.floor(Math.random() * 10000) + 1000,
-          platforms_connected: Math.floor(Math.random() * 5) + 1,
-          achievements_unlocked: Math.floor(Math.random() * 10) + 3
-        },
-        createdAt: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString(),
-        lastActive: new Date().toISOString(),
-        fallback: true
-      };
-    }
+    return await this.get(`/api/users/${userId}/profile`);
   }
 
   /**
    * 사용자 프로필 업데이트
    */
   async updateUserProfile(userId: string, updates: any): Promise<any> {
-    try {
-      return await this.put(`/api/users/${userId}/profile`, updates);
-    } catch (error) {
-      return {
-        success: false,
-        error: 'Profile update failed',
-        fallback: true,
-        updatedFields: Object.keys(updates),
-        timestamp: new Date().toISOString()
-      };
-    }
+    return await this.put(`/api/users/${userId}/profile`, updates);
   }
 
   /**
    * 메시지 조회 (채팅 기록)
    */
   async getMessages(userDid: string, limit: number = 50, offset: number = 0): Promise<any> {
-    try {
-      return await this.get(`/api/messages/${userDid}?limit=${limit}&offset=${offset}`);
-    } catch (error) {
-      return {
-        messages: this.generateMockMessages(limit),
-        total: limit * 3,
-        hasMore: offset + limit < limit * 3,
-        pagination: {
-          limit,
-          offset,
-          total: limit * 3,
-          pages: Math.ceil((limit * 3) / limit)
-        },
-        fallback: true
-      };
-    }
+    return await this.get(`/api/messages/${userDid}?limit=${limit}&offset=${offset}`);
   }
 
   /**
    * 메시지 저장
    */
   async saveMessage(userDid: string, message: any): Promise<any> {
-    try {
-      return await this.post('/api/messages', {
-        userDid,
-        ...message,
-        saved_at: new Date().toISOString()
-      });
-    } catch (error) {
-      return {
-        success: false,
-        error: 'Message save failed',
-        messageId: `mock_${Date.now()}`,
-        fallback: true
-      };
-    }
+    return await this.post('/api/messages', {
+      userDid,
+      ...message,
+      saved_at: new Date().toISOString()
+    });
   }
 
   /**
    * CUE 거래 내역 조회
    */
   async getCueTransactions(userDid: string, limit: number = 20): Promise<any> {
-    try {
-      return await this.get(`/api/cue/transactions/${userDid}?limit=${limit}`);
-    } catch (error) {
-      return {
-        transactions: this.generateMockCueTransactions(limit),
-        summary: {
-          total_earned: Math.floor(Math.random() * 50000) + 10000,
-          total_spent: Math.floor(Math.random() * 10000) + 1000,
-          average_daily: Math.floor(Math.random() * 200) + 50,
-          best_day: Math.floor(Math.random() * 500) + 100,
-          streak_days: Math.floor(Math.random() * 30) + 5
-        },
-        total: limit * 2,
-        fallback: true
-      };
-    }
+    return await this.get(`/api/cue/transactions/${userDid}?limit=${limit}`);
   }
 
   /**
    * 연결된 플랫폼 조회
    */
   async getConnectedPlatforms(userDid: string): Promise<any> {
-    try {
-      return await this.get(`/api/platforms/${userDid}`);
-    } catch (error) {
-      return {
-        platforms: [
-          { 
-            id: 'chatgpt',
-            name: 'ChatGPT', 
-            connected: true, 
-            lastSync: new Date().toISOString(),
-            status: 'active',
-            data_synced: Math.floor(Math.random() * 1000) + 100,
-            cue_earned: Math.floor(Math.random() * 5000) + 500,
-            health: 'good'
-          },
-          { 
-            id: 'claude',
-            name: 'Claude', 
-            connected: true, 
-            lastSync: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-            status: 'active',
-            data_synced: Math.floor(Math.random() * 800) + 200,
-            cue_earned: Math.floor(Math.random() * 3000) + 300,
-            health: 'good'
-          },
-          { 
-            id: 'discord',
-            name: 'Discord', 
-            connected: false, 
-            lastSync: null,
-            status: 'disconnected',
-            data_synced: 0,
-            cue_earned: 0,
-            health: 'disconnected'
-          }
-        ],
-        total_connected: 2,
-        total_available: 8,
-        sync_status: 'healthy',
-        fallback: true
-      };
-    }
+    return await this.get(`/api/platforms/${userDid}`);
   }
 
   /**
    * 플랫폼 연결
    */
   async connectPlatform(userDid: string, platform: string, credentials: any): Promise<any> {
-    try {
-      return await this.post('/api/platforms/connect', {
-        userDid,
-        platform,
-        credentials,
-        connected_at: new Date().toISOString()
-      });
-    } catch (error) {
-      return {
-        success: false,
-        error: 'Platform connection failed',
-        platform,
-        retry_after: 60000, // 1분 후 재시도
-        fallback: true
-      };
-    }
+    return await this.post('/api/platforms/connect', {
+      userDid,
+      platform,
+      credentials,
+      connected_at: new Date().toISOString()
+    });
   }
 
   /**
    * 데이터 볼트 조회
    */
   async getDataVaults(userDid: string): Promise<any> {
-    try {
-      return await this.get(`/api/vaults/${userDid}`);
-    } catch (error) {
-      return {
-        vaults: [
-          {
-            id: 'identity_vault',
-            name: 'Identity Vault',
-            type: 'identity',
-            size: '2.3MB',
-            items: 47,
-            encrypted: true,
-            access_level: 'private',
-            created_at: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-            lastUpdated: new Date().toISOString(),
-            health: 'excellent',
-            backup_status: 'synced'
-          },
-          {
-            id: 'knowledge_vault',
-            name: 'Knowledge Vault',
-            type: 'knowledge',
-            size: '15.7MB',
-            items: 234,
-            encrypted: true,
-            access_level: 'private',
-            created_at: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString(),
-            lastUpdated: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-            health: 'good',
-            backup_status: 'synced'
-          },
-          {
-            id: 'preference_vault',
-            name: 'Preference Vault',
-            type: 'preference',
-            size: '1.2MB',
-            items: 89,
-            encrypted: true,
-            access_level: 'private',
-            created_at: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
-            lastUpdated: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            health: 'excellent',
-            backup_status: 'synced'
-          }
-        ],
-        total_size: '19.2MB',
-        total_items: 370,
-        encryption_status: 'all_encrypted',
-        backup_health: 'excellent',
-        fallback: true
-      };
-    }
+    return await this.get(`/api/vaults/${userDid}`);
   }
 
   /**
    * 데이터 볼트 업데이트
    */
   async updateDataVault(userDid: string, vaultId: string, data: any): Promise<any> {
-    try {
-      return await this.put(`/api/vaults/${userDid}/${vaultId}`, data);
-    } catch (error) {
-      return {
-        success: false,
-        error: 'Vault update failed',
-        vaultId,
-        attempted_changes: Object.keys(data),
-        fallback: true
-      };
-    }
+    return await this.put(`/api/vaults/${userDid}/${vaultId}`, data);
   }
 
   /**
    * RAG-DAG 통계 조회
    */
   async getRAGDAGStats(userDid: string): Promise<any> {
-    try {
-      return await this.get(`/api/rag-dag/${userDid}/stats`);
-    } catch (error) {
-      return {
-        learning_stats: {
-          learned_concepts: 247 + Math.floor(Math.random() * 100),
-          connection_strength: 0.87 + Math.random() * 0.13,
-          knowledge_nodes: 1456 + Math.floor(Math.random() * 500),
-          personality_accuracy: 0.94 + Math.random() * 0.06,
-          adaptation_rate: 0.82 + Math.random() * 0.18
-        },
-        recent_activity: {
-          last_learning: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-          concepts_today: Math.floor(Math.random() * 10) + 3,
-          quality_score: 0.91 + Math.random() * 0.09,
-          learning_velocity: 'accelerating'
-        },
-        knowledge_graph: {
-          total_nodes: 1456 + Math.floor(Math.random() * 500),
-          total_edges: 3420 + Math.floor(Math.random() * 1000),
-          cluster_count: 23 + Math.floor(Math.random() * 10),
-          avg_connectivity: 0.68 + Math.random() * 0.32
-        },
-        fallback: true
-      };
-    }
+    return await this.get(`/api/rag-dag/${userDid}/stats`);
   }
 
   /**
    * RAG-DAG 업데이트
    */
   async updateRAGDAG(userDid: string, conversationData: any): Promise<any> {
+    return await this.post(`/api/rag-dag/${userDid}/update`, conversationData);
+  }
+
+  // ============================================================================
+  // 🔌 연결 상태 확인
+  // ============================================================================
+
+  async checkConnection(): Promise<{ 
+    connected: boolean; 
+    status?: string; 
+    error?: string;
+    timestamp: string;
+  }> {
     try {
-      return await this.post(`/api/rag-dag/${userDid}/update`, conversationData);
-    } catch (error) {
+      console.log('🔌 백엔드 연결 상태 확인...');
+      
+      const response = await this.get<{ status: string }>('/api/debug/health');
+      
+      console.log('✅ 백엔드 연결 성공:', response);
+      
       return {
-        success: false,
-        error: 'RAG-DAG update failed',
-        processed_concepts: Math.floor(Math.random() * 5) + 1,
-        new_connections: Math.floor(Math.random() * 3),
-        fallback: true
+        connected: true,
+        status: response.status || 'healthy',
+        timestamp: new Date().toISOString()
+      };
+    } catch (error: any) {
+      console.warn('⚠️ 백엔드 연결 실패:', error.message);
+      
+      return {
+        connected: false,
+        error: error.message,
+        timestamp: new Date().toISOString()
       };
     }
+  }
+
+  async healthCheck(): Promise<any> {
+    return this.checkConnection();
+  }
+
+  // ============================================================================
+  // 🔄 WebSocket 실시간 통신
+  // ============================================================================
+
+  connectWebSocket(): void {
+    if (typeof window === 'undefined') return;
+    
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      console.log('🔌 WebSocket 이미 연결됨');
+      return;
+    }
+
+    try {
+      const wsUrl = this.baseURL.replace('http', 'ws') + '/ws';
+      console.log(`🔌 WebSocket 연결 시도: ${wsUrl}`);
+      
+      this.websocket = new WebSocket(wsUrl);
+      
+      this.websocket.onopen = () => {
+        console.log('✅ WebSocket 연결됨');
+        this.reconnectAttempts = 0;
+      };
+      
+      this.websocket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('📡 WebSocket 메시지:', data);
+          this.listeners.forEach(callback => callback(data));
+        } catch (error) {
+          console.error('❌ WebSocket 메시지 파싱 오류:', error);
+        }
+      };
+      
+      this.websocket.onclose = () => {
+        console.log('⚠️ WebSocket 연결 종료됨');
+        this.attemptReconnect();
+      };
+      
+      this.websocket.onerror = (error) => {
+        console.error('❌ WebSocket 오류:', error);
+      };
+      
+    } catch (error) {
+      console.error('❌ WebSocket 연결 실패:', error);
+    }
+  }
+
+  private attemptReconnect(): void {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.log('🛑 WebSocket 재연결 시도 한계 도달');
+      return;
+    }
+
+    this.reconnectAttempts++;
+    const delay = Math.pow(2, this.reconnectAttempts) * 1000; // 지수 백오프
+    
+    console.log(`🔄 WebSocket 재연결 시도 ${this.reconnectAttempts}/${this.maxReconnectAttempts} (${delay}ms 후)`);
+    
+    setTimeout(() => {
+      this.connectWebSocket();
+    }, delay);
+  }
+
+  onRealtimeUpdate(callback: (data: any) => void): () => void {
+    const id = Math.random().toString(36);
+    this.listeners.set(id, callback);
+    console.log(`📝 실시간 리스너 등록: ${id}`);
+    
+    // WebSocket 연결이 없으면 연결 시도
+    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+      this.connectWebSocket();
+    }
+    
+    // 정리 함수 반환
+    return () => {
+      this.listeners.delete(id);
+      console.log(`🗑️ 실시간 리스너 삭제: ${id}`);
+    };
   }
 
   // ============================================================================
@@ -458,8 +484,8 @@ export class BackendAPIClient extends PersistentDataAPIClient {
     
     const healthCheck = async () => {
       try {
-        const health = await this.checkHealth();
-        console.log(`💓 Health Check: ${health.connected ? '✅' : '❌'} ${health.mode}`);
+        const health = await this.checkConnection();
+        console.log(`💓 Health Check: ${health.connected ? '✅' : '❌'}`);
         
         // 연결 복구 시 WebSocket 재연결
         if (health.connected && !this.websocket) {
@@ -467,7 +493,7 @@ export class BackendAPIClient extends PersistentDataAPIClient {
         }
 
         // 통계 업데이트
-        this.updateRequestStats(health.connected, health.responseTime || 0);
+        this.updateRequestStats(health.connected, 0);
         
       } catch (error) {
         console.warn('⚠️ Health Check 실패:', error);
@@ -496,15 +522,11 @@ export class BackendAPIClient extends PersistentDataAPIClient {
    * 요청 통계 업데이트
    */
   private updateRequestStats(success: boolean, responseTime: number): void {
-    this.requestStats.totalRequests++;
     this.requestStats.lastRequestTime = new Date().toISOString();
     
     if (success) {
-      this.requestStats.successfulRequests++;
       const totalTime = this.requestStats.averageResponseTime * (this.requestStats.successfulRequests - 1) + responseTime;
       this.requestStats.averageResponseTime = totalTime / this.requestStats.successfulRequests;
-    } else {
-      this.requestStats.failedRequests++;
     }
 
     // localStorage에 저장
@@ -540,7 +562,6 @@ export class BackendAPIClient extends PersistentDataAPIClient {
   getDebugInfo(): any {
     const sessionInfo = this.getSessionInfo();
     const stats = this.getRequestStats();
-    const mockCredential = this.getOrCreateMockCredential();
     
     return {
       client: 'BackendAPIClient',
@@ -550,74 +571,101 @@ export class BackendAPIClient extends PersistentDataAPIClient {
       websocketState: this.websocket?.readyState,
       listenerCount: this.listeners.size,
       reconnectAttempts: this.reconnectAttempts,
-      mockCredential,
       timestamp: new Date().toISOString()
     };
   }
 
-  // ============================================================================
-  // 🔧 Mock 데이터 생성 헬퍼들
-  // ============================================================================
-
   /**
-   * Mock 메시지 생성
+   * 세션 정보 (실제 데이터 기반)
    */
-  private generateMockMessages(count: number): any[] {
-    const messages = [];
-    const sampleContents = [
-      'CUE Protocol에 대해 설명해줘',
-      'AI 개인화가 어떻게 작동하나요?',
-      'RAG-DAG 시스템의 장점은 무엇인가요?',
-      'WebAuthn 인증이 안전한 이유는?',
-      '블록체인과 AI가 어떻게 결합되나요?'
-    ];
-
-    for (let i = 0; i < count; i++) {
-      const isUser = i % 2 === 0;
-      messages.push({
-        id: `mock_msg_${i}`,
-        userDid: 'mock_user_did',
-        type: isUser ? 'user' : 'ai',
-        content: isUser 
-          ? sampleContents[i % sampleContents.length]
-          : `AI 응답: ${sampleContents[i % sampleContents.length]}에 대한 상세한 설명입니다.`,
-        timestamp: new Date(Date.now() - (count - i) * 60000).toISOString(),
-        model: isUser ? null : 'gpt-4o',
-        cue_earned: isUser ? 0 : Math.floor(Math.random() * 10) + 1,
-        quality_score: isUser ? null : 0.8 + Math.random() * 0.2
-      });
+  getSessionInfo(): any {
+    const token = this.getSessionToken();
+    if (!token) {
+      return {
+        sessionId: null,
+        userId: null,
+        loginTime: null,
+        expiresAt: null,
+        isActive: false,
+        deviceInfo: {
+          platform: typeof navigator !== 'undefined' ? navigator.platform : 'unknown',
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'
+        }
+      };
     }
 
-    return messages;
+    // JWT 토큰 디코딩 시도 (간단한 버전)
+    try {
+      const payload = token.split('.')[1];
+      const decoded = JSON.parse(atob(payload));
+      
+      return {
+        sessionId: decoded.sessionId || token.substring(0, 16) + '...',
+        userId: decoded.userId || decoded.sub,
+        loginTime: decoded.iat ? new Date(decoded.iat * 1000).toISOString() : null,
+        expiresAt: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : null,
+        isActive: decoded.exp ? Date.now() < decoded.exp * 1000 : true,
+        deviceInfo: {
+          platform: typeof navigator !== 'undefined' ? navigator.platform : 'unknown',
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'
+        }
+      };
+    } catch (error) {
+      // JWT 디코딩 실패 시 기본 정보
+      return {
+        sessionId: token.substring(0, 16) + '...',
+        userId: 'unknown',
+        loginTime: null,
+        expiresAt: null,
+        isActive: true,
+        deviceInfo: {
+          platform: typeof navigator !== 'undefined' ? navigator.platform : 'unknown',
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'
+        }
+      };
+    }
+  }
+
+  // ============================================================================
+  // 🔧 유틸리티 메서드들
+  // ============================================================================
+
+  getBaseURL(): string {
+    return this.baseURL;
+  }
+
+  setCustomHeader(key: string, value: string): void {
+    this.headers[key] = value;
+    console.log(`📝 커스텀 헤더 설정: ${key} = ${value}`);
+  }
+
+  getHeaders(): Record<string, string> {
+    return { ...this.headers };
   }
 
   /**
-   * Mock CUE 거래 내역 생성
+   * WebSocket 연결 해제
    */
-  private generateMockCueTransactions(count: number): any[] {
-    const transactions = [];
-    const activities = [
-      'AI 채팅 마이닝', '고품질 대화 보너스', '연속 활동 보너스',
-      '새로운 플랫폼 연결', 'RAG-DAG 기여', '데이터 볼트 업데이트',
-      '친구 추천 보너스', '일일 로그인 보너스', '업적 달성 보너스'
-    ];
-
-    for (let i = 0; i < count; i++) {
-      const isEarned = Math.random() > 0.2; // 80% earned, 20% spent
-      transactions.push({
-        id: `mock_tx_${i}`,
-        userDid: 'mock_user_did',
-        type: isEarned ? 'earned' : 'spent',
-        amount: Math.floor(Math.random() * 20) + 1,
-        activity: activities[Math.floor(Math.random() * activities.length)],
-        description: isEarned ? '마이닝으로 획득' : '기능 사용으로 소모',
-        timestamp: new Date(Date.now() - i * 3600000).toISOString(),
-        quality_score: isEarned ? 0.7 + Math.random() * 0.3 : null,
-        platform: Math.random() > 0.5 ? 'ChatGPT' : 'Claude'
-      });
+  disconnectWebSocket(): void {
+    if (this.websocket) {
+      this.websocket.close();
+      this.websocket = null;
+      this.listeners.clear();
+      console.log('🔌 WebSocket 연결 해제됨');
     }
+  }
 
-    return transactions.reverse(); // 최신순 정렬
+  // ============================================================================
+  // 🧹 정리 및 종료
+  // ============================================================================
+
+  dispose(): void {
+    if (this.websocket) {
+      this.websocket.close();
+      this.websocket = null;
+    }
+    this.listeners.clear();
+    console.log('🧹 BackendAPIClient 정리 완료');
   }
 }
 
