@@ -8,7 +8,6 @@ import express from 'express';
 import cors from 'cors';
 import { Request, Response, NextFunction } from 'express';
 import { DatabaseService } from './services/database/DatabaseService';
-import { supabaseService } from './services/database/SupabaseService';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
