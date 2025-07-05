@@ -13,6 +13,9 @@ import {
 } from '../../types/auth.types';
 import { AuthConfig } from '../../config/auth';
 
+import { DIContainer } from '../../core/DIContainer';
+import { CryptoService } from '../encryption/CryptoService';
+
 /**
  * 인증 서비스 - 사용자 인증 비즈니스 로직
  * DI 패턴 적용으로 순환 의존성 제거

@@ -396,7 +396,81 @@ ${config.errors.length > 0 ? '- Errors: ' + config.errors.join(', ') : ''}
     `.trim();
   }
 }
+// ============================================================================
+// 📁 backend/src/config/auth.ts - AuthConfig 수정
+// 수정 위치: 기존 파일에 webAuthn 설정 추가
+// ============================================================================
 
+export class AuthConfig {
+  private static instance: AuthConfig;
+  
+  public readonly jwt: {
+    secret: string;
+    expiresIn: string;
+  };
+  
+  public readonly webAuthn: {
+    rpName: string;
+    rpID: string;
+    origin: string;
+    timeout: number;
+  };
+
+  private constructor() {
+    // JWT 설정
+    this.jwt = {
+      secret: process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production',
+      expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+    };
+
+    // WebAuthn 설정 (핵심 추가!)
+    this.webAuthn = {
+      rpName: process.env.WEBAUTHN_RP_NAME || 'AI Personal Assistant',
+      rpID: process.env.WEBAUTHN_RP_ID || 'localhost',
+      origin: process.env.WEBAUTHN_ORIGIN || 'http://localhost:3000',
+      timeout: parseInt(process.env.WEBAUTHN_TIMEOUT || '60000')
+    };
+
+    console.log('🔐 AuthConfig 초기화 완료:', {
+      jwtConfigured: !!this.jwt.secret,
+      webAuthnRP: this.webAuthn.rpName,
+      webAuthnOrigin: this.webAuthn.origin
+    });
+  }
+
+  public static getInstance(): AuthConfig {
+    if (!AuthConfig.instance) {
+      AuthConfig.instance = new AuthConfig();
+    }
+    return AuthConfig.instance;
+  }
+
+  /**
+   * 세션 토큰 생성
+   */
+  public generateSessionToken(payload: any): string {
+    try {
+      const jwt = require('jsonwebtoken');
+      return jwt.sign(payload, this.jwt.secret, { expiresIn: this.jwt.expiresIn });
+    } catch (error) {
+      console.error('❌ JWT 토큰 생성 실패:', error);
+      return '';
+    }
+  }
+
+  /**
+   * 세션 토큰 검증
+   */
+  public verifySessionToken(token: string): any {
+    try {
+      const jwt = require('jsonwebtoken');
+      return jwt.verify(token, this.jwt.secret);
+    } catch (error) {
+      console.error('❌ JWT 토큰 검증 실패:', error);
+      return null;
+    }
+  }
+}
 // ============================================================================
 // 📤 Export 및 초기화
 // ============================================================================

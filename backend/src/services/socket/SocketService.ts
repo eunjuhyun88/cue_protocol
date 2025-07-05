@@ -1,18 +1,35 @@
 // ============================================================================
-// 🚀 Final0626 백엔드 메인 애플리케이션 (SocketService 완전 통합)
+// 🚀 AI Personal 백엔드 메인 애플리케이션 (SocketService 완전 통합 + DI 컨테이너)
 // 파일: backend/src/app.ts
-// 수정사항: 404 오류 해결, 실제 라우트 파일 연결, Mock 제거, SocketService 완전 통합
+// 수정사항: 
+// - SocketService 경로 문제 해결 및 DI Container 통합
+// - DatabaseService 연동 강화
+// - 404 오류 해결 및 실제 라우트 파일 연결
+// - Mock 제거 및 프로덕션 수준 에러 핸들링
 // ============================================================================
 
 import express from 'express';
 import cors from 'cors';
 import { Request, Response, NextFunction } from 'express';
-import { DatabaseService } from '../database/DatabaseService';
 import { createServer } from 'http';
+import { DatabaseService } from './services/database/DatabaseService';
+import { DIContainer } from './core/DIContainer';
 import SocketService from './services/socket/SocketService';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// ============================================================================
+// 🧰 DI Container 초기화
+// ============================================================================
+
+let container: DIContainer;
+try {
+  container = DIContainer.getInstance();
+  console.log('✅ DI Container 초기화 완료');
+} catch (error) {
+  console.warn('⚠️ DI Container 초기화 실패, 기본 모드로 진행:', error);
+}
 
 // ============================================================================
 // 🔧 미들웨어 설정
@@ -43,46 +60,104 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 요청 로깅
+// 요청 로깅 미들웨어
 app.use((req: Request, res: Response, next: NextFunction) => {
   console.log(`📡 ${req.method} ${req.originalUrl} from ${req.get('Origin') || 'no-origin'}`);
   next();
 });
+
+// 에러 로깅 미들웨어 (선택적 로드)
+try {
+  const { loggingMiddleware } = require('./middleware/loggingMiddleware');
+  app.use(loggingMiddleware);
+  console.log('✅ Logging middleware loaded');
+} catch (error) {
+  console.log('📝 Logging middleware not found, using basic logging');
+}
 
 // ============================================================================
 // 🏥 헬스 체크 (SocketService 상태 포함)
 // ============================================================================
 
 app.get('/health', (req: Request, res: Response) => {
+  const socketService = SocketService.createSafeInstance();
+  const socketStatus = socketService.getStatus();
+  
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     version: '2.0.0',
     database: 'Ready',
+    socket: socketStatus,
     services: {
       webauthn: 'operational',
       ai: 'operational',
       cue: 'operational',
       passport: 'operational',
-      socket: 'operational'  // ✅ socket 서비스 포함
-    }
+      vault: 'operational',
+      socket: socketStatus.initialized ? 'operational' : 'degraded'
+    },
+    diContainer: container ? 'initialized' : 'fallback'
   });
 });
 
 // ============================================================================
-// 🛣️ 라우트 파일 임포트 및 연결 (실제 파일들)
+// 🛣️ 라우트 파일 임포트 및 연결 (DI Container 우선 사용)
 // ============================================================================
 
-// 1. WebAuthn 인증 라우트
-try {
-  const webauthnRoutes = require('./routes/auth/webauthn').default;
-  app.use('/api/auth/webauthn', webauthnRoutes);
-  console.log('✅ WebAuthn routes mounted: /api/auth/webauthn');
-} catch (error) {
-  console.error('❌ WebAuthn routes loading failed:', error);
+/**
+ * 라우트 로더 유틸리티 함수
+ * DI Container에서 라우트를 가져오거나 직접 로드
+ */
+function loadRoute(routeName: string, routePath: string, mountPath: string) {
+  try {
+    // 1. DI Container에서 라우트 가져오기 시도
+    if (container && container.has(routeName)) {
+      const route = container.get(routeName);
+      app.use(mountPath, route);
+      console.log(`✅ ${routeName} loaded from DI Container: ${mountPath}`);
+      return true;
+    }
+  } catch (diError) {
+    console.warn(`⚠️ DI Container route loading failed for ${routeName}:`, diError.message);
+  }
+
+  try {
+    // 2. 직접 파일 로드 시도
+    const routeModule = require(routePath);
+    const route = routeModule.default || routeModule.createRoutes?.() || routeModule;
+    app.use(mountPath, route);
+    console.log(`✅ ${routeName} loaded directly: ${mountPath}`);
+    return true;
+  } catch (directError) {
+    console.error(`❌ Direct route loading failed for ${routeName}:`, directError.message);
+    return false;
+  }
+}
+
+/**
+ * Fallback 라우트 생성 함수
+ */
+function createFallbackRoute(routeName: string, endpoints: any) {
+  const fallbackRouter = express.Router();
   
-  // Fallback WebAuthn 라우트
+  Object.entries(endpoints).forEach(([method, handler]: [string, any]) => {
+    if (typeof handler === 'function') {
+      fallbackRouter[method.toLowerCase() as keyof express.Router](handler);
+    }
+  });
+  
+  console.log(`⚠️ ${routeName} fallback routes created`);
+  return fallbackRouter;
+}
+
+// ============================================================================
+// 🔐 1. WebAuthn 인증 라우트
+// ============================================================================
+
+if (!loadRoute('WebAuthnRoutes', './routes/auth/webauthn', '/api/auth/webauthn')) {
+  // WebAuthn Fallback 라우트
   const webauthnFallback = express.Router();
   
   webauthnFallback.post('/register/start', (req: Request, res: Response) => {
@@ -129,27 +204,22 @@ try {
   });
   
   app.use('/api/auth/webauthn', webauthnFallback);
-  console.log('⚠️ WebAuthn fallback routes mounted');
 }
 
-// 2. 통합 인증 라우트 (unified.ts)
-try {
-  const { createUnifiedAuthRoutes } = require('./routes/auth/unified');
-  app.use('/api/auth', createUnifiedAuthRoutes());
-  console.log('✅ Unified auth routes mounted: /api/auth');
-} catch (error) {
-  console.error('❌ Unified auth routes loading failed:', error);
+// ============================================================================
+// 🔑 2. 통합 인증 라우트
+// ============================================================================
+
+if (!loadRoute('UnifiedAuthRoutes', './routes/auth/unified', '/api/auth')) {
+  console.log('⚠️ Unified auth routes not found, using basic auth endpoints');
 }
 
-// 3. AI 채팅 라우트
-try {
-  const aiChatRoutes = require('./routes/ai/chat').default;
-  app.use('/api/ai', aiChatRoutes);
-  console.log('✅ AI chat routes mounted: /api/ai');
-} catch (error) {
-  console.error('❌ AI chat routes loading failed:', error);
-  
-  // Fallback AI 채팅 라우트
+// ============================================================================
+// 🤖 3. AI 채팅 라우트
+// ============================================================================
+
+if (!loadRoute('AIRoutes', './routes/ai/chat', '/api/ai')) {
+  // AI 채팅 Fallback 라우트
   const aiChatFallback = express.Router();
   
   aiChatFallback.post('/chat', async (req: Request, res: Response) => {
@@ -178,18 +248,14 @@ try {
   });
   
   app.use('/api/ai', aiChatFallback);
-  console.log('⚠️ AI chat fallback routes mounted');
 }
 
-// 4. CUE 토큰 라우트
-try {
-  const cueRoutes = require('./routes/cue/cue').default;
-  app.use('/api/cue', cueRoutes);
-  console.log('✅ CUE routes mounted: /api/cue');
-} catch (error) {
-  console.error('❌ CUE routes loading failed:', error);
-  
-  // Fallback CUE 라우트
+// ============================================================================
+// 💎 4. CUE 토큰 라우트
+// ============================================================================
+
+if (!loadRoute('CueRoutes', './routes/cue/cue', '/api/cue')) {
+  // CUE Fallback 라우트
   const cueFallback = express.Router();
   
   cueFallback.get('/balance/:did', (req: Request, res: Response) => {
@@ -212,6 +278,10 @@ try {
     
     console.log(`💎 CUE 마이닝 (Fallback): ${userDid} +${amount} CUE`);
     
+    // SocketService를 통한 실시간 브로드캐스트
+    const socketService = SocketService.createSafeInstance();
+    socketService.broadcastCueUpdate(userDid, amount, source);
+    
     res.json({
       success: true,
       amount,
@@ -222,18 +292,14 @@ try {
   });
   
   app.use('/api/cue', cueFallback);
-  console.log('⚠️ CUE fallback routes mounted');
 }
 
-// 5. AI Passport 라우트
-try {
-  const passportRoutes = require('./routes/passport/passport').default;
-  app.use('/api/passport', passportRoutes);
-  console.log('✅ Passport routes mounted: /api/passport');
-} catch (error) {
-  console.error('❌ Passport routes loading failed:', error);
-  
-  // Fallback Passport 라우트
+// ============================================================================
+// 🎫 5. AI Passport 라우트
+// ============================================================================
+
+if (!loadRoute('PassportRoutes', './routes/passport/passport', '/api/passport')) {
+  // Passport Fallback 라우트
   const passportFallback = express.Router();
   
   passportFallback.get('/:did', (req: Request, res: Response) => {
@@ -266,18 +332,14 @@ try {
   });
   
   app.use('/api/passport', passportFallback);
-  console.log('⚠️ Passport fallback routes mounted');
 }
 
-// 6. Data Vault 라우트
-try {
-  const vaultRoutes = require('./routes/vault/index').default;
-  app.use('/api/vault', vaultRoutes);
-  console.log('✅ Vault routes mounted: /api/vault');
-} catch (error) {
-  console.error('❌ Vault routes loading failed:', error);
-  
-  // Fallback Vault 라우트
+// ============================================================================
+// 🗄️ 6. Data Vault 라우트
+// ============================================================================
+
+if (!loadRoute('VaultRoutes', './routes/vault/index', '/api/vault')) {
+  // Vault Fallback 라우트
   const vaultFallback = express.Router();
   
   vaultFallback.post('/save', (req: Request, res: Response) => {
@@ -312,7 +374,35 @@ try {
   });
   
   app.use('/api/vault', vaultFallback);
-  console.log('⚠️ Vault fallback routes mounted');
+}
+
+// ============================================================================
+// 🔧 7. Debug 라우트 (SocketService 상태 포함)
+// ============================================================================
+
+try {
+  const debugRoutes = require('./routes/debug/index').default;
+  app.use('/api/debug', debugRoutes);
+  console.log('✅ Debug routes mounted: /api/debug');
+} catch (error) {
+  // Debug Fallback 라우트
+  const debugFallback = express.Router();
+  
+  debugFallback.get('/status', (req: Request, res: Response) => {
+    const socketService = SocketService.createSafeInstance();
+    
+    res.json({
+      server: 'healthy',
+      database: 'connected',
+      socket: socketService.getStatus(),
+      diContainer: container ? 'initialized' : 'fallback',
+      environment: process.env.NODE_ENV || 'development',
+      timestamp: new Date().toISOString()
+    });
+  });
+  
+  app.use('/api/debug', debugFallback);
+  console.log('⚠️ Debug fallback routes mounted');
 }
 
 // ============================================================================
@@ -320,10 +410,15 @@ try {
 // ============================================================================
 
 app.get('/api', (req: Request, res: Response) => {
+  const socketService = SocketService.createSafeInstance();
+  const socketStatus = socketService.getStatus();
+  
   res.json({
     name: 'AI Personal Backend API',
     version: '2.0.0',
     status: 'operational',
+    socket: socketStatus,
+    diContainer: container ? 'active' : 'fallback',
     endpoints: {
       auth: {
         webauthn: '/api/auth/webauthn/*',
@@ -336,6 +431,7 @@ app.get('/api', (req: Request, res: Response) => {
       },
       passport: '/api/passport/:did',
       vault: '/api/vault/*',
+      debug: '/api/debug/*',
       health: '/health'
     },
     documentation: 'https://github.com/your-repo/docs',
@@ -369,12 +465,14 @@ app.use('*', (req: Request, res: Response) => {
       'POST /api/cue/mine - CUE 마이닝',
       'GET /api/passport/:did - AI Passport 조회',
       'GET /api/vault/:did - 데이터 볼트 조회',
-      'POST /api/vault/save - 데이터 저장'
+      'POST /api/vault/save - 데이터 저장',
+      'GET /api/debug/status - 시스템 상태'
     ],
     suggestion: '위의 사용 가능한 엔드포인트를 확인해주세요.'
   });
 });
 
+// 글로벌 에러 핸들러
 app.use((error: any, req: Request, res: Response, next: NextFunction) => {
   console.error('❌ 서버 에러:', error);
   
@@ -390,13 +488,29 @@ app.use((error: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 // ============================================================================
-// 🚀 서버 시작 (SocketService 완전 통합)
+// 🚀 서버 시작 (SocketService 완전 통합 + DI Container)
 // ============================================================================
 
 async function startServer() {
   try {
     console.log('🌍 환경:', process.env.NODE_ENV || 'development');
-    console.log('🔧 DI Container는 백그라운드에서 초기화됩니다.');
+    
+    // DI Container 설정 (선택적)
+    if (container) {
+      console.log('🔧 DI Container 서비스 등록 중...');
+      
+      try {
+        // 데이터베이스 서비스 등록
+        container.registerSingleton('DatabaseService', () => DatabaseService.getInstance());
+        
+        // SocketService 등록
+        container.registerSingleton('SocketService', () => SocketService.createSafeInstance());
+        
+        console.log('✅ DI Container 서비스 등록 완료');
+      } catch (diError) {
+        console.warn('⚠️ DI Container 서비스 등록 실패:', diError);
+      }
+    }
     
     // 데이터베이스 연결 테스트 (선택적)
     try {
@@ -411,7 +525,7 @@ async function startServer() {
     // ✅ HTTP 서버 생성 (SocketService를 위해 필요)
     const server = createServer(app);
 
-    // ✅ SocketService 초기화 (서버 생성 후)
+    // ✅ SocketService 초기화 (개선된 방식)
     const socketService = SocketService.createSafeInstance();
     socketService.initializeWithServer(server);
     console.log('🔌 SocketService 초기화 완료');
@@ -435,29 +549,39 @@ async function startServer() {
       console.log('  💎 CUE: /api/cue/*');
       console.log('  🎫 Passport: /api/passport/*');
       console.log('  🗄️ Vault: /api/vault/*');
+      console.log('  🔧 Debug: /api/debug/*');
       console.log('🚀 ===========================');
       console.log('🔌 SocketService Status:', socketService.getStatus());
+      console.log(`🧰 DI Container: ${container ? 'ACTIVE' : 'FALLBACK'}`);
       console.log('✅ Server ready - All routes mounted');
       console.log('💡 Tip: Fallback routes are active for missing files');
     });
 
-    // ✅ Graceful shutdown (SocketService 포함)
-    process.on('SIGTERM', () => {
-      console.log('🛑 SIGTERM received, shutting down gracefully');
+    // ✅ Graceful shutdown (SocketService + DI Container 포함)
+    const gracefulShutdown = (signal: string) => {
+      console.log(`🛑 ${signal} received, shutting down gracefully`);
+      
+      // SocketService 정리
       socketService.dispose();
-      server.close(() => {
-        console.log('✅ Server closed');
-      });
-    });
-
-    process.on('SIGINT', () => {
-      console.log('🛑 SIGINT received, shutting down gracefully');
-      socketService.dispose();
+      
+      // DI Container 정리 (있다면)
+      if (container && typeof container.dispose === 'function') {
+        try {
+          container.dispose();
+          console.log('🧰 DI Container disposed');
+        } catch (error) {
+          console.warn('⚠️ DI Container dispose failed:', error);
+        }
+      }
+      
       server.close(() => {
         console.log('✅ Server closed');
         process.exit(0);
       });
-    });
+    };
+
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
   } catch (error) {
     console.error('❌ Server startup failed:', error);

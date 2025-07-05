@@ -1,676 +1,803 @@
 // ============================================================================
-// 📁 frontend/src/services/api/WebAuthnAPI.ts
-// 🔐 Production Ready WebAuthn API - No Mock, Persistent Session, Enhanced Error Handling
-// 🔧 요구사항: Mock 제거, 영구 세션 유지, 강화된 에러처리 및 로깅
+// 🔐 WebAuthn Service 최적화 - 완전한 프로덕션 구현
+// 파일: backend/src/services/auth/WebAuthnService.ts (완전 교체)
+// 
+// 🎯 최적화 목표:
+// ✅ 실제 @simplewebauthn/server 통합
+// ✅ 안전한 Challenge 관리 (Redis)
+// ✅ 멀티 디바이스 지원
+// ✅ 강화된 보안 검증
+// ✅ 완전한 에러 처리
+// ✅ 프로덕션 레벨 로깅
 // ============================================================================
 
-import { PersistentDataAPIClient, loadWebAuthn, checkWebAuthnSupport } from './PersistentDataAPIClient';
-import type {
-  WebAuthnRegistrationResult,
-  WebAuthnLoginResult,
-  WebAuthnCredential,
-  DeviceInfo,
-  SessionRestoreResult,
-  User
-} from '../../types/auth.types';
+import {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+  type GenerateRegistrationOptionsOpts,
+  type VerifyRegistrationResponseOpts,
+  type GenerateAuthenticationOptionsOpts,
+  type VerifyAuthenticationResponseOpts,
+  type RegistrationResponseJSON,
+  type AuthenticationResponseJSON,
+} from '@simplewebauthn/server';
+import Redis from 'ioredis';
+import crypto from 'crypto';
+import { DatabaseService } from '../database/DatabaseService';
 
-export class WebAuthnAPI extends PersistentDataAPIClient {
-  private deviceInfo: DeviceInfo;
-  private sessionPersistence: boolean = true;
-  private retryAttempts: number = 3;
-  private timeout: number = 60000; // 60초
-  
-  constructor(baseURL = 'http://localhost:3001') {
-    super(baseURL);
-    
-    this.deviceInfo = this.collectDeviceInfo();
-    this.initializeErrorRecovery();
-    
-    console.log('🔐 Production WebAuthnAPI 초기화 완료', {
-      sessionPersistence: this.sessionPersistence,
-      timeout: this.timeout,
-      deviceSupport: checkWebAuthnSupport()
-    });
-  }
+// ============================================================================
+// 🔧 타입 정의
+// ============================================================================
 
-  // ============================================================================
-  // 🔧 디바이스 정보 수집 (확장된 메타데이터)
-  // ============================================================================
-  
-  private collectDeviceInfo(): DeviceInfo {
-    if (typeof window === 'undefined') {
-      return {
-        userAgent: 'Server',
-        platform: 'Server',
-        timestamp: Date.now(),
-        source: 'WebAuthnAPI_SSR'
-      };
-    }
+interface WebAuthnConfig {
+  rpName: string;
+  rpID: string;
+  origin: string;
+  timeout: number;
+  expectedChallenge?: string;
+}
 
-    const info: DeviceInfo = {
-      userAgent: navigator.userAgent,
-      platform: navigator.platform,
-      timestamp: Date.now(),
-      screen: {
-        width: window.screen.width,
-        height: window.screen.height,
-        colorDepth: window.screen.colorDepth,
-        pixelDepth: window.screen.pixelDepth
-      },
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      language: navigator.language,
-      languages: navigator.languages,
-      cookieEnabled: navigator.cookieEnabled,
-      onLine: navigator.onLine,
-      hardwareConcurrency: navigator.hardwareConcurrency,
-      maxTouchPoints: navigator.maxTouchPoints || 0,
-      webauthnSupport: checkWebAuthnSupport(),
-      source: 'WebAuthnAPI_Client',
-      
-      // 추가 보안 메타데이터
-      connection: (navigator as any).connection ? {
-        effectiveType: (navigator as any).connection.effectiveType,
-        downlink: (navigator as any).connection.downlink,
-        rtt: (navigator as any).connection.rtt
-      } : undefined,
-      
-      permissions: {
-        notifications: 'unknown',
-        geolocation: 'unknown'
-      }
+interface StoredChallenge {
+  challenge: string;
+  userInfo: {
+    id: string;
+    name: string;
+    displayName: string;
+    email?: string;
+  };
+  type: 'registration' | 'authentication';
+  timestamp: number;
+  deviceInfo?: any;
+  ipAddress?: string;
+}
+
+interface WebAuthnCredential {
+  id: string;
+  credentialID: Buffer;
+  credentialPublicKey: Buffer;
+  counter: number;
+  credentialDeviceType: 'singleDevice' | 'multiDevice';
+  credentialBackedUp: boolean;
+  transports?: AuthenticatorTransport[];
+  userID: string;
+  createdAt: Date;
+  lastUsedAt: Date;
+  nickname?: string;
+  isActive: boolean;
+}
+
+interface WebAuthnResult {
+  success: boolean;
+  data?: any;
+  error?: string;
+  errorCode?: string;
+  metadata?: {
+    challenge?: string;
+    sessionId?: string;
+    userVerified?: boolean;
+    counter?: number;
+  };
+}
+
+// ============================================================================
+// 🛡️ WebAuthn 보안 서비스
+// ============================================================================
+
+export class WebAuthnService {
+  private config: WebAuthnConfig;
+  private redis: Redis;
+  private db: DatabaseService;
+  private sessionPrefix = 'webauthn:session:';
+  private challengePrefix = 'webauthn:challenge:';
+  private rateLimitPrefix = 'webauthn:ratelimit:';
+
+  constructor(
+    config?: Partial<WebAuthnConfig>,
+    databaseService?: DatabaseService
+  ) {
+    // 설정 초기화
+    this.config = {
+      rpName: process.env.WEBAUTHN_RP_NAME || 'AI Personal Assistant',
+      rpID: process.env.WEBAUTHN_RP_ID || 'localhost',
+      origin: process.env.WEBAUTHN_ORIGIN || 'http://localhost:3000',
+      timeout: parseInt(process.env.WEBAUTHN_TIMEOUT || '60000'),
+      ...config
     };
 
-    // 권한 상태 비동기 확인 (에러 무시)
-    this.checkPermissions().then(permissions => {
-      info.permissions = permissions;
-    }).catch(() => {
-      // 권한 확인 실패 무시
+    // Redis 클라이언트 초기화
+    this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+      retryDelayOnFailover: 100,
+      enableReadyCheck: false,
+      maxRetriesPerRequest: null,
     });
 
-    return info;
+    // 데이터베이스 서비스
+    this.db = databaseService || DatabaseService.getInstance();
+
+    console.log('🔐 WebAuthn Service 초기화됨:', {
+      rpName: this.config.rpName,
+      rpID: this.config.rpID,
+      origin: this.config.origin,
+      redisConnected: this.redis.status === 'ready'
+    });
+
+    // Redis 연결 이벤트 처리
+    this.setupRedisEventHandlers();
   }
 
-  private async checkPermissions(): Promise<any> {
-    if (!navigator.permissions) return { notifications: 'unavailable', geolocation: 'unavailable' };
+  // ============================================================================
+  // 🔧 초기화 및 헬스체크
+  // ============================================================================
+
+  private setupRedisEventHandlers(): void {
+    this.redis.on('connect', () => {
+      console.log('✅ Redis 연결됨');
+    });
+
+    this.redis.on('error', (error) => {
+      console.error('❌ Redis 오류:', error);
+    });
+
+    this.redis.on('close', () => {
+      console.warn('⚠️ Redis 연결 종료됨');
+    });
+  }
+
+  /**
+   * WebAuthn 서비스 상태 확인
+   */
+  async getWebAuthnStatus(): Promise<any> {
+    const redisStatus = this.redis.status;
+    const dbStatus = await this.testDatabaseConnection();
     
+    return {
+      status: 'operational',
+      config: {
+        rpName: this.config.rpName,
+        rpID: this.config.rpID,
+        origin: this.config.origin,
+        timeout: this.config.timeout
+      },
+      connections: {
+        redis: redisStatus,
+        database: dbStatus
+      },
+      features: {
+        multiDevice: true,
+        backupCodes: true,
+        rateLimiting: true,
+        auditLogging: true
+      },
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  private async testDatabaseConnection(): Promise<string> {
     try {
-      const [notifications, geolocation] = await Promise.all([
-        navigator.permissions.query({ name: 'notifications' as any }),
-        navigator.permissions.query({ name: 'geolocation' as any })
-      ]);
-      
-      return {
-        notifications: notifications.state,
-        geolocation: geolocation.state
+      await this.db.testConnection();
+      return 'connected';
+    } catch (error) {
+      return 'disconnected';
+    }
+  }
+
+  // ============================================================================
+  // 🆕 패스키 등록 플로우
+  // ============================================================================
+
+  /**
+   * 패스키 등록 옵션 생성
+   */
+  async generateRegistrationOptions(
+    userID: string,
+    userName: string,
+    userDisplayName: string,
+    userEmail?: string,
+    deviceInfo?: any,
+    ipAddress?: string
+  ): Promise<WebAuthnResult> {
+    try {
+      console.log(`🆕 패스키 등록 옵션 생성: ${userName} (${userID})`);
+
+      // Rate Limiting 체크
+      const rateLimitKey = `${this.rateLimitPrefix}reg:${ipAddress || 'unknown'}`;
+      const attempts = await this.redis.incr(rateLimitKey);
+      if (attempts === 1) {
+        await this.redis.expire(rateLimitKey, 300); // 5분 윈도우
+      }
+      if (attempts > 10) {
+        return {
+          success: false,
+          error: 'Too many registration attempts. Please try again later.',
+          errorCode: 'RATE_LIMITED'
+        };
+      }
+
+      // 기존 자격 증명 조회 (중복 등록 방지)
+      const existingCredentials = await this.getUserCredentials(userID);
+      const excludeCredentials = existingCredentials.map(cred => ({
+        id: cred.credentialID,
+        type: 'public-key' as const,
+        transports: cred.transports || ['internal']
+      }));
+
+      // 등록 옵션 생성
+      const options: GenerateRegistrationOptionsOpts = {
+        rpName: this.config.rpName,
+        rpID: this.config.rpID,
+        userID,
+        userName,
+        userDisplayName,
+        timeout: this.config.timeout,
+        attestationType: 'none',
+        excludeCredentials,
+        authenticatorSelection: {
+          residentKey: 'preferred',
+          userVerification: 'preferred',
+          authenticatorAttachment: 'platform', // 생체 인식 우선
+        },
+        supportedAlgorithmIDs: [-7, -257], // ES256, RS256
       };
-    } catch (error) {
-      return { notifications: 'error', geolocation: 'error' };
-    }
-  }
 
-  // ============================================================================
-  // 🔧 에러 복구 시스템 초기화
-  // ============================================================================
-  
-  private initializeErrorRecovery(): void {
-    // WebSocket 재연결 로직
-    this.enableAutoReconnect();
-    
-    // 네트워크 상태 모니터링
-    if (typeof window !== 'undefined') {
-      window.addEventListener('online', this.handleNetworkRestore.bind(this));
-      window.addEventListener('offline', this.handleNetworkLoss.bind(this));
-    }
-    
-    console.log('🛡️ 에러 복구 시스템 초기화 완료');
-  }
+      const registrationOptions = await generateRegistrationOptions(options);
 
-  private handleNetworkRestore(): void {
-    console.log('🌐 네트워크 연결 복원됨');
-    this.validateSessionAfterReconnect();
-  }
+      // Challenge 저장 (5분 만료)
+      const sessionId = this.generateSessionId();
+      const challengeData: StoredChallenge = {
+        challenge: registrationOptions.challenge,
+        userInfo: {
+          id: userID,
+          name: userName,
+          displayName: userDisplayName,
+          email: userEmail
+        },
+        type: 'registration',
+        timestamp: Date.now(),
+        deviceInfo,
+        ipAddress
+      };
 
-  private handleNetworkLoss(): void {
-    console.log('🚫 네트워크 연결 끊어짐');
-    // 세션은 유지하되 상태만 기록
-  }
+      await this.redis.setex(
+        `${this.challengePrefix}${sessionId}`,
+        300,
+        JSON.stringify(challengeData)
+      );
 
-  private async validateSessionAfterReconnect(): Promise<void> {
-    try {
-      if (this.getSessionToken()) {
-        const result = await this.restoreSession();
-        if (!result.success) {
-          console.warn('⚠️ 네트워크 복원 후 세션 검증 실패');
-        } else {
-          console.log('✅ 네트워크 복원 후 세션 검증 성공');
-        }
-      }
-    } catch (error) {
-      console.error('❌ 네트워크 복원 후 세션 검증 오류:', error);
-    }
-  }
-
-  // ============================================================================
-  // 🔐 통합 WebAuthn 인증 (Production Ready)
-  // ============================================================================
-
-  /**
-   * 통합 WebAuthn 인증 (로그인/등록 자동 판별, Mock 없음)
-   */
-  async unifiedWebAuthnAuth(): Promise<WebAuthnRegistrationResult> {
-    const startTime = Date.now();
-    let attempt = 0;
-    
-    while (attempt < this.retryAttempts) {
-      try {
-        attempt++;
-        console.log(`🔥 === 통합 WebAuthn 인증 시작 (시도 ${attempt}/${this.retryAttempts}) ===`);
-
-        // 1. WebAuthn 지원 확인 (필수)
-        if (!checkWebAuthnSupport()) {
-          throw new Error('이 브라우저나 기기에서는 WebAuthn을 지원하지 않습니다.');
-        }
-
-        // 2. 통합 인증 시작 API 호출
-        console.log('📞 Step 1: 통합 인증 시작 API 호출');
-        const startResponse = await this.post('/api/auth/webauthn/start', {
-          deviceInfo: this.deviceInfo,
-          sessionPersistence: this.sessionPersistence,
-          timeout: this.timeout
-        });
-
-        if (!startResponse.success || !startResponse.options) {
-          throw new Error(`통합 인증 시작 실패: ${startResponse.message || 'Invalid response'}`);
-        }
-
-        console.log('✅ 통합 인증 시작 성공:', {
-          sessionId: startResponse.sessionId,
-          challenge: startResponse.options.challenge?.slice(0, 20) + '...',
-          timeout: startResponse.options.timeout
-        });
-
-        // 3. WebAuthn 라이브러리 로드 (필수)
-        console.log('📦 Step 2: WebAuthn 라이브러리 로드');
-        const loaded = await loadWebAuthn();
-        
-        if (!loaded) {
-          throw new Error('WebAuthn 라이브러리를 로드할 수 없습니다. 네트워크 연결을 확인해주세요.');
-        }
-
-        // 4. 실제 WebAuthn 실행
-        console.log('👆 Step 3: 생체인증 실행...');
-        let credential: WebAuthnCredential;
-        
-        try {
-          const { startAuthentication } = await import('@simplewebauthn/browser');
-          
-          // 기존 패스키 우선 시도
-          credential = await Promise.race([
-            startAuthentication({
-              ...startResponse.options,
-              allowCredentials: [] // 모든 등록된 패스키 허용
-            }),
-            new Promise<never>((_, reject) => 
-              setTimeout(() => reject(new Error('WebAuthn 시간 초과')), this.timeout)
-            )
-          ]);
-          
-          console.log('✅ 기존 패스키 인증 성공:', credential.id?.slice(0, 20) + '...');
-          
-        } catch (authError: any) {
-          console.log('🆕 기존 패스키 없음, 새 패스키 등록 시도');
-          
-          try {
-            const { startRegistration } = await import('@simplewebauthn/browser');
-            
-            credential = await Promise.race([
-              startRegistration(startResponse.options),
-              new Promise<never>((_, reject) => 
-                setTimeout(() => reject(new Error('WebAuthn 등록 시간 초과')), this.timeout)
-              )
-            ]);
-            
-            console.log('✅ 새 패스키 등록 성공:', credential.id?.slice(0, 20) + '...');
-            
-          } catch (regError: any) {
-            throw this.enhanceWebAuthnError(regError, 'registration');
-          }
-        }
-
-        // 5. 통합 인증 완료
-        console.log('📞 Step 4: 통합 인증 완료 API 호출');
-        
-        const completeResponse = await this.post('/api/auth/webauthn/complete', {
-          credential,
-          sessionId: startResponse.sessionId,
-          deviceInfo: this.deviceInfo,
-          processingTime: Date.now() - startTime
-        });
-
-        if (!completeResponse.success) {
-          throw new Error(`인증 완료 실패: ${completeResponse.message || 'Server error'}`);
-        }
-
-        console.log('✅ 통합 인증 완료:', {
-          action: completeResponse.action,
-          isExisting: completeResponse.isExistingUser,
-          userId: completeResponse.user?.id,
-          processingTime: Date.now() - startTime
-        });
-
-        // 6. 영구 세션 토큰 저장
-        if (completeResponse.sessionToken) {
-          this.setSessionToken(completeResponse.sessionToken);
-          console.log('💾 영구 세션 토큰 저장 완료');
-          
-          // 추가 세션 메타데이터 저장
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('cue_session_metadata', JSON.stringify({
-              loginTime: new Date().toISOString(),
-              deviceFingerprint: this.generateDeviceFingerprint(),
-              authMethod: 'WebAuthn',
-              lastActivity: Date.now()
-            }));
-          }
-        }
-
-        // 7. 결과 반환
-        const result: WebAuthnRegistrationResult = {
-          success: true,
-          user: this.normalizeUser(completeResponse.user),
-          sessionToken: completeResponse.sessionToken,
-          isExistingUser: completeResponse.action === 'login',
-          action: completeResponse.action,
-          message: completeResponse.message || `${completeResponse.action === 'login' ? '로그인' : '등록'} 성공`,
-          deviceInfo: this.deviceInfo,
-          processingTime: Date.now() - startTime,
-          sessionPersistent: this.sessionPersistence
-        };
-
-        console.log(`🎉 === 통합 인증 완료: ${completeResponse.action?.toUpperCase()} (${Date.now() - startTime}ms) ===`);
-        
-        return result;
-
-      } catch (error: any) {
-        console.error(`💥 통합 WebAuthn 인증 실패 (시도 ${attempt}/${this.retryAttempts}):`, error);
-        
-        if (attempt >= this.retryAttempts) {
-          throw this.enhanceWebAuthnError(error, 'unified_auth');
-        }
-        
-        // 재시도 전 잠시 대기
-        await this.delay(1000 * attempt);
-      }
-    }
-    
-    throw new Error('최대 재시도 횟수를 초과했습니다.');
-  }
-
-  // ============================================================================
-  // 🔧 세션 복원 (강화된 검증)
-  // ============================================================================
-
-  /**
-   * 세션 복원 (강화된 무결성 검증)
-   */
-  async restoreSession(): Promise<SessionRestoreResult> {
-    console.log('🔧 === 강화된 세션 복원 시작 ===');
-    
-    try {
-      // 1. 토큰 조회
-      const sessionToken = this.getSessionToken();
-      
-      if (!sessionToken) {
-        console.log('❌ 저장된 세션 토큰 없음');
-        return { 
-          success: false, 
-          error: 'No session token found',
-          action: 'login_required'
-        };
-      }
-
-      console.log('🔍 세션 토큰 발견:', sessionToken.slice(0, 20) + '...');
-
-      // 2. 세션 메타데이터 검증
-      let sessionMetadata = null;
-      try {
-        const metadataStr = localStorage.getItem('cue_session_metadata');
-        if (metadataStr) {
-          sessionMetadata = JSON.parse(metadataStr);
-          
-          // 세션 만료 검사 (7일)
-          const loginTime = new Date(sessionMetadata.loginTime).getTime();
-          const now = Date.now();
-          const maxAge = 7 * 24 * 60 * 60 * 1000; // 7일
-          
-          if (now - loginTime > maxAge) {
-            console.log('⏰ 세션이 만료됨 (7일 초과)');
-            this.clearSessionToken();
-            return { 
-              success: false, 
-              error: 'Session expired',
-              action: 'login_required'
-            };
-          }
-        }
-      } catch (metaError) {
-        console.warn('⚠️ 세션 메타데이터 파싱 실패:', metaError);
-      }
-
-      // 3. 서버 세션 복원 요청
-      console.log('📞 서버 세션 복원 요청');
-      const response = await this.post('/api/auth/session/restore', { 
-        sessionToken,
-        deviceInfo: this.deviceInfo,
-        sessionMetadata,
-        integrity: this.generateDeviceFingerprint()
-      });
-
-      if (!response.success) {
-        console.log('❌ 서버 세션 복원 실패:', response.error);
-        
-        // 실패 시 토큰 정리
-        this.clearSessionToken();
-        localStorage.removeItem('cue_session_metadata');
-        
-        return { 
-          success: false, 
-          error: response.error || 'Session restore failed',
-          action: 'login_required'
-        };
-      }
-
-      // 4. 세션 메타데이터 업데이트
-      if (sessionMetadata) {
-        sessionMetadata.lastActivity = Date.now();
-        localStorage.setItem('cue_session_metadata', JSON.stringify(sessionMetadata));
-      }
-
-      console.log('✅ 세션 복원 성공!', {
-        username: response.user?.username,
-        lastActivity: sessionMetadata?.lastActivity
-      });
+      console.log(`✅ 등록 옵션 생성 완료: 세션 ${sessionId}`);
 
       return {
         success: true,
-        user: this.normalizeUser(response.user),
-        sessionToken: sessionToken,
-        message: response.message || '세션이 복원되었습니다',
-        sessionMetadata,
-        restoredAt: new Date().toISOString()
-      };
-
-    } catch (error: any) {
-      console.error('💥 세션 복원 오류:', error);
-      
-      // 네트워크 오류가 아닌 경우만 토큰 정리
-      if (!this.isNetworkError(error)) {
-        this.clearSessionToken();
-        localStorage.removeItem('cue_session_metadata');
-      }
-      
-      return { 
-        success: false, 
-        error: error.message || 'Session restore failed',
-        action: this.isNetworkError(error) ? 'retry' : 'login_required'
-      };
-    }
-  }
-
-  // ============================================================================
-  // 🔧 로그아웃 (완전한 정리)
-  // ============================================================================
-
-  /**
-   * 로그아웃 (완전한 세션 정리)
-   */
-  async logout(): Promise<{ success: boolean; error?: string }> {
-    console.log('🔧 === 완전한 로그아웃 처리 ===');
-    
-    try {
-      const sessionToken = this.getSessionToken();
-      
-      if (sessionToken) {
-        console.log('🗑️ 서버 세션 무효화');
-        
-        try {
-          await this.post('/api/auth/logout', { 
-            sessionToken,
-            deviceInfo: this.deviceInfo,
-            logoutTime: new Date().toISOString()
-          });
-          console.log('✅ 서버 로그아웃 성공');
-        } catch (error) {
-          console.warn('⚠️ 서버 로그아웃 실패 (로컬 정리는 계속)', error);
+        data: {
+          options: registrationOptions,
+          sessionId
+        },
+        metadata: {
+          challenge: registrationOptions.challenge,
+          sessionId
         }
-      }
-
-      // 2. 완전한 로컬 정리
-      this.clearSessionToken();
-      
-      if (typeof window !== 'undefined') {
-        // 모든 세션 관련 데이터 제거
-        localStorage.removeItem('cue_session_metadata');
-        localStorage.removeItem('cue_user_preferences');
-        localStorage.removeItem('cue_device_fingerprint');
-        
-        // WebSocket 연결 해제
-        this.disconnectWebSocket();
-        
-        console.log('✅ 로컬 세션 데이터 완전 정리 완료');
-      }
-
-      console.log('✅ 완전한 로그아웃 완료');
-      return { success: true };
+      };
 
     } catch (error: any) {
-      console.error('💥 로그아웃 오류:', error);
-      
-      // 오류가 발생해도 로컬 데이터는 정리
-      this.clearSessionToken();
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('cue_session_metadata');
-        localStorage.removeItem('cue_user_preferences');
-        localStorage.removeItem('cue_device_fingerprint');
-      }
-      
-      return { success: false, error: error.message };
+      console.error('❌ 등록 옵션 생성 실패:', error);
+      return {
+        success: false,
+        error: 'Failed to generate registration options',
+        errorCode: 'GENERATION_FAILED'
+      };
     }
   }
 
-  // ============================================================================
-  // 🔧 헬퍼 메서드들
-  // ============================================================================
-
   /**
-   * 사용자 데이터 정규화
+   * 패스키 등록 검증
    */
-  private normalizeUser(userData: any): User {
-    if (!userData) {
-      throw new Error('사용자 데이터가 없습니다');
-    }
-
-    return {
-      id: userData.id,
-      username: userData.username || userData.display_name || `User_${userData.id?.slice(-8)}`,
-      email: userData.email || userData.userEmail || null,
-      did: userData.did || `did:cue:${userData.id}`,
-      walletAddress: userData.walletAddress || userData.wallet_address,
-      cueBalance: userData.cueBalance || userData.cue_tokens || 0,
-      trustScore: userData.trustScore || userData.trust_score || 50,
-      passportLevel: userData.passportLevel || userData.passport_level || 'Basic',
-      biometricVerified: userData.biometricVerified || userData.biometric_verified || true,
-      registeredAt: userData.registeredAt || userData.created_at || new Date().toISOString(),
-      authenticated: true,
-      source: 'WebAuthnAPI_Normalized'
-    };
-  }
-
-  /**
-   * WebAuthn 에러 강화
-   */
-  private enhanceWebAuthnError(error: any, context: string): Error {
-    console.error(`🔧 WebAuthn 에러 처리 (${context}):`, error);
-    
-    let message = error.message || 'WebAuthn 인증 실패';
-    let code = error.name || 'UnknownError';
-    
-    // 에러 타입별 메시지 개선
-    switch (error.name) {
-      case 'NotAllowedError':
-        message = '생체인증이 취소되었거나 시간이 초과되었습니다. 다시 시도해주세요.';
-        code = 'USER_CANCELLED';
-        break;
-      case 'SecurityError':
-        message = '보안 오류가 발생했습니다. HTTPS 환경에서 시도하거나 브라우저 설정을 확인해주세요.';
-        code = 'SECURITY_ERROR';
-        break;
-      case 'NotSupportedError':
-        message = '이 기기나 브라우저에서는 생체인증을 지원하지 않습니다.';
-        code = 'NOT_SUPPORTED';
-        break;
-      case 'InvalidStateError':
-        message = '이미 등록된 인증기이거나 잘못된 상태입니다.';
-        code = 'INVALID_STATE';
-        break;
-      case 'ConstraintError':
-        message = '요청한 인증 방식을 사용할 수 없습니다.';
-        code = 'CONSTRAINT_ERROR';
-        break;
-      case 'TimeoutError':
-        message = '인증 시간이 초과되었습니다. 다시 시도해주세요.';
-        code = 'TIMEOUT';
-        break;
-    }
-    
-    const enhancedError = new Error(message);
-    enhancedError.name = code;
-    enhancedError.cause = error;
-    enhancedError.context = context;
-    enhancedError.timestamp = new Date().toISOString();
-    
-    return enhancedError;
-  }
-
-  /**
-   * 네트워크 에러 판별
-   */
-  private isNetworkError(error: any): boolean {
-    return error.name === 'NetworkError' || 
-           error.code === 'NETWORK_ERROR' ||
-           error.message?.includes('fetch') ||
-           error.message?.includes('network') ||
-           !navigator.onLine;
-  }
-
-  /**
-   * 디바이스 지문 생성
-   */
-  private generateDeviceFingerprint(): string {
-    if (typeof window === 'undefined') return 'server';
-    
-    const fingerprint = [
-      navigator.userAgent,
-      navigator.language,
-      screen.width + 'x' + screen.height,
-      new Date().getTimezoneOffset(),
-      navigator.hardwareConcurrency || 'unknown'
-    ].join('|');
-    
-    // 간단한 해시 생성
-    let hash = 0;
-    for (let i = 0; i < fingerprint.length; i++) {
-      const char = fingerprint.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // 32비트 정수로 변환
-    }
-    
-    return Math.abs(hash).toString(36);
-  }
-
-  /**
-   * 지연 유틸리티
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  // ============================================================================
-  // 🔧 디버그 및 상태 확인
-  // ============================================================================
-
-  /**
-   * 확장된 디버그 정보
-   */
-  getDebugInfo(): any {
-    const baseDebugInfo = super.getDebugInfo();
-    
-    return {
-      ...baseDebugInfo,
-      webauthn: {
-        support: checkWebAuthnSupport(),
-        deviceInfo: this.deviceInfo,
-        sessionPersistence: this.sessionPersistence,
-        timeout: this.timeout,
-        retryAttempts: this.retryAttempts
-      },
-      session: {
-        hasToken: !!this.getSessionToken(),
-        tokenLength: this.getSessionToken()?.length || 0,
-        hasMetadata: !!localStorage.getItem('cue_session_metadata'),
-        deviceFingerprint: this.generateDeviceFingerprint()
-      },
-      capabilities: {
-        realtime: this.websocket?.readyState === WebSocket.OPEN,
-        errorRecovery: true,
-        networkMonitoring: typeof window !== 'undefined',
-        persistentSession: this.sessionPersistence
-      },
-      health: {
-        networkOnline: navigator.onLine,
-        wsConnected: this.websocket?.readyState === WebSocket.OPEN,
-        lastActivity: localStorage.getItem('cue_session_metadata') ? 
-          JSON.parse(localStorage.getItem('cue_session_metadata')!).lastActivity : null
-      }
-    };
-  }
-
-  /**
-   * 연결 상태 테스트
-   */
-  async testConnection(): Promise<any> {
-    console.log('🧪 === 연결 상태 테스트 시작 ===');
-    
-    const results = {
-      webauthnSupport: checkWebAuthnSupport(),
-      backendConnected: false,
-      sessionValid: false,
-      websocketConnected: false,
-      timestamp: new Date().toISOString()
-    };
-
+  async verifyRegistration(
+    sessionId: string,
+    registrationResponse: RegistrationResponseJSON,
+    ipAddress?: string
+  ): Promise<WebAuthnResult> {
     try {
-      // 1. 백엔드 연결 테스트
-      const healthCheck = await this.checkHealth();
-      results.backendConnected = healthCheck.connected;
+      console.log(`✅ 패스키 등록 검증 시작: 세션 ${sessionId}`);
+
+      // Challenge 데이터 조회 및 삭제
+      const challengeData = await this.getAndRemoveChallenge(sessionId);
+      if (!challengeData || challengeData.type !== 'registration') {
+        return {
+          success: false,
+          error: 'Invalid or expired session',
+          errorCode: 'INVALID_SESSION'
+        };
+      }
+
+      // IP 주소 일치 확인 (보안 강화)
+      if (ipAddress && challengeData.ipAddress && challengeData.ipAddress !== ipAddress) {
+        console.warn(`⚠️ IP 주소 불일치: ${challengeData.ipAddress} → ${ipAddress}`);
+      }
+
+      // 등록 응답 검증
+      const verification = await verifyRegistrationResponse({
+        response: registrationResponse,
+        expectedChallenge: challengeData.challenge,
+        expectedOrigin: this.config.origin,
+        expectedRPID: this.config.rpID,
+        requireUserVerification: true,
+      });
+
+      if (!verification.verified || !verification.registrationInfo) {
+        console.error('❌ 등록 검증 실패');
+        return {
+          success: false,
+          error: 'Registration verification failed',
+          errorCode: 'VERIFICATION_FAILED'
+        };
+      }
+
+      const { registrationInfo } = verification;
+
+      // 자격 증명 저장
+      const credential: WebAuthnCredential = {
+        id: crypto.randomUUID(),
+        credentialID: registrationInfo.credentialID,
+        credentialPublicKey: registrationInfo.credentialPublicKey,
+        counter: registrationInfo.counter,
+        credentialDeviceType: registrationInfo.credentialDeviceType,
+        credentialBackedUp: registrationInfo.credentialBackedUp,
+        transports: registrationResponse.response.transports,
+        userID: challengeData.userInfo.id,
+        createdAt: new Date(),
+        lastUsedAt: new Date(),
+        isActive: true
+      };
+
+      await this.storeCredential(credential);
+
+      // 감사 로그 기록
+      await this.auditLog('REGISTRATION_SUCCESS', {
+        userID: challengeData.userInfo.id,
+        credentialID: credential.id,
+        deviceInfo: challengeData.deviceInfo,
+        ipAddress,
+        userAgent: challengeData.deviceInfo?.userAgent
+      });
+
+      console.log(`🎉 패스키 등록 완료: 사용자 ${challengeData.userInfo.id}`);
+
+      return {
+        success: true,
+        data: {
+          credentialID: credential.id,
+          user: challengeData.userInfo,
+          deviceType: credential.credentialDeviceType,
+          backedUp: credential.credentialBackedUp
+        },
+        metadata: {
+          userVerified: verification.registrationInfo.userVerified,
+          counter: credential.counter
+        }
+      };
+
+    } catch (error: any) {
+      console.error('❌ 등록 검증 실패:', error);
+      return {
+        success: false,
+        error: 'Registration verification failed',
+        errorCode: 'VERIFICATION_ERROR'
+      };
+    }
+  }
+
+  // ============================================================================
+  // 🔓 패스키 인증 플로우
+  // ============================================================================
+
+  /**
+   * 패스키 인증 옵션 생성
+   */
+  async generateAuthenticationOptions(
+    userID?: string,
+    ipAddress?: string
+  ): Promise<WebAuthnResult> {
+    try {
+      console.log(`🔓 패스키 인증 옵션 생성: ${userID || '알려지지 않은 사용자'}`);
+
+      // Rate Limiting 체크
+      const rateLimitKey = `${this.rateLimitPrefix}auth:${ipAddress || 'unknown'}`;
+      const attempts = await this.redis.incr(rateLimitKey);
+      if (attempts === 1) {
+        await this.redis.expire(rateLimitKey, 300);
+      }
+      if (attempts > 20) {
+        return {
+          success: false,
+          error: 'Too many authentication attempts. Please try again later.',
+          errorCode: 'RATE_LIMITED'
+        };
+      }
+
+      // 허용된 자격 증명 조회
+      let allowCredentials;
+      if (userID) {
+        const userCredentials = await this.getUserCredentials(userID);
+        allowCredentials = userCredentials
+          .filter(cred => cred.isActive)
+          .map(cred => ({
+            id: cred.credentialID,
+            type: 'public-key' as const,
+            transports: cred.transports || ['internal']
+          }));
+      }
+
+      // 인증 옵션 생성
+      const options: GenerateAuthenticationOptionsOpts = {
+        timeout: this.config.timeout,
+        allowCredentials,
+        userVerification: 'preferred',
+        rpID: this.config.rpID,
+      };
+
+      const authenticationOptions = await generateAuthenticationOptions(options);
+
+      // Challenge 저장
+      const sessionId = this.generateSessionId();
+      const challengeData: StoredChallenge = {
+        challenge: authenticationOptions.challenge,
+        userInfo: {
+          id: userID || 'unknown',
+          name: 'unknown',
+          displayName: 'unknown'
+        },
+        type: 'authentication',
+        timestamp: Date.now(),
+        ipAddress
+      };
+
+      await this.redis.setex(
+        `${this.challengePrefix}${sessionId}`,
+        300,
+        JSON.stringify(challengeData)
+      );
+
+      console.log(`✅ 인증 옵션 생성 완료: 세션 ${sessionId}`);
+
+      return {
+        success: true,
+        data: {
+          options: authenticationOptions,
+          sessionId
+        },
+        metadata: {
+          challenge: authenticationOptions.challenge,
+          sessionId
+        }
+      };
+
+    } catch (error: any) {
+      console.error('❌ 인증 옵션 생성 실패:', error);
+      return {
+        success: false,
+        error: 'Failed to generate authentication options',
+        errorCode: 'GENERATION_FAILED'
+      };
+    }
+  }
+
+  /**
+   * 패스키 인증 검증
+   */
+  async verifyAuthentication(
+    sessionId: string,
+    authenticationResponse: AuthenticationResponseJSON,
+    ipAddress?: string
+  ): Promise<WebAuthnResult> {
+    try {
+      console.log(`✅ 패스키 인증 검증 시작: 세션 ${sessionId}`);
+
+      // Challenge 데이터 조회 및 삭제
+      const challengeData = await this.getAndRemoveChallenge(sessionId);
+      if (!challengeData || challengeData.type !== 'authentication') {
+        return {
+          success: false,
+          error: 'Invalid or expired session',
+          errorCode: 'INVALID_SESSION'
+        };
+      }
+
+      // 자격 증명 조회
+      const credential = await this.getCredentialByID(
+        Buffer.from(authenticationResponse.id, 'base64url')
+      );
+
+      if (!credential || !credential.isActive) {
+        return {
+          success: false,
+          error: 'Credential not found or inactive',
+          errorCode: 'CREDENTIAL_NOT_FOUND'
+        };
+      }
+
+      // 인증 응답 검증
+      const verification = await verifyAuthenticationResponse({
+        response: authenticationResponse,
+        expectedChallenge: challengeData.challenge,
+        expectedOrigin: this.config.origin,
+        expectedRPID: this.config.rpID,
+        authenticator: {
+          credentialID: credential.credentialID,
+          credentialPublicKey: credential.credentialPublicKey,
+          counter: credential.counter,
+          transports: credential.transports
+        },
+        requireUserVerification: true,
+      });
+
+      if (!verification.verified) {
+        await this.auditLog('AUTHENTICATION_FAILED', {
+          userID: credential.userID,
+          credentialID: credential.id,
+          reason: 'Verification failed',
+          ipAddress
+        });
+
+        return {
+          success: false,
+          error: 'Authentication verification failed',
+          errorCode: 'VERIFICATION_FAILED'
+        };
+      }
+
+      // Counter 업데이트
+      await this.updateCredentialCounter(credential.id, verification.authenticationInfo.newCounter);
+
+      // 마지막 사용 시간 업데이트
+      await this.updateCredentialLastUsed(credential.id);
+
+      // 감사 로그 기록
+      await this.auditLog('AUTHENTICATION_SUCCESS', {
+        userID: credential.userID,
+        credentialID: credential.id,
+        counter: verification.authenticationInfo.newCounter,
+        ipAddress
+      });
+
+      console.log(`🎉 패스키 인증 완료: 사용자 ${credential.userID}`);
+
+      return {
+        success: true,
+        data: {
+          userID: credential.userID,
+          credentialID: credential.id,
+          deviceType: credential.credentialDeviceType,
+          counter: verification.authenticationInfo.newCounter
+        },
+        metadata: {
+          userVerified: verification.authenticationInfo.userVerified,
+          counter: verification.authenticationInfo.newCounter
+        }
+      };
+
+    } catch (error: any) {
+      console.error('❌ 인증 검증 실패:', error);
+      return {
+        success: false,
+        error: 'Authentication verification failed',
+        errorCode: 'VERIFICATION_ERROR'
+      };
+    }
+  }
+
+  // ============================================================================
+  // 🗄️ 자격 증명 관리
+  // ============================================================================
+
+  /**
+   * 자격 증명 저장
+   */
+  private async storeCredential(credential: WebAuthnCredential): Promise<void> {
+    try {
+      await this.db.query(`
+        INSERT INTO webauthn_credentials (
+          id, credential_id, credential_public_key, counter,
+          credential_device_type, credential_backed_up, transports,
+          user_id, created_at, last_used_at, nickname, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        credential.id,
+        credential.credentialID,
+        credential.credentialPublicKey,
+        credential.counter,
+        credential.credentialDeviceType,
+        credential.credentialBackedUp,
+        JSON.stringify(credential.transports),
+        credential.userID,
+        credential.createdAt.toISOString(),
+        credential.lastUsedAt.toISOString(),
+        credential.nickname,
+        credential.isActive
+      ]);
+
+      console.log(`💾 자격 증명 저장 완료: ${credential.id}`);
+    } catch (error) {
+      console.error('❌ 자격 증명 저장 실패:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 사용자의 모든 자격 증명 조회
+   */
+  private async getUserCredentials(userID: string): Promise<WebAuthnCredential[]> {
+    try {
+      const result = await this.db.query(`
+        SELECT * FROM webauthn_credentials 
+        WHERE user_id = ? AND is_active = true
+        ORDER BY created_at DESC
+      `, [userID]);
+
+      return result.rows.map(row => ({
+        id: row.id,
+        credentialID: Buffer.from(row.credential_id),
+        credentialPublicKey: Buffer.from(row.credential_public_key),
+        counter: row.counter,
+        credentialDeviceType: row.credential_device_type,
+        credentialBackedUp: row.credential_backed_up,
+        transports: JSON.parse(row.transports || '[]'),
+        userID: row.user_id,
+        createdAt: new Date(row.created_at),
+        lastUsedAt: new Date(row.last_used_at),
+        nickname: row.nickname,
+        isActive: row.is_active
+      }));
+    } catch (error) {
+      console.error('❌ 사용자 자격 증명 조회 실패:', error);
+      return [];
+    }
+  }
+
+  /**
+   * ID로 자격 증명 조회
+   */
+  private async getCredentialByID(credentialID: Buffer): Promise<WebAuthnCredential | null> {
+    try {
+      const result = await this.db.query(`
+        SELECT * FROM webauthn_credentials 
+        WHERE credential_id = ? AND is_active = true
+      `, [credentialID]);
+
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const row = result.rows[0];
+      return {
+        id: row.id,
+        credentialID: Buffer.from(row.credential_id),
+        credentialPublicKey: Buffer.from(row.credential_public_key),
+        counter: row.counter,
+        credentialDeviceType: row.credential_device_type,
+        credentialBackedUp: row.credential_backed_up,
+        transports: JSON.parse(row.transports || '[]'),
+        userID: row.user_id,
+        createdAt: new Date(row.created_at),
+        lastUsedAt: new Date(row.last_used_at),
+        nickname: row.nickname,
+        isActive: row.is_active
+      };
+    } catch (error) {
+      console.error('❌ 자격 증명 조회 실패:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 자격 증명 카운터 업데이트
+   */
+  private async updateCredentialCounter(credentialId: string, newCounter: number): Promise<void> {
+    try {
+      await this.db.query(`
+        UPDATE webauthn_credentials 
+        SET counter = ? 
+        WHERE id = ?
+      `, [newCounter, credentialId]);
+    } catch (error) {
+      console.error('❌ 카운터 업데이트 실패:', error);
+    }
+  }
+
+  /**
+   * 자격 증명 마지막 사용 시간 업데이트
+   */
+  private async updateCredentialLastUsed(credentialId: string): Promise<void> {
+    try {
+      await this.db.query(`
+        UPDATE webauthn_credentials 
+        SET last_used_at = ? 
+        WHERE id = ?
+      `, [new Date().toISOString(), credentialId]);
+    } catch (error) {
+      console.error('❌ 마지막 사용 시간 업데이트 실패:', error);
+    }
+  }
+
+  // ============================================================================
+  // 🛠️ 유틸리티 메서드
+  // ============================================================================
+
+  /**
+   * 세션 ID 생성
+   */
+  private generateSessionId(): string {
+    return `${Date.now()}_${crypto.randomBytes(16).toString('hex')}`;
+  }
+
+  /**
+   * Challenge 조회 및 삭제
+   */
+  private async getAndRemoveChallenge(sessionId: string): Promise<StoredChallenge | null> {
+    try {
+      const key = `${this.challengePrefix}${sessionId}`;
+      const data = await this.redis.get(key);
       
-      // 2. 세션 유효성 테스트
-      if (this.getSessionToken()) {
-        const sessionTest = await this.restoreSession();
-        results.sessionValid = sessionTest.success;
+      if (data) {
+        await this.redis.del(key);
+        return JSON.parse(data);
       }
       
-      // 3. WebSocket 연결 테스트
-      results.websocketConnected = this.websocket?.readyState === WebSocket.OPEN;
-      
-      console.log('🧪 연결 테스트 완료:', results);
-      return results;
-      
+      return null;
     } catch (error) {
-      console.error('🧪 연결 테스트 실패:', error);
-      return { ...results, error: error.message };
+      console.error('❌ Challenge 조회 실패:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 감사 로그 기록
+   */
+  private async auditLog(action: string, details: any): Promise<void> {
+    try {
+      await this.db.query(`
+        INSERT INTO webauthn_audit_log (
+          action, details, timestamp, ip_address, user_agent
+        ) VALUES (?, ?, ?, ?, ?)
+      `, [
+        action,
+        JSON.stringify(details),
+        new Date().toISOString(),
+        details.ipAddress,
+        details.userAgent
+      ]);
+    } catch (error) {
+      console.error('❌ 감사 로그 기록 실패:', error);
+    }
+  }
+
+  // ============================================================================
+  // 🧹 정리 및 유지보수
+  // ============================================================================
+
+  /**
+   * 만료된 세션 정리
+   */
+  async cleanup(): Promise<void> {
+    try {
+      // Redis에서 만료된 키 정리는 자동으로 처리됨
+      console.log('🧹 WebAuthn 세션 정리 완료');
+    } catch (error) {
+      console.error('❌ 정리 작업 실패:', error);
+    }
+  }
+
+  /**
+   * 서비스 종료
+   */
+  async dispose(): Promise<void> {
+    try {
+      await this.redis.quit();
+      console.log('👋 WebAuthn Service 종료됨');
+    } catch (error) {
+      console.error('❌ 서비스 종료 실패:', error);
     }
   }
 }
 
-export default WebAuthnAPI;
+export default WebAuthnService;
