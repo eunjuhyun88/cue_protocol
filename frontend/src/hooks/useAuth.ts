@@ -1,61 +1,85 @@
 // ============================================================================
-// 📁 frontend/src/hooks/useAuth.ts - 완전 통합 버전
-// 🔧 1번(하이브리드 연동) + 2번(DID 검증) + 3번(완전 데이터 정리) 모든 기능 포함
+// 🔐 Ultimate useAuth Hook - 두 문서 모든 장점 통합
+// 파일: frontend/src/hooks/useAuth.ts
+// 특징: 세션 복원 루프 방지 + DID 검증 + 완전 데이터 정리 + 하이브리드 연동
+// 버전: v4.0 - Ultimate Edition
 // ============================================================================
 
-import { useState, useEffect, useCallback } from 'react';
-import { WebAuthnAPI } from '../services/api/WebAuthnAPI';
+'use client';
 
-// 🔧 PersistentDataAPIClient와의 협력을 위한 토큰 동기화 인터페이스
-interface TokenSyncCallback {
-  (token: string | null): void;
-}
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { BackendAPIClient } from '../services/api/BackendAPIClient';
+
+// ============================================================================
+// 🔧 인터페이스 정의
+// ============================================================================
 
 interface User {
   id: string;
   username: string;
-  did: string;
   email?: string;
+  did: string;
+  walletAddress?: string;
+  cueBalance: number;
+  trustScore: number;
+  passportLevel: number;
+  biometricVerified: boolean;
+  registeredAt: string;
   authenticated: boolean;
-  cueBalance?: number;
   cue_tokens?: number;
-  trustScore?: number;
   trust_score?: number;
-  passportLevel?: string;
   passport_level?: string;
 }
 
 interface AuthState {
   user: User | null;
-  isLoading: boolean;
   isAuthenticated: boolean;
+  isLoading: boolean;
+  sessionId: string | null;
   sessionToken: string | null;
+  lastRestoreTime: number;
   error: string | null;
 }
 
-export const useAuth = () => {
+interface TokenSyncCallback {
+  (token: string | null): void;
+}
+
+/**
+ * 🔐 Ultimate useAuth Hook - 모든 기능 통합
+ */
+export function useAuth() {
+  const apiClient = new BackendAPIClient();
+  
+  // ============================================================================
+  // 🔧 상태 관리 (무한루프 방지 + 완전 통합)
+  // ============================================================================
+  
   const [authState, setAuthState] = useState<AuthState>({
     user: null,
-    isLoading: true,
     isAuthenticated: false,
+    isLoading: true,
+    sessionId: null,
     sessionToken: null,
+    lastRestoreTime: 0,
     error: null
   });
 
-  const webauthnAPI = new WebAuthnAPI();
+  // 무한루프 방지용 플래그들 (문서 4에서)
+  const restoreInProgress = useRef<boolean>(false);
+  const restoreTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const mountedRef = useRef<boolean>(true);
 
-  // 🔧 토큰 동기화 콜백 관리 (1번 기능)
+  // 하이브리드 연동용 상태들 (문서 5에서)
   const [tokenSyncCallbacks, setTokenSyncCallbacks] = useState<TokenSyncCallback[]>([]);
-
-  // 🔧 WebSocket 연결 상태 추적 (1번 기능)
   const [websocketStatus, setWebsocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
 
   // ============================================================================
-  // 🔧 완전한 로컬 스토리지 정리 함수 (2번 + 3번 강화)
+  // 🗑️ 완전한 데이터 정리 함수 (문서 5 + 강화)
   // ============================================================================
-
+  
   const clearAllAuthData = useCallback(() => {
-    console.log('🗑️ === 완전한 인증 데이터 정리 시작 ===');
+    console.log('🗑️ === Ultimate 완전한 인증 데이터 정리 시작 ===');
     
     if (typeof window === 'undefined') return;
 
@@ -89,10 +113,6 @@ export const useAuth = () => {
     const allKeys = [...authKeys, ...zustandKeys, ...legacyKeys];
     let deletedCount = 0;
 
-    // 삭제 전에 어떤 키들이 있는지 확인
-    const foundKeys = allKeys.filter(key => localStorage.getItem(key) !== null);
-    console.log('📋 삭제할 키 목록:', foundKeys);
-
     // 실제 삭제 수행
     allKeys.forEach(key => {
       try {
@@ -106,7 +126,7 @@ export const useAuth = () => {
       }
     });
 
-    // 의심스러운 추가 키들 검사 및 삭제 (3번 강화 기능)
+    // 의심스러운 추가 키들 검사 및 삭제
     try {
       const allLocalStorageKeys = Object.keys(localStorage);
       const suspiciousKeys = allLocalStorageKeys.filter(key => 
@@ -121,8 +141,6 @@ export const useAuth = () => {
         key.includes('did:')
       );
 
-      console.log('🔍 의심스러운 추가 키들:', suspiciousKeys);
-      
       suspiciousKeys.forEach(key => {
         if (!allKeys.includes(key)) {
           try {
@@ -140,17 +158,17 @@ export const useAuth = () => {
 
     console.log(`✅ 총 ${deletedCount}개 키 삭제 완료`);
 
-    // 🔧 PersistentDataAPIClient에도 토큰 삭제 알림 (1번 기능)
+    // 토큰 동기화 알림
     notifyTokenChange(null);
 
-    // WebAuthnAPI 토큰도 정리
-    if (webauthnAPI && webauthnAPI.clearSessionToken) {
-      webauthnAPI.clearSessionToken();
+    // API Client 토큰도 정리
+    if (apiClient && apiClient.clearSessionToken) {
+      apiClient.clearSessionToken();
     }
-  }, [webauthnAPI]);
+  }, []);
 
   // ============================================================================
-  // 🔧 엄격한 DID 검증 함수 (2번 + 3번 강화)
+  // 🔍 엄격한 DID 검증 함수 (문서 5에서)
   // ============================================================================
 
   const validateDID = useCallback((did: string): boolean => {
@@ -158,23 +176,23 @@ export const useAuth = () => {
       return false;
     }
 
-    // 유효한 DID 패턴들 (현재 프로젝트 기준)
+    // 유효한 DID 패턴들
     const validPatterns = [
-      /^did:final0626:[a-zA-Z0-9\-_]+$/,           // 메인 프로덕션 DID
-      /^did:webauthn:[a-zA-Z0-9\-_]+$/,            // WebAuthn 기반 DID  
-      /^did:cue:[0-9]{13,}$/                       // CUE 타임스탬프 DID
+      /^did:final0626:[a-zA-Z0-9\-_]+$/,
+      /^did:webauthn:[a-zA-Z0-9\-_]+$/,
+      /^did:cue:[0-9]{13,}$/
     ];
 
-    // 목 데이터 및 구형 DID 패턴 (거부 대상) - 2번 + 3번 통합
+    // 무효한 패턴들 (목 데이터 등)
     const invalidPatterns = [
-      /^did:cue:existing:/,                        // 구형 목 데이터
-      /^did:cue:mock:/,                           // 목 데이터
-      /^did:ai:mock:/,                            // AI 목 데이터
-      /^did:mock:/,                               // 일반 목 데이터
-      /^did:test:/                                // 테스트 데이터
+      /^did:cue:existing:/,
+      /^did:cue:mock:/,
+      /^did:ai:mock:/,
+      /^did:mock:/,
+      /^did:test:/
     ];
 
-    // 무효한 패턴 확인 - 발견되면 즉시 false
+    // 무효한 패턴 확인
     for (const pattern of invalidPatterns) {
       if (pattern.test(did)) {
         console.warn(`🚫 무효한 DID 패턴 감지: ${did}`);
@@ -195,22 +213,22 @@ export const useAuth = () => {
   }, []);
 
   // ============================================================================
-  // 🔧 DID 검증 실패 처리 (2번 + 3번 강화)
+  // 🚨 DID 검증 실패 처리 (문서 5에서)
   // ============================================================================
 
   const handleInvalidDID = useCallback((did: string, reason: string = '형식 오류') => {
     console.warn(`❌ 유효하지 않은 DID: ${did} (${reason})`);
     console.warn(`🗑️ 전체 로컬 데이터 삭제 후 새 사용자 모드로 전환`);
     
-    // 완전한 데이터 정리
     clearAllAuthData();
     
-    // 상태 초기화
     setAuthState({
       user: null,
-      isLoading: false,
       isAuthenticated: false,
+      isLoading: false,
+      sessionId: null,
       sessionToken: null,
+      lastRestoreTime: 0,
       error: null
     });
     
@@ -224,16 +242,13 @@ export const useAuth = () => {
   }, [clearAllAuthData]);
 
   // ============================================================================
-  // 🔧 토큰 동기화 관리 (1번 기능)
+  // 🔄 토큰 동기화 관리 (문서 5에서)
   // ============================================================================
 
   const registerTokenSyncCallback = useCallback((callback: TokenSyncCallback) => {
     setTokenSyncCallbacks(prev => [...prev, callback]);
-    
-    // 현재 토큰을 즉시 동기화
     callback(authState.sessionToken);
     
-    // 언등록 함수 반환
     return () => {
       setTokenSyncCallbacks(prev => prev.filter(cb => cb !== callback));
     };
@@ -250,15 +265,7 @@ export const useAuth = () => {
   }, [tokenSyncCallbacks]);
 
   // ============================================================================
-  // 🔧 WebSocket 상태 관리 (1번 기능)
-  // ============================================================================
-
-  const updateWebSocketStatus = useCallback((status: 'disconnected' | 'connecting' | 'connected') => {
-    setWebsocketStatus(status);
-  }, []);
-
-  // ============================================================================
-  // 🔧 실시간 CUE 업데이트 (1번 기능)
+  // 💰 실시간 CUE 업데이트 (문서 5에서)
   // ============================================================================
 
   const updateCueBalance = useCallback((newBalance: number, miningReward?: number) => {
@@ -292,119 +299,200 @@ export const useAuth = () => {
   }, [authState.user]);
 
   // ============================================================================
-  // 🔧 세션 토큰 관리 (1번 + 2번 통합)
+  // 🔐 강화된 세션 복원 (문서 4 + 문서 5 통합)
   // ============================================================================
-
-  const saveSessionToken = useCallback((token: string) => {
-    try {
-      if (!token || typeof token !== 'string' || token.length < 10) {
-        console.error('❌ 잘못된 토큰 형식');
-        return false;
-      }
-
-      // 테스트/목 토큰 거부
-      if (token.startsWith('force_token') || 
-          token.startsWith('test_') || 
-          token.startsWith('mock_') ||
-          token.includes('dummy')) {
-        console.error('❌ 테스트 토큰 거부');
-        return false;
-      }
-
-      localStorage.setItem('session_token', token);
-      localStorage.setItem('cue_session_token', token);
-      localStorage.setItem('auth_timestamp', Date.now().toString());
-      
-      webauthnAPI.setSessionToken(token);
-      
-      // 🔧 PersistentDataAPIClient에 토큰 변경 알림 (1번 기능)
-      notifyTokenChange(token);
-      
-      console.log('✅ 세션 토큰 저장 및 동기화 완료');
-      return true;
-    } catch (error) {
-      console.error('❌ 세션 토큰 저장 실패:', error);
+  
+  const restoreSession = useCallback(async (force: boolean = false): Promise<boolean> => {
+    // 1. 중복 호출 방지 (문서 4에서)
+    if (restoreInProgress.current && !force) {
+      console.log('⏳ 세션 복원이 이미 진행 중입니다 - 건너뜀');
       return false;
     }
-  }, [webauthnAPI, notifyTokenChange]);
 
-  const getSessionToken = useCallback(() => {
-    try {
-      let token = localStorage.getItem('session_token') || 
-                  localStorage.getItem('cue_session_token');
-      
-      if (!token) return null;
+    // 2. 최근 복원 시도 시간 확인 (문서 4에서)
+    const now = Date.now();
+    const timeSinceLastRestore = now - authState.lastRestoreTime;
+    const minimumInterval = 60 * 1000; // 1분
 
-      // 토큰 만료 검사 (7일)
-      const timestamp = localStorage.getItem('auth_timestamp');
-      if (timestamp) {
-        const age = Date.now() - parseInt(timestamp);
-        const maxAge = 7 * 24 * 60 * 60 * 1000; // 7일
-        
-        if (age > maxAge) {
-          console.log('⏰ 세션 토큰 만료');
-          clearAllAuthData();
-          return null;
-        }
-      }
-      
-      return token;
-    } catch (error) {
-      console.error('❌ 세션 토큰 조회 실패:', error);
-      return null;
+    if (timeSinceLastRestore < minimumInterval && !force) {
+      console.log(`⏰ 최근 세션 복원 시도 후 ${Math.round(timeSinceLastRestore / 1000)}초 경과 - 건너뜀`);
+      return false;
     }
-  }, [clearAllAuthData]);
 
-  // ============================================================================
-  // 🔧 향상된 세션 복원 (전체 기능 통합)
-  // ============================================================================
+    // 3. Zustand 데이터 검사 및 DID 검증 (문서 5에서)
+    const authStorageData = localStorage.getItem('auth-storage');
+    if (authStorageData) {
+      try {
+        const parsedData = JSON.parse(authStorageData);
+        const user = parsedData.state?.user || parsedData.user;
+        
+        if (user && user.did && !validateDID(user.did)) {
+          console.warn(`❌ Zustand의 무효한 DID 발견: ${user.did}`);
+          return handleInvalidDID(user.did, 'Zustand persist 구형 DID');
+        }
+      } catch (error) {
+        console.warn('⚠️ Zustand 데이터 파싱 실패, 삭제');
+        localStorage.removeItem('auth-storage');
+      }
+    }
 
-  const restoreSession = useCallback(async () => {
-    console.log('🔄 === 향상된 세션 복원 시작 (통합 버전) ===');
-    setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
+    // 4. 세션 토큰 확인
+    const sessionToken = apiClient.getSessionToken();
+    if (!sessionToken && !force) {
+      console.log('❌ 세션 토큰 없음 - 복원 불가');
+      setAuthState(prev => ({
+        ...prev,
+        isLoading: false,
+        isAuthenticated: false,
+        user: null,
+        error: null
+      }));
+      return false;
+    }
+
+    console.log('🔄 === Ultimate 세션 복원 시작 ===');
+    
+    restoreInProgress.current = true;
     
     try {
-      // 1. Zustand 데이터 검사 및 DID 검증
-      const authStorageData = localStorage.getItem('auth-storage');
-      if (authStorageData) {
-        try {
-          const parsedData = JSON.parse(authStorageData);
-          const user = parsedData.state?.user || parsedData.user;
-          
-          if (user && user.did && !validateDID(user.did)) {
-            console.warn(`❌ Zustand의 무효한 DID 발견: ${user.did}`);
-            return handleInvalidDID(user.did, 'Zustand persist 구형 DID');
-          }
-        } catch (error) {
-          console.warn('⚠️ Zustand 데이터 파싱 실패, 삭제');
-          localStorage.removeItem('auth-storage');
-        }
+      setAuthState(prev => ({ 
+        ...prev, 
+        isLoading: true, 
+        error: null,
+        lastRestoreTime: now
+      }));
+
+      // 5. API 호출 타임아웃 설정 (문서 4에서)
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('세션 복원 요청 타임아웃')), 15000)
+      );
+
+      const restorePromise = apiClient.restoreSession();
+      const response = await Promise.race([restorePromise, timeoutPromise]) as any;
+
+      // 6. 컴포넌트 언마운트 확인 (문서 4에서)
+      if (!mountedRef.current) {
+        console.log('🔄 컴포넌트 언마운트됨 - 세션 복원 중단');
+        return false;
       }
 
-      // 2. 세션 토큰 확인
-      const savedToken = getSessionToken();
-      if (!savedToken) {
-        console.log('📭 저장된 세션 토큰 없음');
-        setAuthState({
-          user: null,
-          isLoading: false,
-          isAuthenticated: false,
-          sessionToken: null,
-          error: null
+      if (response && response.success && response.user) {
+        // 7. 서버 데이터 DID 검증 (문서 5에서)
+        if (!validateDID(response.user.did)) {
+          console.warn(`❌ 서버 DID 무효: ${response.user.did}`);
+          return handleInvalidDID(response.user.did, '서버 구형 DID');
+        }
+
+        console.log('✅ Ultimate 세션 복원 성공:', {
+          username: response.user.username,
+          did: response.user.did,
+          cueBalance: response.user.cueBalance
         });
-        return { success: false, reason: 'no_token' };
+
+        const user = {
+          ...response.user,
+          authenticated: true,
+          cueBalance: response.user.cue_tokens || response.user.cueBalance || 0,
+          trustScore: response.user.trust_score || response.user.trustScore || 50,
+          passportLevel: response.user.passport_level || response.user.passportLevel || 'Basic'
+        };
+
+        setAuthState(prev => ({
+          ...prev,
+          user,
+          isAuthenticated: true,
+          isLoading: false,
+          sessionId: sessionToken,
+          sessionToken: sessionToken,
+          error: null
+        }));
+
+        // 8. 토큰 동기화 (문서 5에서)
+        notifyTokenChange(sessionToken);
+
+        return true;
+
+      } else {
+        console.log('❌ 세션 복원 실패 - 토큰 정리');
+        
+        apiClient.clearSessionToken();
+        clearAllAuthData();
+        
+        setAuthState(prev => ({
+          ...prev,
+          user: null,
+          isAuthenticated: false,
+          isLoading: false,
+          sessionId: null,
+          sessionToken: null,
+          error: '세션이 만료되었습니다'
+        }));
+
+        return false;
       }
 
-      // 3. WebAuthn API 세션 복원
-      webauthnAPI.setSessionToken(savedToken);
-      const result = await webauthnAPI.restoreSession();
-      
-      if (result && result.success && result.user) {
-        // 서버 데이터 DID 검증
+    } catch (error: any) {
+      console.error('💥 Ultimate 세션 복원 오류:', error);
+
+      if (!mountedRef.current) return false;
+
+      // 네트워크 오류 vs 인증 오류 구분 (문서 4에서)
+      const isNetworkError = error.message.includes('fetch') || 
+                           error.message.includes('network') || 
+                           error.message.includes('타임아웃');
+
+      if (isNetworkError) {
+        setAuthState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: '네트워크 연결을 확인해주세요'
+        }));
+      } else {
+        apiClient.clearSessionToken();
+        clearAllAuthData();
+        setAuthState(prev => ({
+          ...prev,
+          user: null,
+          isAuthenticated: false,
+          isLoading: false,
+          sessionId: null,
+          sessionToken: null,
+          error: '인증이 필요합니다'
+        }));
+      }
+
+      return false;
+
+    } finally {
+      restoreInProgress.current = false;
+    }
+  }, [authState.lastRestoreTime, validateDID, handleInvalidDID, clearAllAuthData, notifyTokenChange]);
+
+  // ============================================================================
+  // 🆕 WebAuthn 등록 (문서 4 + DID 검증 추가)
+  // ============================================================================
+  
+  const register = useCallback(async (): Promise<{
+    success: boolean;
+    user?: User;
+    error?: string;
+  }> => {
+    console.log('🆕 === Ultimate WebAuthn 등록 시작 ===');
+
+    try {
+      setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
+
+      const result = await apiClient.startWebAuthnRegistration();
+
+      if (!mountedRef.current) return { success: false, error: '컴포넌트 언마운트됨' };
+
+      if (result.success && result.user) {
+        // DID 검증 추가
         if (!validateDID(result.user.did)) {
-          console.warn(`❌ 서버 DID 무효: ${result.user.did}`);
-          return handleInvalidDID(result.user.did, '서버 구형 DID');
+          throw new Error('서버에서 유효하지 않은 DID를 반환했습니다');
         }
+
+        console.log('✅ Ultimate 등록 성공:', result.user.username);
 
         const user = {
           ...result.user,
@@ -414,208 +502,191 @@ export const useAuth = () => {
           passportLevel: result.user.passport_level || result.user.passportLevel || 'Basic'
         };
 
-        setAuthState({
+        setAuthState(prev => ({
+          ...prev,
           user,
-          isLoading: false,
           isAuthenticated: true,
-          sessionToken: savedToken,
+          isLoading: false,
+          sessionId: result.sessionId || null,
+          sessionToken: result.sessionToken || null,
           error: null
-        });
+        }));
 
-        // 🔧 PersistentDataAPIClient에 토큰 동기화 (1번 기능)
-        notifyTokenChange(savedToken);
-        
-        console.log('✅ 세션 복원 성공:', user.username);
+        // 토큰 동기화
+        if (result.sessionToken) {
+          notifyTokenChange(result.sessionToken);
+        }
+
         return { success: true, user };
+
       } else {
-        throw new Error('세션 복원 실패');
+        const errorMessage = result.message || '등록에 실패했습니다';
+        
+        setAuthState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: errorMessage
+        }));
+
+        return { success: false, error: errorMessage };
       }
 
     } catch (error: any) {
-      console.error('💥 세션 복원 실패:', error.message);
+      console.error('💥 Ultimate 등록 실패:', error);
+
+      if (!mountedRef.current) return { success: false, error: '컴포넌트 언마운트됨' };
+
+      const errorMessage = error.message || '등록 중 오류가 발생했습니다';
       
-      clearAllAuthData();
-      setAuthState({
-        user: null,
+      setAuthState(prev => ({
+        ...prev,
         isLoading: false,
-        isAuthenticated: false,
-        sessionToken: null,
-        error: error.message
-      });
-      
-      return { success: false, reason: error.message };
-    }
-  }, [getSessionToken, webauthnAPI, validateDID, handleInvalidDID, clearAllAuthData, notifyTokenChange]);
-
-  // ============================================================================
-  // 🔧 통합 WebAuthn 인증 (2번 기능 + 1번 동기화)
-  // ============================================================================
-
-  const authenticateWithWebAuthn = useCallback(async () => {
-    try {
-      console.log('🔐 === 통합 WebAuthn 인증 시작 ===');
-      setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
-      
-      const result = await webauthnAPI.unifiedWebAuthnAuth();
-      
-      if (result.success && result.user) {
-        // DID 검증
-        if (!validateDID(result.user.did)) {
-          throw new Error('서버에서 유효하지 않은 DID를 반환했습니다');
-        }
-
-        // 세션 토큰 저장
-        if (result.sessionToken && saveSessionToken(result.sessionToken)) {
-          const user = {
-            ...result.user,
-            authenticated: true,
-            cueBalance: result.user.cue_tokens || result.user.cueBalance || 0,
-            trustScore: result.user.trust_score || result.user.trustScore || 50,
-            passportLevel: result.user.passport_level || result.user.passportLevel || 'Basic'
-          };
-
-          setAuthState({
-            user,
-            isLoading: false,
-            isAuthenticated: true,
-            sessionToken: result.sessionToken,
-            error: null
-          });
-          
-          console.log('✅ WebAuthn 인증 성공:', user.username);
-          return { ...result, user };
-        } else {
-          throw new Error('세션 토큰 저장 실패');
-        }
-      } else {
-        throw new Error(result.message || '인증 실패');
-      }
-    } catch (error: any) {
-      console.error('💥 WebAuthn 인증 실패:', error);
-      setAuthState(prev => ({ 
-        ...prev, 
-        isLoading: false, 
-        error: error.message 
+        error: errorMessage
       }));
-      throw error;
+
+      return { success: false, error: errorMessage };
     }
-  }, [webauthnAPI, saveSessionToken, validateDID]);
+  }, [validateDID, notifyTokenChange]);
 
   // ============================================================================
-  // 🔧 호환성 함수들 (2번 기능)
+  // 🚪 로그아웃 (완전 통합)
   // ============================================================================
+  
+  const logout = useCallback(async (): Promise<boolean> => {
+    console.log('🚪 === Ultimate 로그아웃 시작 ===');
 
-  const registerWithWebAuthn = useCallback(async (userName?: string, userEmail?: string) => {
-    const result = await authenticateWithWebAuthn();
-    return {
-      ...result,
-      message: result.isExistingUser 
-        ? '기존 계정으로 로그인되었습니다!' 
-        : '새 계정이 등록되었습니다!'
-    };
-  }, [authenticateWithWebAuthn]);
-
-  const loginWithWebAuthn = useCallback(async (userEmail?: string) => {
-    const result = await authenticateWithWebAuthn();
-    return {
-      ...result,
-      message: result.isExistingUser 
-        ? '로그인되었습니다!' 
-        : '새 계정이 생성되어 로그인되었습니다!'
-    };
-  }, [authenticateWithWebAuthn]);
-
-  // ============================================================================
-  // 🔧 로그아웃 (전체 기능 통합)
-  // ============================================================================
-
-  const logout = useCallback(async () => {
     try {
-      console.log('🚪 === 로그아웃 시작 ===');
       setAuthState(prev => ({ ...prev, isLoading: true }));
-      
-      try {
-        await webauthnAPI.logout();
-        console.log('✅ 서버 로그아웃 성공');
-      } catch (error) {
-        console.warn('⚠️ 서버 로그아웃 실패:', error);
-      }
-      
+
+      // 백엔드 로그아웃 API 호출
+      await apiClient.logout();
+
+      if (!mountedRef.current) return false;
+
+      // 완전한 데이터 정리
       clearAllAuthData();
-      
-      setAuthState({
+
+      // 상태 초기화
+      setAuthState(prev => ({
+        ...prev,
         user: null,
-        isLoading: false,
         isAuthenticated: false,
+        isLoading: false,
+        sessionId: null,
         sessionToken: null,
-        error: null
-      });
-      
-      console.log('✅ 로그아웃 완료');
+        error: null,
+        lastRestoreTime: 0
+      }));
+
+      console.log('✅ Ultimate 로그아웃 완료');
+      return true;
+
     } catch (error: any) {
-      console.error('💥 로그아웃 오류:', error);
-      // 오류가 있어도 로컬 상태는 정리
+      console.error('💥 Ultimate 로그아웃 오류:', error);
+
+      if (!mountedRef.current) return false;
+
+      // 오류가 발생해도 로컬 상태는 초기화
       clearAllAuthData();
-      setAuthState({
+      setAuthState(prev => ({
+        ...prev,
         user: null,
-        isLoading: false,
         isAuthenticated: false,
+        isLoading: false,
+        sessionId: null,
         sessionToken: null,
         error: null
-      });
+      }));
+
+      return false;
     }
-  }, [webauthnAPI, clearAllAuthData]);
+  }, [clearAllAuthData]);
 
   // ============================================================================
-  // 🔧 사용자 정보 새로고침 (2번 기능 + DID 검증)
+  // 🔄 주기적 세션 체크 (문서 4에서)
   // ============================================================================
+  
+  const startPeriodicSessionCheck = useCallback(() => {
+    if (restoreTimeoutRef.current) {
+      clearInterval(restoreTimeoutRef.current);
+    }
 
-  const refreshUser = useCallback(async () => {
-    try {
-      const token = getSessionToken();
-      if (!token) return;
-
-      const response = await fetch('http://localhost:3001/api/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      
-      if (data.success && data.user) {
-        // DID 검증
-        if (!validateDID(data.user.did)) {
-          return handleInvalidDID(data.user.did, '새로고침 서버 데이터 구형 DID');
-        }
-
-        const user = {
-          ...data.user,
-          authenticated: true,
-          cueBalance: data.user.cue_tokens || data.user.cueBalance || 0,
-          trustScore: data.user.trust_score || data.user.trustScore || 50,
-          passportLevel: data.user.passport_level || data.user.passportLevel || 'Basic'
-        };
-
-        setAuthState(prev => ({ ...prev, user }));
-        console.log('✅ 사용자 정보 새로고침 완료');
+    // 10분마다 세션 유효성 확인
+    restoreTimeoutRef.current = setInterval(() => {
+      if (authState.isAuthenticated && !restoreInProgress.current) {
+        console.log('🕒 주기적 세션 체크');
+        restoreSession(false).catch(() => {
+          // 에러는 무시 (사용자에게 방해되지 않도록)
+        });
       }
-    } catch (error) {
-      console.error('💥 사용자 정보 새로고침 실패:', error);
-    }
-  }, [getSessionToken, validateDID, handleInvalidDID]);
+    }, 10 * 60 * 1000); // 10분
+
+  }, [authState.isAuthenticated, restoreSession]);
 
   // ============================================================================
-  // 🔧 에러 처리 (2번 기능)
+  // 🌐 WebSocket 상태 관리 (문서 5에서)
   // ============================================================================
+
+  const updateWebSocketStatus = useCallback((status: 'disconnected' | 'connecting' | 'connected') => {
+    setWebsocketStatus(status);
+  }, []);
+
+  // ============================================================================
+  // 🔧 초기화 및 정리 (문서 4 + 문서 5 통합)
+  // ============================================================================
+  
+  useEffect(() => {
+    mountedRef.current = true;
+
+    // 페이지 로드 시 한 번만 세션 복원 시도
+    const initializeAuth = async () => {
+      console.log('🚀 Ultimate useAuth 초기화');
+      
+      // 약간의 지연 후 세션 복원
+      setTimeout(() => {
+        restoreSession(true);
+      }, 100);
+    };
+
+    initializeAuth();
+    startPeriodicSessionCheck();
+
+    // 정리 함수
+    return () => {
+      mountedRef.current = false;
+      
+      if (restoreTimeoutRef.current) {
+        clearInterval(restoreTimeoutRef.current);
+        restoreTimeoutRef.current = null;
+      }
+    };
+  }, []); // 빈 배열로 한 번만 실행
+
+  // 토큰 변경 감지 및 알림
+  useEffect(() => {
+    notifyTokenChange(authState.sessionToken);
+  }, [authState.sessionToken, notifyTokenChange]);
+
+  // ============================================================================
+  // 🔧 수동 새로고침 및 유틸리티
+  // ============================================================================
+  
+  const refresh = useCallback(() => {
+    console.log('🔄 수동 세션 새로고침');
+    return restoreSession(true);
+  }, [restoreSession]);
 
   const clearError = useCallback(() => {
     setAuthState(prev => ({ ...prev, error: null }));
   }, []);
 
+  const forceNewUser = useCallback(() => {
+    console.log('🆕 강제 새 사용자 모드');
+    return handleInvalidDID('manual-reset', '수동 초기화');
+  }, [handleInvalidDID]);
+
   // ============================================================================
-  // 🔧 향상된 디버그 정보 (전체 기능 통합)
+  // 📊 완전한 디버그 정보
   // ============================================================================
 
   const getDebugInfo = useCallback(() => {
@@ -627,7 +698,12 @@ export const useAuth = () => {
         username: authState.user?.username,
         userDID: authState.user?.did,
         cueBalance: authState.user?.cueBalance,
-        error: authState.error
+        error: authState.error,
+        lastRestoreTime: authState.lastRestoreTime
+      },
+      flags: {
+        restoreInProgress: restoreInProgress.current,
+        mountedRef: mountedRef.current
       },
       tokens: {
         sessionToken: !!localStorage.getItem('session_token'),
@@ -644,80 +720,53 @@ export const useAuth = () => {
         status: websocketStatus,
         callbacks: tokenSyncCallbacks.length
       },
-      sync: {
-        tokenCallbacks: tokenSyncCallbacks.length,
-        lastTokenSync: authState.sessionToken ? 'Synced' : 'No Token'
-      },
+      version: 'v4.0-Ultimate',
       timestamp: new Date().toISOString()
     };
   }, [authState, websocketStatus, tokenSyncCallbacks]);
 
   // ============================================================================
-  // 🔧 수동 초기화 (3번 기능)
+  // 📤 Ultimate Return 값
   // ============================================================================
-
-  const forceNewUser = useCallback(() => {
-    console.log('🆕 강제 새 사용자 모드');
-    return handleInvalidDID('manual-reset', '수동 초기화');
-  }, [handleInvalidDID]);
-
-  // ============================================================================
-  // 🔧 초기화 Effect (개선됨)
-  // ============================================================================
-
-  useEffect(() => {
-    console.log('🚀 useAuth 초기화 - 통합 버전 세션 복원');
-    restoreSession();
-  }, [restoreSession]);
-
-  // 토큰 변경 감지 및 알림 (1번 기능)
-  useEffect(() => {
-    notifyTokenChange(authState.sessionToken);
-  }, [authState.sessionToken, notifyTokenChange]);
-
-  // ============================================================================
-  // 🔧 통합 완성 반환 값
-  // ============================================================================
-
+  
   return {
-    // 기존 상태
+    // 핵심 상태
     user: authState.user,
-    isLoading: authState.isLoading,
     isAuthenticated: authState.isAuthenticated,
-    sessionToken: authState.sessionToken,
+    isLoading: authState.isLoading,
     error: authState.error,
+    sessionId: authState.sessionId,
+    sessionToken: authState.sessionToken,
     
-    // 통합 인증 (권장)
-    authenticateWithWebAuthn,
-    
-    // 호환성 인증 함수
-    loginWithWebAuthn,
-    registerWithWebAuthn,
+    // 인증 액션
+    register,
+    logout,
+    refresh,
     
     // 세션 관리
-    logout,
     restoreSession,
-    refreshUser,
-    
-    // 토큰 관리
-    saveSessionToken,
-    getSessionToken,
+    clearError,
     
     // 데이터 정리
     clearAllAuthData,
     forceNewUser,
     
-    // 에러 관리 (2번 기능)
-    clearError,
+    // 하이브리드 연동 (문서 5에서)
+    registerTokenSyncCallback,
+    updateCueBalance,
+    updateWebSocketStatus,
+    websocketStatus,
     
-    // 🔧 하이브리드 연동 인터페이스 (1번 기능)
-    registerTokenSyncCallback,      // PersistentDataAPIClient가 토큰 동기화 등록
-    updateCueBalance,               // 실시간 CUE 업데이트
-    updateWebSocketStatus,          // WebSocket 상태 업데이트
-    websocketStatus,                // WebSocket 상태 조회
+    // DID 검증 (문서 5에서)
+    validateDID,
+    handleInvalidDID,
     
-    // 디버깅 및 유틸리티
-    getDebugInfo,
-    validateDID
+    // 디버그 정보
+    debug: {
+      lastRestoreTime: authState.lastRestoreTime,
+      restoreInProgress: restoreInProgress.current,
+      mountedRef: mountedRef.current,
+      getDebugInfo
+    }
   };
-};
+}
