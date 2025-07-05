@@ -1,6 +1,6 @@
 // ============================================================================
-// 📁 backend/src/config/auth.ts
-// 🔧 통합 AuthConfig - 모든 인증 관련 설정을 중앙에서 관리
+// 📁 backend/src/config/auth.ts - 최종 완성 버전
+// 수정 위치: 기존 파일을 이 내용으로 완전 교체
 // ============================================================================
 
 import crypto from 'crypto';
@@ -8,13 +8,29 @@ import crypto from 'crypto';
 export class AuthConfig {
   private static instance: AuthConfig;
   
-  // 🔑 JWT 설정
+  // 🔑 JWT 설정 (기존 호환성)
+  public readonly jwt: {
+    secret: string;
+    expiresIn: string;
+    issuer: string;
+    audience: string;
+  };
+
+  // 🔐 WebAuthn 설정 (기존 호환성)
+  public readonly webAuthn: {
+    rpName: string;
+    rpID: string;
+    origin: string;
+    timeout: number;
+  };
+
+  // 🔑 새로운 JWT 설정
   public readonly JWT_SECRET: string;
   public readonly JWT_EXPIRES_IN: string;
   public readonly JWT_ISSUER: string;
   public readonly JWT_AUDIENCE: string;
 
-  // 🔐 WebAuthn 설정
+  // 🔐 새로운 WebAuthn 설정
   public readonly WEBAUTHN_RP_NAME: string;
   public readonly WEBAUTHN_RP_ID: string;
   public readonly WEBAUTHN_ORIGIN: string;
@@ -57,6 +73,21 @@ export class AuthConfig {
     this.WEBAUTHN_RP_ID = process.env.WEBAUTHN_RP_ID || 'localhost';
     this.WEBAUTHN_ORIGIN = process.env.WEBAUTHN_ORIGIN || 'http://localhost:3000';
     this.WEBAUTHN_TIMEOUT = parseInt(process.env.WEBAUTHN_TIMEOUT || '60000');
+
+    // 기존 호환성을 위한 객체 형태 설정
+    this.jwt = {
+      secret: this.JWT_SECRET,
+      expiresIn: this.JWT_EXPIRES_IN,
+      issuer: this.JWT_ISSUER,
+      audience: this.JWT_AUDIENCE
+    };
+
+    this.webAuthn = {
+      rpName: this.WEBAUTHN_RP_NAME,
+      rpID: this.WEBAUTHN_RP_ID,
+      origin: this.WEBAUTHN_ORIGIN,
+      timeout: this.WEBAUTHN_TIMEOUT
+    };
 
     // 세션 설정
     this.SESSION_TIMEOUT = parseInt(process.env.SESSION_TIMEOUT || (30 * 24 * 60 * 60 * 1000).toString()); // 30일
@@ -196,6 +227,43 @@ export class AuthConfig {
     console.log(`🎯 Default Trust Score: ${this.DEFAULT_TRUST_SCORE}`);
     console.log(`🔑 JWT Secret Length: ${this.JWT_SECRET.length}자`);
     console.log('🔐 ================================');
+  }
+
+  // ============================================================================
+  // 🎯 기존 호환성 메서드들
+  // ============================================================================
+
+  /**
+   * 세션 토큰 생성 (기존 코드 호환성)
+   */
+  public generateSessionToken(payload: any): string {
+    try {
+      const jwt = require('jsonwebtoken');
+      return jwt.sign(payload, this.JWT_SECRET, { 
+        expiresIn: this.JWT_EXPIRES_IN,
+        issuer: this.JWT_ISSUER,
+        audience: this.JWT_AUDIENCE
+      });
+    } catch (error) {
+      console.error('❌ JWT 토큰 생성 실패:', error);
+      return '';
+    }
+  }
+
+  /**
+   * 세션 토큰 검증 (기존 코드 호환성)
+   */
+  public verifySessionToken(token: string): any {
+    try {
+      const jwt = require('jsonwebtoken');
+      return jwt.verify(token, this.JWT_SECRET, {
+        issuer: this.JWT_ISSUER,
+        audience: this.JWT_AUDIENCE
+      });
+    } catch (error) {
+      console.error('❌ JWT 토큰 검증 실패:', error);
+      return null;
+    }
   }
 
   // ============================================================================
@@ -396,81 +464,7 @@ ${config.errors.length > 0 ? '- Errors: ' + config.errors.join(', ') : ''}
     `.trim();
   }
 }
-// ============================================================================
-// 📁 backend/src/config/auth.ts - AuthConfig 수정
-// 수정 위치: 기존 파일에 webAuthn 설정 추가
-// ============================================================================
 
-export class AuthConfig {
-  private static instance: AuthConfig;
-  
-  public readonly jwt: {
-    secret: string;
-    expiresIn: string;
-  };
-  
-  public readonly webAuthn: {
-    rpName: string;
-    rpID: string;
-    origin: string;
-    timeout: number;
-  };
-
-  private constructor() {
-    // JWT 설정
-    this.jwt = {
-      secret: process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production',
-      expiresIn: process.env.JWT_EXPIRES_IN || '7d'
-    };
-
-    // WebAuthn 설정 (핵심 추가!)
-    this.webAuthn = {
-      rpName: process.env.WEBAUTHN_RP_NAME || 'AI Personal Assistant',
-      rpID: process.env.WEBAUTHN_RP_ID || 'localhost',
-      origin: process.env.WEBAUTHN_ORIGIN || 'http://localhost:3000',
-      timeout: parseInt(process.env.WEBAUTHN_TIMEOUT || '60000')
-    };
-
-    console.log('🔐 AuthConfig 초기화 완료:', {
-      jwtConfigured: !!this.jwt.secret,
-      webAuthnRP: this.webAuthn.rpName,
-      webAuthnOrigin: this.webAuthn.origin
-    });
-  }
-
-  public static getInstance(): AuthConfig {
-    if (!AuthConfig.instance) {
-      AuthConfig.instance = new AuthConfig();
-    }
-    return AuthConfig.instance;
-  }
-
-  /**
-   * 세션 토큰 생성
-   */
-  public generateSessionToken(payload: any): string {
-    try {
-      const jwt = require('jsonwebtoken');
-      return jwt.sign(payload, this.jwt.secret, { expiresIn: this.jwt.expiresIn });
-    } catch (error) {
-      console.error('❌ JWT 토큰 생성 실패:', error);
-      return '';
-    }
-  }
-
-  /**
-   * 세션 토큰 검증
-   */
-  public verifySessionToken(token: string): any {
-    try {
-      const jwt = require('jsonwebtoken');
-      return jwt.verify(token, this.jwt.secret);
-    } catch (error) {
-      console.error('❌ JWT 토큰 검증 실패:', error);
-      return null;
-    }
-  }
-}
 // ============================================================================
 // 📤 Export 및 초기화
 // ============================================================================
