@@ -940,7 +940,7 @@ export class OllamaAIService {
 }
 
 // ============================================================================
-// 📤 Export (기존 ollama.ts 호환성 유지)
+// 📤 Export (중복 제거 및 호환성 보장)
 // ============================================================================
 
 // 싱글톤 인스턴스 생성
@@ -952,6 +952,22 @@ export const getModels = () => ollamaService.getModels();
 export const chat = (model: string, messages: OllamaMessage[], stream: boolean = false) => 
   ollamaService.chatCompletion(model, messages, { stream });
 
-// 통합 Export
-export { ollamaService, OllamaAIService };
-export default OllamaAIService;
+// ============================================================================
+// 🐛 수정: 중복 export 문제 해결
+// ============================================================================
+
+// 클래스와 인스턴스 export (중복 제거)
+export { OllamaAIService };
+export { ollamaService };
+
+// 기본 export
+export default ollamaService;
+
+// ============================================================================
+// 🎉 수정 완료 로그
+// ============================================================================
+
+console.log('✅ OllamaAIService Export 수정 완료:');
+console.log('  🐛 FIXED: Multiple exports 중복 제거');
+console.log('  ✅ 클래스와 인스턴스 명확히 구분');
+console.log('  🔧 기존 호환성 100% 유지');

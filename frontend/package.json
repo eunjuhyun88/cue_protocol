@@ -21,6 +21,7 @@
     "framer-motion": "^12.22.0",
     "lucide-react": "^0.263.1",
     "next": "^14.0.0",
+    "next-intl": "^4.3.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-dropzone": "^14.3.8",
@@ -33,7 +34,7 @@
     "typescript": "^5.0.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.8",
+    "@types/node": "^24.0.10",
     "autoprefixer": "^10.4.0",
     "eslint": "^8.0.0",
     "eslint-config-next": "^14.0.0",

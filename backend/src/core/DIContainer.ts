@@ -633,13 +633,23 @@ export class DIContainer {
     // 4️⃣ WebAuthnService (모든 의존성 통합 - Document 1)
     this.registerSingleton('WebAuthnService', (container) => {
       try {
-        const { WebAuthnService } = require('../services/auth/WebAuthnService');
+        const webAuthnModule = require('../services/auth/WebAuthnService');
+        
+        // 다양한 export 형태 지원
+        const WebAuthnServiceClass = webAuthnModule.WebAuthnService || 
+                                   webAuthnModule.default || 
+                                   webAuthnModule;
+        
+        if (typeof WebAuthnServiceClass !== 'function') {
+          throw new Error('WebAuthnService is not a constructor function');
+        }
+        
         const authConfig = container.get('AuthConfig');
         const authService = container.get('AuthService');
         const sessionService = container.get('SessionService');
         
         console.log('✅ WebAuthnService 생성 성공 (모든 세션 의존성 통합)');
-        return new WebAuthnService(authConfig, authService, sessionService);
+        return new WebAuthnServiceClass(authConfig, authService, sessionService);
       } catch (error: any) {
         this.logError('WebAuthnService', error, 'warning');
         // Graceful Degradation

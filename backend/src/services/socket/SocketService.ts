@@ -7,7 +7,7 @@
 import express from 'express';
 import cors from 'cors';
 import { Request, Response, NextFunction } from 'express';
-import { DatabaseService } from './services/database/DatabaseService';
+import { DatabaseService } from '../database/DatabaseService';
 import { createServer } from 'http';
 import SocketService from './services/socket/SocketService';
 
