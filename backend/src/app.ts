@@ -488,8 +488,11 @@ app.get('/health', (req: Request, res: Response) => {
 // 🛣️ 안전한 라우트 로딩 시스템 (1번 파일 방식 + 2번 기능)
 // ============================================================================
 
+// ✨ 수정 위치: backend/src/app.ts
+// ⬇ `loadRoutesSafely` 함수를 아래로 완전 교체하세요
+
 /**
- * 🛣️ 안전한 라우트 로딩 (1번 파일 방식)
+ * 🛣️ DI Container + 안전한 라우트 로딩 (완전 통합)
  */
 async function loadRoutesSafely() {
   try {
@@ -498,176 +501,211 @@ async function loadRoutesSafely() {
       return;
     }
 
-    console.log('🚀 ===== 안전한 라우트 로딩 시작 =====');
+    console.log('🚀 ===== DI Container + 안전한 라우트 로딩 시작 =====');
 
-    // ✅ WebAuthn 라우트 (가장 중요 - 우선 로드)
-    console.log('📡 Loading WebAuthn routes...');
+    // ✅ 1. DI Container 라우트 마운트 (최우선)
+    if (container) {
+      console.log('🔧 DI Container 라우트 마운트 시작...');
+      
+      try {
+        // WebAuthn 라우트 (DI Container)
+        const webauthnRoutes = container.get('AuthWebAuthnRoutes');
+        if (webauthnRoutes && typeof webauthnRoutes.use === 'function') {
+          app.use('/api/auth/webauthn', webauthnRoutes);
+          console.log('✅ DI WebAuthn routes mounted at /api/auth/webauthn');
+        }
+      } catch (e) {
+        console.warn('⚠️ DI WebAuthn routes 마운트 실패:', e.message);
+      }
+
+      try {
+        // 통합 인증 라우트 (DI Container)
+        const unifiedAuthRoutes = container.get('AuthUnifiedRoutes');
+        if (unifiedAuthRoutes && typeof unifiedAuthRoutes.use === 'function') {
+          app.use('/api/auth', unifiedAuthRoutes);
+          console.log('✅ DI Unified Auth routes mounted at /api/auth');
+        }
+      } catch (e) {
+        console.warn('⚠️ DI Unified Auth routes 마운트 실패:', e.message);
+      }
+
+      try {
+        // AI 라우트 (DI Container)
+        const aiRoutes = container.get('AIIndexRoutes');
+        if (aiRoutes && typeof aiRoutes.use === 'function') {
+          app.use('/api/ai', aiRoutes);
+          console.log('✅ DI AI routes mounted at /api/ai');
+        }
+      } catch (e) {
+        console.warn('⚠️ DI AI routes 마운트 실패:', e.message);
+      }
+
+      try {
+        // CUE 라우트 (DI Container)
+        const cueRoutes = container.get('CUERoutes');
+        if (cueRoutes && typeof cueRoutes.use === 'function') {
+          app.use('/api/cue', cueRoutes);
+          console.log('✅ DI CUE routes mounted at /api/cue');
+        }
+      } catch (e) {
+        console.warn('⚠️ DI CUE routes 마운트 실패:', e.message);
+      }
+
+      try {
+        // Passport 라우트 (DI Container)
+        const passportRoutes = container.get('PassportRoutes');
+        if (passportRoutes && typeof passportRoutes.use === 'function') {
+          app.use('/api/passport', passportRoutes);
+          console.log('✅ DI Passport routes mounted at /api/passport');
+        }
+      } catch (e) {
+        console.warn('⚠️ DI Passport routes 마운트 실패:', e.message);
+      }
+
+      try {
+        // 데이터 볼트 라우트 (DI Container)
+        const vaultRoutes = container.get('VaultRoutes');
+        if (vaultRoutes && typeof vaultRoutes.use === 'function') {
+          app.use('/api/vault', vaultRoutes);
+          console.log('✅ DI Vault routes mounted at /api/vault');
+        }
+      } catch (e) {
+        console.warn('⚠️ DI Vault routes 마운트 실패:', e.message);
+      }
+
+      try {
+        // 플랫폼 라우트 (DI Container)
+        const platformRoutes = container.get('PlatformRoutes');
+        if (platformRoutes && typeof platformRoutes.use === 'function') {
+          app.use('/api/platform', platformRoutes);
+          console.log('✅ DI Platform routes mounted at /api/platform');
+        }
+      } catch (e) {
+        console.warn('⚠️ DI Platform routes 마운트 실패:', e.message);
+      }
+
+      if (NODE_ENV === 'development') {
+        try {
+          // 디버그 라우트 (DI Container)
+          const debugRoutes = container.get('DebugRoutes');
+          if (debugRoutes && typeof debugRoutes.use === 'function') {
+            app.use('/api/debug', debugRoutes);
+            console.log('✅ DI Debug routes mounted at /api/debug (development)');
+          }
+        } catch (e) {
+          console.warn('⚠️ DI Debug routes 마운트 실패:', e.message);
+        }
+      }
+
+      console.log('🎯 DI Container 라우트 마운트 완료');
+    }
+
+    // ✅ 2. Fallback 라우트 로딩 (DI 실패 시)
+    console.log('🔄 Fallback 라우트 로딩 확인 중...');
+
+    // WebAuthn 라우트 Fallback
     try {
       const webauthnModule = await import('./routes/auth/webauthn');
       const webauthnRouter = webauthnModule.default;
       
       if (webauthnRouter && typeof webauthnRouter === 'function') {
-        app.use('/api/auth/webauthn', webauthnRouter);
-        console.log('✅ WebAuthn routes loaded successfully at /api/auth/webauthn');
-      } else {
-        console.error('❌ WebAuthn router is not a valid Express router');
-        console.log('WebAuthn module exports:', Object.keys(webauthnModule));
+        // DI Container 라우트가 없는 경우에만 마운트
+        if (!container?.has('AuthWebAuthnRoutes')) {
+          app.use('/api/auth/webauthn', webauthnRouter);
+          console.log('✅ Fallback WebAuthn routes loaded at /api/auth/webauthn');
+        }
       }
     } catch (error) {
-      console.error('❌ Failed to load WebAuthn routes:', error);
-      console.error('Stack:', error.stack);
+      console.warn('⚠️ Fallback WebAuthn routes 로드 실패:', error);
     }
 
-    // ✅ 통합 인증 라우트 (2번 파일에서 추가)
-    console.log('📡 Loading Unified Auth routes...');
-    try {
-      const unifiedAuthModule = await import('./routes/auth/unified');
-      const unifiedAuthRouter = unifiedAuthModule.default;
-      if (unifiedAuthRouter) {
-        app.use('/api/auth', unifiedAuthRouter);
-        console.log('✅ Unified Auth routes loaded successfully');
-      }
-    } catch (error) {
-      console.error('❌ Failed to load Unified Auth routes:', error);
-    }
-
-    // ✅ 세션 복원 라우트 (2번 파일에서 추가)
-    console.log('📡 Loading Session Restore routes...');
-    try {
-      const sessionRestoreModule = await import('./routes/auth/session-restore');
-      const sessionRestoreRouter = sessionRestoreModule.default;
-      if (sessionRestoreRouter) {
-        app.use('/api/auth/session', sessionRestoreRouter);
-        console.log('✅ Session Restore routes loaded successfully');
-      }
-    } catch (error) {
-      console.error('❌ Failed to load Session Restore routes:', error);
-    }
-
-    // ✅ AI 채팅 라우트
-    console.log('📡 Loading AI routes...');
+    // AI 라우트 Fallback
     try {
       const aiModule = await import('./routes/ai/index');
       const aiRouter = aiModule.default;
-      if (aiRouter) {
+      if (aiRouter && !container?.has('AIIndexRoutes')) {
         app.use('/api/ai', aiRouter);
-        console.log('✅ AI routes loaded successfully');
+        console.log('✅ Fallback AI routes loaded at /api/ai');
       }
     } catch (error) {
-      console.error('❌ Failed to load AI routes:', error);
+      console.warn('⚠️ Fallback AI routes 로드 실패:', error);
       
-      // AI 인덱스 파일이 없으면 개별 파일 시도
+      // AI 개별 파일 시도
       try {
         const aiChatModule = await import('./routes/ai/chat');
         const aiChatRouter = aiChatModule.default;
-        if (aiChatRouter) {
+        if (aiChatRouter && !container?.has('AIIndexRoutes')) {
           app.use('/api/ai', aiChatRouter);
-          console.log('✅ AI Chat routes loaded successfully (fallback)');
+          console.log('✅ Fallback AI Chat routes loaded');
         }
       } catch (fallbackError) {
-        console.error('❌ Failed to load AI Chat routes (fallback):', fallbackError);
+        console.warn('⚠️ Fallback AI Chat routes 로드 실패:', fallbackError);
       }
     }
 
-    // ✅ Passport 라우트
-    console.log('📡 Loading Passport routes...');
-    try {
-      const passportModule = await import('./routes/passport/index');
-      const passportRouter = passportModule.default;
-      if (passportRouter) {
-        app.use('/api/passport', passportRouter);
-        console.log('✅ Passport routes loaded successfully');
-      }
-    } catch (error) {
-      console.error('❌ Failed to load Passport routes:', error);
-      
-      // 인덱스 파일이 없으면 개별 파일 시도
-      try {
-        const passportMainModule = await import('./routes/passport/passport');
-        const passportMainRouter = passportMainModule.default;
-        if (passportMainRouter) {
-          app.use('/api/passport', passportMainRouter);
-          console.log('✅ Passport routes loaded successfully (fallback)');
+    // ✅ 3. API 목록 엔드포인트 추가
+    app.get('/api', (req: Request, res: Response) => {
+      res.json({
+        service: 'AI Personal Ultimate Fusion Backend',
+        version: '3.2.0-ultimate-fusion',
+        status: 'running',
+        timestamp: new Date().toISOString(),
+        diContainer: !!container,
+        routingMethod: container ? 'DI Container + Fallback' : 'Direct Import',
+        availableEndpoints: {
+          auth: {
+            webauthn: [
+              'POST /api/auth/webauthn/register/start',
+              'POST /api/auth/webauthn/register/complete',
+              'POST /api/auth/webauthn/login/start',
+              'POST /api/auth/webauthn/login/complete',
+              'GET /api/auth/webauthn/status'
+            ],
+            session: [
+              'POST /api/auth/session/restore',
+              'POST /api/auth/logout'
+            ]
+          },
+          ai: [
+            'POST /api/ai/chat',
+            'GET /api/ai/status',
+            'GET /api/ai/models'
+          ],
+          passport: [
+            'GET /api/passport/:did',
+            'POST /api/passport/:did/update'
+          ],
+          cue: [
+            'GET /api/cue/:userDid/balance',
+            'POST /api/cue/mine'
+          ],
+          vault: [
+            'POST /api/vault/save',
+            'POST /api/vault/search'
+          ],
+          platform: [
+            'GET /api/platform/:did/connected',
+            'POST /api/platform/:did/connect'
+          ],
+          crypto: [
+            'POST /api/crypto/test',
+            'GET /api/crypto/status'
+          ],
+          debug: NODE_ENV === 'development' ? [
+            'GET /api/debug/health',
+            'GET /api/debug/services'
+          ] : []
         }
-      } catch (fallbackError) {
-        console.error('❌ Failed to load Passport routes (fallback):', fallbackError);
-      }
-    }
-
-    // ✅ CUE 라우트
-    console.log('📡 Loading CUE routes...');
-    try {
-      const cueModule = await import('./routes/cue/index');
-      const cueRouter = cueModule.default;
-      if (cueRouter) {
-        app.use('/api/cue', cueRouter);
-        console.log('✅ CUE routes loaded successfully');
-      }
-    } catch (error) {
-      console.error('❌ Failed to load CUE routes:', error);
-      
-      // 인덱스 파일이 없으면 개별 파일 시도
-      try {
-        const cueMainModule = await import('./routes/cue/cue');
-        const cueMainRouter = cueMainModule.default;
-        if (cueMainRouter) {
-          app.use('/api/cue', cueMainRouter);
-          console.log('✅ CUE routes loaded successfully (fallback)');
-        }
-      } catch (fallbackError) {
-        console.error('❌ Failed to load CUE routes (fallback):', fallbackError);
-      }
-    }
-
-    // ✅ Data Vault 라우트
-    console.log('📡 Loading Data Vault routes...');
-    try {
-      const vaultModule = await import('./routes/vault/index');
-      const vaultRouter = vaultModule.default;
-      if (vaultRouter) {
-        app.use('/api/vault', vaultRouter);
-        console.log('✅ Data Vault routes loaded successfully');
-      }
-    } catch (error) {
-      console.error('❌ Failed to load Data Vault routes:', error);
-    }
-
-    // ✅ Platform 라우트 (2번 파일에서 추가)
-    console.log('📡 Loading Platform routes...');
-    try {
-      const platformModule = await import('./routes/platform/index');
-      const platformRouter = platformModule.default;
-      if (platformRouter) {
-        app.use('/api/platform', platformRouter);
-        console.log('✅ Platform routes loaded successfully');
-      }
-    } catch (error) {
-      console.error('❌ Failed to load Platform routes:', error);
-    }
-
-    // ✅ 디버그 라우트 (개발 환경만)
-    if (NODE_ENV === 'development') {
-      console.log('📡 Loading Debug routes...');
-      try {
-        const debugModule = await import('./routes/debug/index');
-        const debugRouter = debugModule.default;
-        if (debugRouter) {
-          app.use('/api/debug', debugRouter);
-          console.log('✅ Debug routes loaded successfully (development mode)');
-        }
-      } catch (error) {
-        console.warn('⚠️ Failed to load Debug routes:', error);
-      }
-    }
+      });
+    });
 
     initializationFlags.routesLoaded = true;
-    console.log('🚀 ===== 안전한 라우트 로딩 완료 =====');
+    console.log('🚀 ===== DI Container + 안전한 라우트 로딩 완료 =====');
 
   } catch (error) {
     console.error('❌ Routes loading failed:', error);
   }
 }
-
 // ============================================================================
 // 🔐 CryptoService 안전한 API 엔드포인트 (2번 파일 기능)
 // ============================================================================

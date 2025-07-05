@@ -1,10 +1,17 @@
 // ============================================================================
 // 📁 frontend/src/lib/api-client.ts
-// 🔗 완전한 API 클라이언트 - useAuth 호환 버전
-// 특징: restoreSession 메서드 포함 + Mock 폴백 지원
+// 🔗 통합 API 클라이언트 - Mock 완전 제거 + 모든 장점 통합
+// 특징:
+// - BackendAPIClient 기반으로 통합
+// - Mock 완전 제거로 명확한 디버깅
+// - 기존 구조와 100% 호환
+// - useAuth 완전 지원
+// - WebAuthn 통합 지원
 // ============================================================================
 
 'use client';
+
+import { BackendAPIClient } from '../services/api/BackendAPIClient';
 
 // WebAuthn 동적 로드
 let startRegistration: any = null;
@@ -26,438 +33,18 @@ const loadWebAuthn = async (): Promise<boolean> => {
   return !!startRegistration;
 };
 
-export class UnifiedAPIClient {
-  private baseURL: string;
-  private authToken: string | null = null;
-
+export class UnifiedAPIClient extends BackendAPIClient {
   constructor() {
-    this.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-    
-    if (typeof window !== 'undefined') {
-      this.authToken = localStorage.getItem('final0626_auth_token') || 
-                      localStorage.getItem('cue_session_token') ||
-                      localStorage.getItem('session_token');
-    }
-    
-    console.log(`🔗 UnifiedAPIClient 초기화: ${this.baseURL}`);
+    super();
+    console.log(`🔗 UnifiedAPIClient 통합 초기화`);
   }
 
   // ============================================================================
-  // 🔧 세션 토큰 관리
-  // ============================================================================
-  
-  /**
-   * 세션 토큰 저장
-   */
-  setSessionToken(token: string): void {
-    if (typeof window !== 'undefined') {
-      this.authToken = token;
-      localStorage.setItem('cue_session_token', token);
-      localStorage.setItem('session_token', token);
-      localStorage.setItem('final0626_auth_token', token);
-      console.log('💾 세션 토큰 저장됨');
-    }
-  }
-  
-  /**
-   * 세션 토큰 조회
-   */
-  getSessionToken(): string | null {
-    if (typeof window !== 'undefined') {
-      return this.authToken || 
-             localStorage.getItem('cue_session_token') ||
-             localStorage.getItem('session_token') ||
-             localStorage.getItem('final0626_auth_token');
-    }
-    return this.authToken;
-  }
-  
-  /**
-   * 세션 토큰 삭제
-   */
-  clearSessionToken(): void {
-    if (typeof window !== 'undefined') {
-      this.authToken = null;
-      const keysToRemove = [
-        'cue_session_token',
-        'session_token', 
-        'final0626_auth_token',
-        'cue_session_id',
-        'auth_timestamp'
-      ];
-      
-      keysToRemove.forEach(key => {
-        localStorage.removeItem(key);
-      });
-      
-      console.log('🗑️ 모든 세션 토큰 삭제됨');
-    }
-  }
-
-  // ============================================================================
-  // 🌐 기본 HTTP 요청 메서드
-  // ============================================================================
-
-  private async request(endpoint: string, options: RequestInit = {}): Promise<any> {
-    const url = `${this.baseURL}${endpoint}`;
-    
-    try {
-      console.log(`🌐 API 요청: ${options.method || 'GET'} ${url}`);
-      
-      const token = this.getSessionToken();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        ...options.headers as Record<string, string>
-      };
-      
-      // 토큰이 있으면 Authorization 헤더 추가
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-      
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        mode: 'cors',
-        credentials: 'include'
-      });
-
-      console.log(`📡 응답 상태: ${response.status} ${response.statusText}`);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error(`❌ HTTP 오류:`, errorData);
-        throw new Error(errorData.error || errorData.message || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      console.log(`✅ API 응답 성공:`, data);
-      return data;
-      
-    } catch (error: any) {
-      console.error(`❌ API 오류 (${endpoint}):`, error.message);
-      
-      // Mock 폴백 데이터 제공 (개발 중 백엔드 없어도 동작)
-      return this.getMockResponse(endpoint, options.method as string);
-    }
-  }
-
-  // ============================================================================
-  // 🎭 Mock 응답 (백엔드 없을 때 폴백)
-  // ============================================================================
-
-  private getMockResponse(endpoint: string, method: string = 'GET'): any {
-    console.log(`🎭 Mock 응답 생성: ${method} ${endpoint}`);
-    
-    // Health Check
-    if (endpoint.includes('/health')) {
-      return {
-        status: 'OK (Mock)',
-        timestamp: new Date().toISOString(),
-        service: 'Mock Backend Service',
-        version: '1.0.0-mock',
-        mock: true
-      };
-    }
-
-    // 세션 복원
-    if (endpoint.includes('/session/restore') || endpoint.includes('/auth/session')) {
-      const token = this.getSessionToken();
-      if (token) {
-        return {
-          success: true,
-          user: {
-            id: 'mock_user_' + Date.now(),
-            username: 'MockUser_' + Math.floor(Math.random() * 1000),
-            email: 'mock@example.com',
-            did: `did:final0626:mock_${Date.now()}`,
-            walletAddress: '0x' + Math.random().toString(16).substr(2, 8),
-            cueBalance: 1500 + Math.floor(Math.random() * 2000),
-            cue_tokens: 1500 + Math.floor(Math.random() * 2000),
-            trustScore: 75 + Math.floor(Math.random() * 25),
-            trust_score: 75 + Math.floor(Math.random() * 25),
-            passportLevel: 'Verified',
-            passport_level: 'Verified',
-            biometricVerified: true,
-            registeredAt: new Date().toISOString(),
-            authenticated: true
-          },
-          sessionToken: token,
-          sessionId: token,
-          mock: true
-        };
-      } else {
-        return {
-          success: false,
-          error: 'No session token found',
-          mock: true
-        };
-      }
-    }
-
-    // WebAuthn 등록 시작
-    if (endpoint.includes('/webauthn/register/start')) {
-      return {
-        success: true,
-        options: {
-          challenge: btoa(Math.random().toString()),
-          rp: { name: 'Mock RP', id: 'localhost' },
-          user: {
-            id: btoa('mock_user'),
-            name: 'mock@example.com',
-            displayName: 'Mock User'
-          },
-          pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
-          timeout: 60000
-        },
-        sessionId: 'mock_session_' + Date.now(),
-        mock: true
-      };
-    }
-
-    // WebAuthn 등록 완료
-    if (endpoint.includes('/webauthn/register/complete')) {
-      const newToken = `mock_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      return {
-        success: true,
-        user: {
-          id: 'mock_user_' + Date.now(),
-          username: 'NewUser_' + Math.floor(Math.random() * 1000),
-          email: 'new@example.com',
-          did: `did:final0626:new_${Date.now()}`,
-          walletAddress: '0x' + Math.random().toString(16).substr(2, 8),
-          cueBalance: 1000,
-          cue_tokens: 1000,
-          trustScore: 50,
-          trust_score: 50,
-          passportLevel: 'Basic',
-          passport_level: 'Basic',
-          biometricVerified: true,
-          registeredAt: new Date().toISOString(),
-          authenticated: true
-        },
-        sessionToken: newToken,
-        sessionId: newToken,
-        message: 'Registration successful (Mock)',
-        mock: true
-      };
-    }
-
-    // WebAuthn 로그인 시작
-    if (endpoint.includes('/webauthn/login/start')) {
-      return {
-        success: true,
-        options: {
-          challenge: btoa(Math.random().toString()),
-          timeout: 60000,
-          rpId: 'localhost',
-          allowCredentials: []
-        },
-        sessionId: 'mock_login_session_' + Date.now(),
-        mock: true
-      };
-    }
-
-    // WebAuthn 로그인 완료
-    if (endpoint.includes('/webauthn/login/complete')) {
-      const loginToken = `mock_login_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      return {
-        success: true,
-        user: {
-          id: 'mock_user_existing',
-          username: 'ExistingUser_' + Math.floor(Math.random() * 1000),
-          email: 'existing@example.com',
-          did: `did:final0626:existing_${Date.now()}`,
-          walletAddress: '0x' + Math.random().toString(16).substr(2, 8),
-          cueBalance: 2500 + Math.floor(Math.random() * 2000),
-          cue_tokens: 2500 + Math.floor(Math.random() * 2000),
-          trustScore: 80 + Math.floor(Math.random() * 20),
-          trust_score: 80 + Math.floor(Math.random() * 20),
-          passportLevel: 'Verified',
-          passport_level: 'Verified',
-          biometricVerified: true,
-          registeredAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-          authenticated: true
-        },
-        sessionToken: loginToken,
-        sessionId: loginToken,
-        message: 'Login successful (Mock)',
-        mock: true
-      };
-    }
-
-    // 로그아웃
-    if (endpoint.includes('/logout')) {
-      return {
-        success: true,
-        message: 'Logout successful (Mock)',
-        mock: true
-      };
-    }
-
-    // 기본 Mock 응답
-    return {
-      success: true,
-      data: null,
-      message: 'Mock response',
-      timestamp: new Date().toISOString(),
-      mock: true
-    };
-  }
-
-  // ============================================================================
-  // 🔧 편의 메서드들
-  // ============================================================================
-
-  async get(endpoint: string): Promise<any> {
-    return this.request(endpoint, { method: 'GET' });
-  }
-
-  async post(endpoint: string, data?: any): Promise<any> {
-    return this.request(endpoint, {
-      method: 'POST',
-      body: data ? JSON.stringify(data) : undefined
-    });
-  }
-
-  async put(endpoint: string, data?: any): Promise<any> {
-    return this.request(endpoint, {
-      method: 'PUT',
-      body: data ? JSON.stringify(data) : undefined
-    });
-  }
-
-  async delete(endpoint: string): Promise<any> {
-    return this.request(endpoint, { method: 'DELETE' });
-  }
-
-  // ============================================================================
-  // 🔐 인증 관련 메서드들 (useAuth가 사용)
+  // 🔐 WebAuthn 관련 메서드들 (기존 구조 완전 호환)
   // ============================================================================
 
   /**
-   * 세션 복원 (페이지 새로고침 시 자동 호출)
-   * ✅ useAuth에서 사용하는 핵심 메서드
-   */
-  async restoreSession(): Promise<any> {
-    console.log('🔄 === API Client 세션 복원 시작 ===');
-    
-    try {
-      const sessionToken = this.getSessionToken();
-      
-      if (!sessionToken) {
-        console.log('❌ 저장된 세션 토큰 없음');
-        return {
-          success: false,
-          error: 'No session token found'
-        };
-      }
-
-      console.log('🔍 저장된 세션 토큰 발견, 복원 시도');
-
-      const response = await this.post('/api/auth/session/restore', { sessionToken });
-
-      if (!response.success) {
-        console.log('❌ 세션 복원 실패, 토큰 삭제');
-        this.clearSessionToken();
-        return {
-          success: false,
-          error: 'Session restore failed'
-        };
-      }
-
-      console.log('✅ 세션 복원 성공!', {
-        username: response.user?.username,
-        did: response.user?.did,
-        cueBalance: response.user?.cueBalance || response.user?.cue_tokens
-      });
-
-      // 새 토큰이 있으면 저장
-      if (response.sessionToken) {
-        this.setSessionToken(response.sessionToken);
-      }
-
-      return response;
-
-    } catch (error: any) {
-      console.error('💥 세션 복원 오류:', error);
-      this.clearSessionToken();
-      return {
-        success: false,
-        error: error.message || 'Session restore failed'
-      };
-    }
-  }
-
-  /**
-   * 로그아웃 (세션 토큰 무효화)
-   * ✅ useAuth에서 사용하는 핵심 메서드
-   */
-  async logout(): Promise<any> {
-    console.log('🚪 === API Client 로그아웃 처리 ===');
-    
-    try {
-      const sessionToken = this.getSessionToken();
-      
-      if (sessionToken) {
-        console.log('🗑️ 서버 세션 무효화');
-        await this.post('/api/auth/logout', { sessionToken });
-      }
-
-      // 로컬 세션 토큰 삭제
-      this.clearSessionToken();
-      console.log('✅ 로그아웃 완료');
-
-      return { 
-        success: true,
-        message: 'Logout successful'
-      };
-
-    } catch (error: any) {
-      console.error('💥 로그아웃 오류:', error);
-      // 오류가 발생해도 로컬 토큰은 삭제
-      this.clearSessionToken();
-      return { 
-        success: false, 
-        error: error.message 
-      };
-    }
-  }
-
-  /**
-   * 백엔드 연결 상태 확인
-   * ✅ useAuth에서 사용하는 핵심 메서드
-   */
-  async checkConnection(): Promise<any> {
-    console.log('🔌 백엔드 연결 상태 확인');
-    
-    try {
-      const response = await this.get('/health');
-      return { 
-        connected: !response.mock,
-        mode: response.mock ? 'mock' : 'real',
-        ...response 
-      };
-    } catch (error: any) {
-      return { 
-        connected: false, 
-        mode: 'error',
-        error: error.message,
-        status: 'Connection Failed',
-        timestamp: new Date().toISOString()
-      };
-    }
-  }
-
-  // ============================================================================
-  // 🔐 WebAuthn 관련 메서드들
-  // ============================================================================
-
-  /**
-   * WebAuthn 등록 시작
+   * WebAuthn 등록 시작 (useAuth 호환)
    */
   async startWebAuthnRegistration(userEmail?: string): Promise<any> {
     console.log('🆕 WebAuthn 등록 시작');
@@ -475,27 +62,22 @@ export class UnifiedAPIClient {
       });
 
       if (!startResponse.success) {
-        throw new Error('Registration start failed');
+        throw new Error(startResponse.message || 'Registration start failed');
       }
+
+      console.log('✅ 등록 시작 성공:', startResponse.sessionId);
 
       // 2. WebAuthn 라이브러리 로드
       const loaded = await loadWebAuthn();
       let credential;
 
       if (!loaded) {
-        console.warn('⚠️ WebAuthn 라이브러리 없음 - Mock 크리덴셜 사용');
-        credential = {
-          id: `mock_cred_${Date.now()}`,
-          type: 'public-key',
-          response: {
-            attestationObject: 'mock-attestation',
-            clientDataJSON: 'mock-client-data'
-          }
-        };
-      } else {
-        console.log('👆 생체인증 팝업 실행...');
-        credential = await startRegistration(startResponse.options);
+        throw new Error('WebAuthn이 지원되지 않는 환경입니다. 최신 브라우저를 사용해주세요.');
       }
+
+      console.log('👆 생체인증 팝업 실행...');
+      credential = await startRegistration(startResponse.options);
+      console.log('✅ 생체인증 완료:', credential.id);
 
       // 3. 등록 완료
       console.log('📋 등록 완료 요청 전송');
@@ -506,6 +88,7 @@ export class UnifiedAPIClient {
 
       if (completeResponse.success && completeResponse.sessionToken) {
         this.setSessionToken(completeResponse.sessionToken);
+        console.log('💾 세션 토큰 저장 완료');
       }
 
       return completeResponse;
@@ -517,7 +100,7 @@ export class UnifiedAPIClient {
   }
 
   /**
-   * WebAuthn 로그인
+   * WebAuthn 로그인 (useAuth 호환)
    */
   async loginWithWebAuthn(userEmail?: string): Promise<any> {
     console.log('🔓 WebAuthn 로그인 시작');
@@ -529,28 +112,22 @@ export class UnifiedAPIClient {
       });
 
       if (!startResponse.success) {
-        throw new Error('Login start failed');
+        throw new Error(startResponse.message || 'Login start failed');
       }
+
+      console.log('✅ 로그인 시작 성공:', startResponse.sessionId);
 
       // 2. WebAuthn 라이브러리 로드
       const loaded = await loadWebAuthn();
       let credential;
 
       if (!loaded) {
-        console.warn('⚠️ WebAuthn 라이브러리 없음 - Mock 크리덴셜 사용');
-        credential = {
-          id: `mock_login_cred_${Date.now()}`,
-          type: 'public-key',
-          response: {
-            authenticatorData: 'mock-auth-data',
-            clientDataJSON: 'mock-client-data',
-            signature: 'mock-signature'
-          }
-        };
-      } else {
-        console.log('👆 생체인증 팝업 실행...');
-        credential = await startAuthentication(startResponse.options);
+        throw new Error('WebAuthn이 지원되지 않는 환경입니다. 최신 브라우저를 사용해주세요.');
       }
+
+      console.log('👆 생체인증 팝업 실행...');
+      credential = await startAuthentication(startResponse.options);
+      console.log('✅ 생체인증 완료:', credential.id);
 
       // 3. 로그인 완료
       console.log('📋 로그인 완료 요청 전송');
@@ -561,6 +138,7 @@ export class UnifiedAPIClient {
 
       if (completeResponse.success && completeResponse.sessionToken) {
         this.setSessionToken(completeResponse.sessionToken);
+        console.log('💾 로그인 세션 토큰 저장 완료');
       }
 
       return completeResponse;
@@ -572,50 +150,394 @@ export class UnifiedAPIClient {
   }
 
   // ============================================================================
-  // 🎯 기타 유틸리티 메서드들
+  // 🤖 AI 관련 메서드들 (기존 구조 호환)
   // ============================================================================
 
   /**
-   * 인증 상태 확인
+   * AI 채팅 메시지 전송
    */
-  isAuthenticated(): boolean {
-    return !!this.getSessionToken();
+  async sendChatMessage(message: string, model: string, userDid: string): Promise<any> {
+    try {
+      console.log('🤖 AI 채팅 메시지 전송:', { model, message: message.substring(0, 50) + '...' });
+      
+      const response = await this.post('/api/ai/chat', {
+        message,
+        model,
+        userDid,
+        timestamp: new Date().toISOString()
+      });
+
+      console.log('✅ AI 응답 수신:', response.response?.substring(0, 100) + '...');
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 AI 채팅 실패:', error);
+      throw new Error(`AI 채팅 서비스에 연결할 수 없습니다: ${error.message}`);
+    }
   }
 
   /**
-   * 현재 사용자 정보 조회
+   * AI 모델 목록 조회
    */
-  async getCurrentUser(): Promise<any> {
-    if (!this.isAuthenticated()) {
-      return null;
-    }
-    
+  async getAvailableModels(): Promise<any> {
     try {
-      return await this.get('/api/auth/me');
-    } catch (error) {
-      return null;
+      return await this.get('/api/ai/models');
+    } catch (error: any) {
+      console.error('💥 AI 모델 목록 조회 실패:', error);
+      throw new Error(`AI 모델 정보를 가져올 수 없습니다: ${error.message}`);
     }
   }
+
+  // ============================================================================
+  // 💎 CUE 관련 메서드들 (기존 구조 호환)
+  // ============================================================================
 
   /**
    * CUE 마이닝
    */
-  async mineCUE(userDid: string, activity: string): Promise<any> {
-    return this.post('/api/cue/mine', { userDid, activity });
+  async mineCUE(userDid: string, activity: string, messageContent?: string): Promise<any> {
+    try {
+      console.log('💎 CUE 마이닝 실행:', { userDid, activity });
+      
+      const response = await this.post('/api/cue/mine', {
+        userDid,
+        activity,
+        messageContent,
+        timestamp: new Date().toISOString()
+      });
+
+      console.log('✅ CUE 마이닝 완료:', response.amount);
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 CUE 마이닝 실패:', error);
+      throw new Error(`CUE 마이닝에 실패했습니다: ${error.message}`);
+    }
   }
 
   /**
-   * AI 채팅
+   * CUE 잔액 조회
    */
-  async sendChatMessage(message: string, model: string, userDid: string): Promise<any> {
-    return this.post('/api/ai/chat', { message, model, userDid });
+  async getCueBalance(userDid: string): Promise<any> {
+    try {
+      return await this.get(`/api/cue/balance/${userDid}`);
+    } catch (error: any) {
+      console.error('💥 CUE 잔액 조회 실패:', error);
+      throw new Error(`CUE 잔액을 조회할 수 없습니다: ${error.message}`);
+    }
   }
+
+  /**
+   * CUE 거래 내역 조회
+   */
+  async getCueTransactions(userDid: string, limit: number = 20): Promise<any> {
+    try {
+      return await this.get(`/api/cue/transactions/${userDid}?limit=${limit}`);
+    } catch (error: any) {
+      console.error('💥 CUE 거래 내역 조회 실패:', error);
+      throw new Error(`CUE 거래 내역을 조회할 수 없습니다: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // 🎫 패스포트 관련 메서드들 (기존 구조 호환)
+  // ============================================================================
 
   /**
    * 패스포트 데이터 로드
    */
   async loadPassport(did: string): Promise<any> {
-    return this.get(`/api/passport/${did}`);
+    try {
+      console.log('🎫 패스포트 데이터 로드:', did);
+      
+      const response = await this.get(`/api/passport/${did}`);
+      
+      console.log('✅ 패스포트 로드 완료:', response.username);
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 패스포트 로드 실패:', error);
+      throw new Error(`패스포트 데이터를 로드할 수 없습니다: ${error.message}`);
+    }
+  }
+
+  /**
+   * 패스포트 업데이트
+   */
+  async updatePassport(did: string, updates: any): Promise<any> {
+    try {
+      console.log('🎫 패스포트 업데이트:', did);
+      
+      const response = await this.put(`/api/passport/${did}`, {
+        ...updates,
+        updated_at: new Date().toISOString()
+      });
+
+      console.log('✅ 패스포트 업데이트 완료');
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 패스포트 업데이트 실패:', error);
+      throw new Error(`패스포트를 업데이트할 수 없습니다: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // 🔗 플랫폼 연결 관련 메서드들
+  // ============================================================================
+
+  /**
+   * 연결된 플랫폼 조회
+   */
+  async getConnectedPlatforms(userDid: string): Promise<any> {
+    try {
+      return await this.get(`/api/platforms/${userDid}`);
+    } catch (error: any) {
+      console.error('💥 연결된 플랫폼 조회 실패:', error);
+      throw new Error(`연결된 플랫폼 정보를 조회할 수 없습니다: ${error.message}`);
+    }
+  }
+
+  /**
+   * 플랫폼 연결
+   */
+  async connectPlatform(userDid: string, platform: string, credentials: any): Promise<any> {
+    try {
+      console.log('🔗 플랫폼 연결:', platform);
+      
+      const response = await this.post('/api/platforms/connect', {
+        userDid,
+        platform,
+        credentials,
+        connected_at: new Date().toISOString()
+      });
+
+      console.log('✅ 플랫폼 연결 완료:', platform);
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 플랫폼 연결 실패:', error);
+      throw new Error(`플랫폼 연결에 실패했습니다: ${error.message}`);
+    }
+  }
+
+  /**
+   * 플랫폼 연결 해제
+   */
+  async disconnectPlatform(userDid: string, platform: string): Promise<any> {
+    try {
+      console.log('🔌 플랫폼 연결 해제:', platform);
+      
+      const response = await this.delete(`/api/platforms/${userDid}/${platform}`);
+
+      console.log('✅ 플랫폼 연결 해제 완료:', platform);
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 플랫폼 연결 해제 실패:', error);
+      throw new Error(`플랫폼 연결 해제에 실패했습니다: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // 🗂️ 데이터 볼트 관련 메서드들
+  // ============================================================================
+
+  /**
+   * 데이터 볼트 조회
+   */
+  async getDataVaults(userDid: string): Promise<any> {
+    try {
+      return await this.get(`/api/vaults/${userDid}`);
+    } catch (error: any) {
+      console.error('💥 데이터 볼트 조회 실패:', error);
+      throw new Error(`데이터 볼트를 조회할 수 없습니다: ${error.message}`);
+    }
+  }
+
+  /**
+   * 데이터 볼트 업데이트
+   */
+  async updateDataVault(userDid: string, vaultId: string, data: any): Promise<any> {
+    try {
+      console.log('🗂️ 데이터 볼트 업데이트:', vaultId);
+      
+      const response = await this.put(`/api/vaults/${userDid}/${vaultId}`, {
+        ...data,
+        updated_at: new Date().toISOString()
+      });
+
+      console.log('✅ 데이터 볼트 업데이트 완료');
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 데이터 볼트 업데이트 실패:', error);
+      throw new Error(`데이터 볼트 업데이트에 실패했습니다: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // 🧠 RAG-DAG 관련 메서드들
+  // ============================================================================
+
+  /**
+   * RAG-DAG 통계 조회
+   */
+  async getRAGDAGStats(userDid: string): Promise<any> {
+    try {
+      return await this.get(`/api/rag-dag/${userDid}/stats`);
+    } catch (error: any) {
+      console.error('💥 RAG-DAG 통계 조회 실패:', error);
+      throw new Error(`RAG-DAG 통계를 조회할 수 없습니다: ${error.message}`);
+    }
+  }
+
+  /**
+   * RAG-DAG 업데이트
+   */
+  async updateRAGDAG(userDid: string, conversationData: any): Promise<any> {
+    try {
+      console.log('🧠 RAG-DAG 업데이트');
+      
+      const response = await this.post(`/api/rag-dag/${userDid}/update`, {
+        ...conversationData,
+        timestamp: new Date().toISOString()
+      });
+
+      console.log('✅ RAG-DAG 업데이트 완료');
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 RAG-DAG 업데이트 실패:', error);
+      throw new Error(`RAG-DAG 업데이트에 실패했습니다: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // 💬 메시지 관련 메서드들
+  // ============================================================================
+
+  /**
+   * 메시지 조회
+   */
+  async getMessages(userDid: string, limit: number = 50, offset: number = 0): Promise<any> {
+    try {
+      return await this.get(`/api/messages/${userDid}?limit=${limit}&offset=${offset}`);
+    } catch (error: any) {
+      console.error('💥 메시지 조회 실패:', error);
+      throw new Error(`메시지를 조회할 수 없습니다: ${error.message}`);
+    }
+  }
+
+  /**
+   * 메시지 저장
+   */
+  async saveMessage(userDid: string, message: any): Promise<any> {
+    try {
+      const response = await this.post('/api/messages', {
+        userDid,
+        ...message,
+        saved_at: new Date().toISOString()
+      });
+
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 메시지 저장 실패:', error);
+      throw new Error(`메시지 저장에 실패했습니다: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // 🎯 고급 기능들 (새 버전의 장점)
+  // ============================================================================
+
+  /**
+   * 실시간 모니터링 시작 (useAuth 호환)
+   */
+  async startRealtimeMonitoring(userDid: string): Promise<() => void> {
+    console.log('📡 실시간 모니터링 시작:', userDid);
+    
+    return super.startRealtimeMonitoring(userDid);
+  }
+
+  /**
+   * 백엔드 상태 모니터링 시작
+   */
+  startHealthMonitoring(interval = 60000): () => void {
+    console.log(`🏥 백엔드 상태 모니터링 시작 (${interval}ms 간격)`);
+    
+    const healthCheck = async () => {
+      try {
+        const health = await this.checkConnection();
+        console.log(`💓 Health Check: ${health.connected ? '✅' : '❌'}`);
+        
+        // 연결 복구 시 WebSocket 재연결
+        if (health.connected && !this.websocket) {
+          this.connectWebSocket();
+        }
+        
+      } catch (error) {
+        console.warn('⚠️ Health Check 실패:', error);
+      }
+    };
+
+    // 즉시 실행
+    healthCheck();
+    
+    // 주기적 실행
+    const intervalId = setInterval(healthCheck, interval);
+    
+    // 정리 함수 반환
+    return () => {
+      clearInterval(intervalId);
+      console.log('🛑 백엔드 상태 모니터링 중지');
+    };
+  }
+
+  // ============================================================================
+  // 🔧 유틸리티 메서드들 (기존 구조 완전 호환)
+  // ============================================================================
+
+  /**
+   * 세션 ID 조회 (호환성)
+   */
+  getSessionId(): string | null {
+    return this.getSessionToken();
+  }
+
+  /**
+   * 세션 ID 저장 (호환성)
+   */
+  setSessionId(sessionId: string): void {
+    this.setSessionToken(sessionId);
+  }
+
+  /**
+   * 세션 정리 (호환성)
+   */
+  clearSession(): void {
+    this.clearSessionToken();
+  }
+
+  /**
+   * 디버그 정보 (확장된 버전)
+   */
+  getDebugInfo(): any {
+    const baseInfo = super.getDebugInfo();
+    
+    return {
+      ...baseInfo,
+      client: 'UnifiedAPIClient',
+      webAuthnSupported: !!startRegistration,
+      features: {
+        webAuthn: true,
+        realtime: true,
+        monitoring: true,
+        fileUpload: true,
+        advancedAuth: true
+      }
+    };
   }
 }
 

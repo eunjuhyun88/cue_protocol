@@ -1,9 +1,9 @@
 // ============================================================================
 // 📁 frontend/src/services/api/WebAuthnAPI.ts
-// 🔐 WebAuthn 인증 API 서비스 (프론트엔드 전용)
-// 수정사항: 백엔드 모듈 import 제거, 순수 프론트엔드 구현
+// 🔐 통합 WebAuthn API 서비스 - 기존 구조 완벽 호환 (Mock 제거)
 // ============================================================================
 
+import { BackendAPIClient } from './BackendAPIClient';
 import type { WebAuthnRegistrationResult, WebAuthnLoginResult } from '../../types/auth.types';
 
 // WebAuthn 라이브러리 동적 로드
@@ -26,365 +26,320 @@ const loadWebAuthn = async (): Promise<boolean> => {
   return !!startRegistration;
 };
 
-// WebAuthn 지원 체크
-const checkWebAuthnSupport = () => {
-  if (typeof window === 'undefined') {
-    return { supported: false, reason: 'server-side' };
-  }
+export class WebAuthnAPI extends BackendAPIClient {
   
-  if (!window.PublicKeyCredential) {
-    return { supported: false, reason: 'not-supported' };
-  }
+  // ============================================================================
+  // 🔐 WebAuthn 등록 (실제 백엔드 연동)
+  // ============================================================================
   
-  return { supported: true };
-};
-
-export class WebAuthnAPI {
-  private baseURL: string;
-  private headers: Record<string, string>;
-
-  constructor(baseURL?: string) {
-    this.baseURL = baseURL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-    this.headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    };
-    
-    console.log(`🔐 WebAuthnAPI 초기화: ${this.baseURL}`);
-  }
-
-  // ============================================================================
-  // 🌐 HTTP 요청 메서드
-  // ============================================================================
-
-  private async request(endpoint: string, options: RequestInit = {}): Promise<any> {
-    try {
-      const url = `${this.baseURL}${endpoint}`;
-      console.log(`🌐 API 요청: ${options.method || 'GET'} ${url}`);
-      
-      const response = await fetch(url, {
-        ...options,
-        headers: {
-          ...this.headers,
-          ...options.headers
-        },
-        mode: 'cors',
-        credentials: 'include'
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`❌ HTTP 오류: ${response.status}`, errorText);
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      console.log(`✅ API 응답:`, data);
-      return data;
-    } catch (error: any) {
-      console.error(`❌ API 오류 (${endpoint}):`, error);
-      
-      // 백엔드 연결 실패 시 Mock 응답 반환
-      return this.getMockResponse(endpoint, options.method as string || 'GET');
-    }
-  }
-
-  // ============================================================================
-  // 🎭 Mock 응답 (백엔드 연결 실패 시 폴백)
-  // ============================================================================
-
-  private getMockResponse(endpoint: string, method: string): any {
-    const mockUser = {
-      id: `mock_user_${Date.now()}`,
-      email: 'demo@example.com',
-      displayName: 'Demo User',
-      did: `did:ai:demo_${Date.now()}`,
-      createdAt: new Date().toISOString()
-    };
-
-    if (endpoint.includes('/register/start') && method === 'POST') {
-      return {
-        success: true,
-        options: {
-          challenge: 'mock-challenge',
-          rp: { name: 'Mock RP', id: 'localhost' },
-          user: { id: 'mock-user-id', name: 'mock-user', displayName: 'Mock User' },
-          pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
-          timeout: 60000
-        },
-        sessionId: `mock_session_${Date.now()}`
-      };
-    }
-
-    if (endpoint.includes('/register/complete') && method === 'POST') {
-      return {
-        success: true,
-        user: mockUser,
-        credential: { id: `mock_cred_${Date.now()}` },
-        message: 'Mock 등록 완료'
-      };
-    }
-
-    if (endpoint.includes('/login/start') && method === 'POST') {
-      return {
-        success: true,
-        options: {
-          challenge: 'mock-challenge',
-          timeout: 60000,
-          rpId: 'localhost'
-        },
-        sessionId: `mock_session_${Date.now()}`
-      };
-    }
-
-    if (endpoint.includes('/login/complete') && method === 'POST') {
-      return {
-        success: true,
-        user: mockUser,
-        token: `mock_token_${Date.now()}`,
-        message: 'Mock 로그인 완료'
-      };
-    }
-
-    return { success: true, mock: true, endpoint, method };
-  }
-
-  // ============================================================================
-  // 🆕 WebAuthn 등록
-  // ============================================================================
-
   /**
-   * WebAuthn 등록 시작
+   * WebAuthn 등록 시작 (영구 세션 기능 포함)
+   * ✅ useAuth에서 사용하는 핵심 메서드
    */
   async startWebAuthnRegistration(userEmail?: string): Promise<WebAuthnRegistrationResult> {
     try {
       console.log('🆕 === WebAuthn 등록 시작 ===');
 
       // 1. 등록 시작 API 호출
-      const startResponse = await this.request('/api/auth/webauthn/register/start', {
-        method: 'POST',
-        body: JSON.stringify({
-          userEmail,
-          userName: `PassKey_User_${Date.now()}`,
-          deviceInfo: {
-            platform: typeof navigator !== 'undefined' ? navigator.platform : 'unknown',
-            userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-            timestamp: Date.now()
-          }
-        })
+      const startResponse = await this.post('/api/auth/webauthn/register/start', {
+        userEmail,
+        userName: `PassKey_User_${Date.now()}`,
+        deviceInfo: {
+          platform: typeof navigator !== 'undefined' ? navigator.platform : 'unknown',
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+          timestamp: Date.now()
+        },
+      });
+
+      console.log('✅ 등록 시작 성공:', { 
+        success: startResponse.success, 
+        sessionId: startResponse.sessionId 
       });
 
       if (!startResponse.success || !startResponse.options) {
-        throw new Error('등록 시작 응답이 올바르지 않습니다');
+        throw new Error(startResponse.message || '등록 시작 응답이 올바르지 않습니다');
       }
 
-      // 2. WebAuthn 지원 확인
-      const webauthnSupport = checkWebAuthnSupport();
-      if (!webauthnSupport.supported) {
-        console.warn('⚠️ WebAuthn 미지원 - Mock 등록 진행');
-        return {
-          success: true,
-          user: startResponse.user || {
-            id: `mock_user_${Date.now()}`,
-            email: userEmail || 'demo@example.com',
-            displayName: 'Demo User'
-          },
-          credential: { id: `mock_cred_${Date.now()}` },
-          sessionId: startResponse.sessionId,
-          message: 'Mock WebAuthn 등록 완료'
-        };
-      }
-
-      // 3. WebAuthn 라이브러리 로드
+      // 2. WebAuthn 라이브러리 로드 및 실행
+      console.log('📦 WebAuthn 라이브러리 로드 확인');
       const loaded = await loadWebAuthn();
-      let credential;
-
+      
       if (!loaded) {
-        console.warn('⚠️ WebAuthn 라이브러리 없음 - Mock 크리덴셜 사용');
-        credential = {
-          id: `mock_cred_${Date.now()}`,
-          type: 'public-key',
-          response: {
-            attestationObject: 'mock-attestation',
-            clientDataJSON: 'mock-client-data'
-          }
-        };
-      } else {
-        console.log('👆 생체인증 팝업 실행...');
-        credential = await startRegistration(startResponse.options);
-        console.log('✅ 생체인증 완료:', credential.id);
+        throw new Error('WebAuthn 라이브러리를 로드할 수 없습니다. 브라우저 호환성을 확인하세요.');
       }
 
-      // 4. 등록 완료 API 호출
-      const completeResponse = await this.request('/api/auth/webauthn/register/complete', {
-        method: 'POST',
-        body: JSON.stringify({
-          credential,
-          sessionId: startResponse.sessionId
-        })
+      console.log('👆 생체인증 팝업 실행...');
+      const credential = await startRegistration(startResponse.options);
+      console.log('✅ 생체인증 완료:', credential.id);
+
+      // 3. 등록 완료 API 호출
+      console.log('📋 등록 완료 요청 전송');
+      const completeResponse = await this.post('/api/auth/webauthn/register/complete', {
+        credential,
+        sessionId: startResponse.sessionId
       });
 
-      console.log('🎉 WebAuthn 등록 완료:', completeResponse);
-      return completeResponse;
+      if (!completeResponse.success) {
+        throw new Error(completeResponse.message || '등록 완료에 실패했습니다');
+      }
+
+      // 4. 세션 토큰 저장 (영구 세션)
+      const sessionToken = completeResponse.sessionToken || completeResponse.token;
+      if (sessionToken) {
+        this.setSessionToken(sessionToken);
+        console.log('💾 세션 토큰 저장 완료');
+      }
+
+      // 5. 호환성을 위한 추가 데이터 저장
+      if (completeResponse.sessionId && typeof window !== 'undefined') {
+        localStorage.setItem('cue_session_id', completeResponse.sessionId);
+      }
+
+      console.log('🎉 WebAuthn 등록 완전 성공:', {
+        username: completeResponse.user?.username,
+        did: completeResponse.user?.did,
+        isExisting: completeResponse.isExistingUser || false
+      });
+
+      return {
+        success: true,
+        user: completeResponse.user,
+        sessionToken: sessionToken,
+        sessionId: completeResponse.sessionId,
+        message: completeResponse.message || 'Registration successful'
+      };
 
     } catch (error: any) {
-      console.error('❌ WebAuthn 등록 실패:', error);
+      console.error('💥 WebAuthn 등록 실패:', error);
+      
+      // WebAuthn 특정 에러 처리
+      let errorMessage = 'WebAuthn registration failed';
+      
+      if (error.name === 'NotAllowedError') {
+        errorMessage = '사용자가 생체인증을 취소했습니다.';
+      } else if (error.name === 'NotSupportedError') {
+        errorMessage = '이 기기에서는 생체인증을 지원하지 않습니다.';
+      } else if (error.name === 'SecurityError') {
+        errorMessage = '보안 오류가 발생했습니다. HTTPS 환경인지 확인해주세요.';
+      } else if (error.name === 'InvalidStateError') {
+        errorMessage = '이미 등록된 크리덴셜입니다.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       return {
         success: false,
-        error: error.message || 'WebAuthn 등록에 실패했습니다',
+        error: errorMessage,
         user: null,
-        credential: null,
+        sessionToken: null,
         sessionId: null
       };
     }
   }
 
-  /**
-   * Mock WebAuthn 등록 (테스트용)
-   */
-  async mockWebAuthnRegistration(): Promise<WebAuthnRegistrationResult> {
-    console.log('🎭 Mock WebAuthn 등록 실행...');
-    
-    // 등록 지연 시뮬레이션
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    const mockUser = {
-      id: `mock_user_${Date.now()}`,
-      email: 'demo@example.com',
-      displayName: 'Demo User',
-      did: `did:ai:demo_${Date.now()}`,
-      createdAt: new Date().toISOString()
-    };
-
-    return {
-      success: true,
-      user: mockUser,
-      credential: { id: `mock_cred_${Date.now()}` },
-      sessionId: `mock_session_${Date.now()}`,
-      message: 'Mock WebAuthn 등록이 완료되었습니다'
-    };
-  }
-
   // ============================================================================
-  // 🔓 WebAuthn 로그인
+  // 🔓 WebAuthn 로그인 (실제 백엔드 연동)
   // ============================================================================
-
+  
   /**
-   * WebAuthn 로그인 시작
+   * WebAuthn 로그인
+   * ✅ useAuth에서 사용하는 핵심 메서드
    */
-  async startWebAuthnLogin(): Promise<WebAuthnLoginResult> {
+  async loginWithWebAuthn(userEmail?: string): Promise<WebAuthnLoginResult> {
     try {
       console.log('🔓 === WebAuthn 로그인 시작 ===');
 
       // 1. 로그인 시작 API 호출
-      const startResponse = await this.request('/api/auth/webauthn/login/start', {
-        method: 'POST'
+      const startResponse = await this.post('/api/auth/webauthn/login/start', {
+        userEmail
+      });
+
+      console.log('✅ 로그인 시작 성공:', { 
+        success: startResponse.success, 
+        sessionId: startResponse.sessionId 
       });
 
       if (!startResponse.success || !startResponse.options) {
-        throw new Error('로그인 시작 응답이 올바르지 않습니다');
+        throw new Error(startResponse.message || '로그인 시작 응답이 올바르지 않습니다');
       }
 
-      // 2. WebAuthn 지원 확인
-      const webauthnSupport = checkWebAuthnSupport();
-      if (!webauthnSupport.supported) {
-        console.warn('⚠️ WebAuthn 미지원 - Mock 로그인 진행');
-        return {
-          success: true,
-          user: {
-            id: `mock_user_${Date.now()}`,
-            email: 'demo@example.com',
-            displayName: 'Demo User'
-          },
-          token: `mock_token_${Date.now()}`,
-          message: 'Mock WebAuthn 로그인 완료'
-        };
-      }
-
-      // 3. WebAuthn 라이브러리 로드
+      // 2. WebAuthn 라이브러리 로드 및 실행
+      console.log('📦 WebAuthn 라이브러리 로드 확인');
       const loaded = await loadWebAuthn();
-      let credential;
-
+      
       if (!loaded) {
-        console.warn('⚠️ WebAuthn 라이브러리 없음 - Mock 크리덴셜 사용');
-        credential = {
-          id: `mock_cred_${Date.now()}`,
-          type: 'public-key',
-          response: {
-            authenticatorData: 'mock-auth-data',
-            clientDataJSON: 'mock-client-data',
-            signature: 'mock-signature'
-          }
-        };
-      } else {
-        console.log('👆 생체인증 팝업 실행...');
-        credential = await startAuthentication(startResponse.options);
-        console.log('✅ 생체인증 완료:', credential.id);
+        throw new Error('WebAuthn 라이브러리를 로드할 수 없습니다. 브라우저 호환성을 확인하세요.');
       }
 
-      // 4. 로그인 완료 API 호출
-      const completeResponse = await this.request('/api/auth/webauthn/login/complete', {
-        method: 'POST',
-        body: JSON.stringify({
-          credential,
-          sessionId: startResponse.sessionId
-        })
+      console.log('👆 생체인증 팝업 실행...');
+      const credential = await startAuthentication(startResponse.options);
+      console.log('✅ 생체인증 완료:', credential.id);
+
+      // 3. 로그인 완료 API 호출
+      console.log('📋 로그인 완료 요청 전송');
+      const completeResponse = await this.post('/api/auth/webauthn/login/complete', {
+        credential,
+        sessionId: startResponse.sessionId
       });
 
-      console.log('🎉 WebAuthn 로그인 완료:', completeResponse);
-      return completeResponse;
+      if (!completeResponse.success) {
+        throw new Error(completeResponse.message || '로그인 완료에 실패했습니다');
+      }
+
+      // 4. 세션 토큰 저장 (영구 세션)
+      const sessionToken = completeResponse.sessionToken || completeResponse.token;
+      if (sessionToken) {
+        this.setSessionToken(sessionToken);
+        console.log('💾 로그인 세션 토큰 저장 완료');
+      }
+
+      console.log('🎉 WebAuthn 로그인 완전 성공:', {
+        username: completeResponse.user?.username,
+        did: completeResponse.user?.did
+      });
+
+      return {
+        success: true,
+        user: completeResponse.user,
+        sessionToken: sessionToken,
+        sessionId: completeResponse.sessionId,
+        message: completeResponse.message || 'Login successful'
+      };
 
     } catch (error: any) {
-      console.error('❌ WebAuthn 로그인 실패:', error);
+      console.error('💥 WebAuthn 로그인 실패:', error);
+      
+      // WebAuthn 특정 에러 처리
+      let errorMessage = 'WebAuthn login failed';
+      
+      if (error.name === 'NotAllowedError') {
+        errorMessage = '사용자가 인증을 취소했습니다.';
+      } else if (error.name === 'NotSupportedError') {
+        errorMessage = '이 기기에서는 생체인증을 지원하지 않습니다.';
+      } else if (error.name === 'SecurityError') {
+        errorMessage = '보안 오류가 발생했습니다. HTTPS 환경인지 확인해주세요.';
+      } else if (error.name === 'InvalidStateError') {
+        errorMessage = '등록된 크리덴셜을 찾을 수 없습니다.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       return {
         success: false,
-        error: error.message || 'WebAuthn 로그인에 실패했습니다',
+        error: errorMessage,
         user: null,
-        token: null
+        sessionToken: null,
+        sessionId: null
+      };
+    }
+  }
+
+  // ============================================================================
+  // 🔧 세션 복원 (useAuth 호환용)
+  // ============================================================================
+  
+  /**
+   * 세션 복원 (페이지 새로고침 시 자동 호출)
+   * ✅ useAuth에서 사용 가능한 메서드
+   */
+  async restoreSession(): Promise<any> {
+    console.log('🔄 === WebAuthnAPI 세션 복원 시작 ===');
+    
+    try {
+      const sessionToken = this.getSessionToken();
+      
+      if (!sessionToken) {
+        console.log('❌ 저장된 세션 토큰 없음');
+        return {
+          success: false,
+          error: 'No session token found'
+        };
+      }
+
+      console.log('🔍 저장된 세션 토큰 발견, 복원 시도');
+
+      const response = await this.post('/api/auth/session/restore', { 
+        sessionToken 
+      });
+
+      if (!response.success) {
+        console.log('❌ 세션 복원 실패, 토큰 삭제');
+        this.clearSessionToken();
+        return {
+          success: false,
+          error: response.message || 'Session restore failed'
+        };
+      }
+
+      console.log('✅ 세션 복원 성공!', {
+        username: response.user?.username,
+        did: response.user?.did,
+        cueBalance: response.user?.cueBalance || response.user?.cue_tokens
+      });
+
+      // 새 토큰이 있으면 저장
+      if (response.sessionToken) {
+        this.setSessionToken(response.sessionToken);
+      }
+
+      return response;
+
+    } catch (error: any) {
+      console.error('💥 세션 복원 오류:', error);
+      this.clearSessionToken();
+      return {
+        success: false,
+        error: error.message || 'Session restore failed'
+      };
+    }
+  }
+
+  // ============================================================================
+  // 🎯 유틸리티 메서드들
+  // ============================================================================
+
+  /**
+   * 사용자 정보 업데이트
+   */
+  async updateUserProfile(updates: any): Promise<any> {
+    try {
+      return await this.put('/api/auth/profile', updates);
+    } catch (error: any) {
+      console.error('프로필 업데이트 실패:', error);
+      return {
+        success: false,
+        error: error.message
       };
     }
   }
 
   /**
-   * Mock WebAuthn 로그인 (테스트용)
+   * 디바이스 목록 조회
    */
-  async mockWebAuthnLogin(): Promise<WebAuthnLoginResult> {
-    console.log('🎭 Mock WebAuthn 로그인 실행...');
-    
-    // 로그인 지연 시뮬레이션
-    await new Promise(resolve => setTimeout(resolve, 1200));
-    
-    const mockUser = {
-      id: `mock_user_${Date.now()}`,
-      email: 'demo@example.com',
-      displayName: 'Demo User',
-      did: `did:ai:demo_${Date.now()}`,
-      createdAt: new Date().toISOString()
-    };
-
-    return {
-      success: true,
-      user: mockUser,
-      token: `mock_token_${Date.now()}`,
-      message: 'Mock WebAuthn 로그인이 완료되었습니다'
-    };
+  async getRegisteredDevices(): Promise<any> {
+    try {
+      return await this.get('/api/auth/devices');
+    } catch (error: any) {
+      console.error('디바이스 목록 조회 실패:', error);
+      return {
+        success: false,
+        devices: [],
+        error: error.message
+      };
+    }
   }
 
-  // ============================================================================
-  // 🔄 상태 확인
-  // ============================================================================
-
   /**
-   * 백엔드 연결 상태 확인
+   * 디바이스 삭제
    */
-  async checkConnection(): Promise<any> {
+  async removeDevice(deviceId: string): Promise<any> {
     try {
-      return await this.request('/api/debug/health');
-    } catch (error) {
+      return await this.delete(`/api/auth/devices/${deviceId}`);
+    } catch (error: any) {
+      console.error('디바이스 삭제 실패:', error);
       return {
-        status: 'disconnected',
-        error: 'Backend connection failed',
-        mock: true
+        success: false,
+        error: error.message
       };
     }
   }
@@ -392,8 +347,30 @@ export class WebAuthnAPI {
   /**
    * WebAuthn 지원 여부 확인
    */
-  checkWebAuthnSupport() {
-    return checkWebAuthnSupport();
+  checkWebAuthnSupport(): { supported: boolean; reason?: string } {
+    if (typeof window === 'undefined') {
+      return { supported: false, reason: 'server-side' };
+    }
+    
+    if (!window.PublicKeyCredential) {
+      return { supported: false, reason: 'not-supported' };
+    }
+    
+    return { supported: true };
+  }
+
+  /**
+   * 백엔드 연결 상태 확인
+   */
+  async checkConnection(): Promise<any> {
+    try {
+      return await this.get('/api/debug/health');
+    } catch (error) {
+      return {
+        status: 'disconnected',
+        error: 'Backend connection failed'
+      };
+    }
   }
 }
 
