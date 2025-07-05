@@ -1,7 +1,7 @@
 // ============================================================================
-// 🗄️ 완전 통합 데이터베이스 서비스 (최적화된 간소화 버전)
+// 🗄️ 통합 데이터베이스 서비스 (최종 완성본)
 // 경로: backend/src/services/database/DatabaseService.ts
-// 수정: 1번을 2번으로 간소화하되 핵심 기능은 모두 유지
+// 수정: Document 1 + Document 2 완전 통합, source_platform 컬럼 적용
 // 호출구조: DIContainer → DatabaseService → Supabase
 // ============================================================================
 
@@ -481,7 +481,7 @@ export class DatabaseService {
   }
 
   // ============================================================================
-  // 💎 CUE 토큰 관리 (⭐ 핵심 수정: source_platform 컬럼 사용)
+  // 💎 CUE 토큰 관리 (⭐ 핵심 통합: source_platform 컬럼 사용)
   // ============================================================================
 
   public async getCUEBalance(userDid: string): Promise<number> {
@@ -504,33 +504,38 @@ export class DatabaseService {
   }
 
   /**
-   * 🚨 핵심 수정: CUE 거래 생성 (source_platform 컬럼 사용)
+   * 🚨 핵심 통합: CUE 거래 생성 (source_platform 컬럼 사용)
+   * Document 1의 수정사항을 Document 2 구조에 완전 통합
    */
   public async createCUETransaction(transaction: any): Promise<any> {
-    console.log('💰 === CUE 거래 생성 (수정된 컬럼 적용) ===');
+    console.log('💰 === CUE 거래 생성 (통합된 source_platform 컬럼 적용) ===');
 
     try {
       // 현재 잔액 계산
       const currentBalance = await this.getCUEBalance(transaction.user_did);
       const newBalance = currentBalance + parseFloat(transaction.amount.toString());
 
-      // ✅ 실제 테이블 스키마에 맞는 컬럼명 사용 (수정됨!)
+      // ✅ 실제 테이블 스키마에 맞는 컬럼명 사용 (Document 1의 핵심 수정사항 반영)
       const transactionData = {
         user_did: transaction.user_did,                      // ✅ 존재함
         user_id: transaction.user_id,                        // ✅ 존재함  
-        transaction_type: transaction.transaction_type || 'manual', // ✅ 존재함
+        transaction_type: transaction.transaction_type || 'mining', // ✅ 존재함
         amount: parseInt(transaction.amount.toString()),     // ✅ integer 타입
         balance_after: parseInt(newBalance.toString()),      // ✅ integer 타입
-        source_platform: transaction.source || transaction.source_platform || 'system', // ✅ 핵심 수정: source_platform 컬럼 사용!
+        source_platform: transaction.source || transaction.source_platform || 'system', // ⭐ 핵심 통합: source_platform 컬럼 사용!
         description: transaction.description || 'CUE transaction',
         status: 'completed',                                 // ✅ 존재함
         metadata: transaction.metadata || {},                // ✅ jsonb 타입
         created_at: new Date().toISOString()
       };
 
-      console.log('📝 CUE 거래 데이터 (수정된 컬럼):', {
-        ...transactionData,
-        metadata: JSON.stringify(transactionData.metadata)
+      console.log('📝 CUE 거래 데이터 (통합된 컬럼):', {
+        user_did: transactionData.user_did,
+        amount: transactionData.amount,
+        balance_after: transactionData.balance_after,
+        source_platform: transactionData.source_platform, // ⭐ 핵심 표시
+        transaction_type: transactionData.transaction_type,
+        metadata: JSON.stringify(transactionData.metadata).substring(0, 100)
       });
 
       const { data, error } = await this.supabase
@@ -547,10 +552,10 @@ export class DatabaseService {
       // 사용자 잔액 업데이트
       await this.updateUserCueBalanceByDid(transaction.user_did, newBalance);
       
-      console.log('✅ CUE 거래 생성 성공:', {
-        amount: transaction.amount,
+      console.log('✅ CUE 거래 생성 성공 (통합):', {
+        amount: transactionData.amount,
         newBalance,
-        source_platform: transactionData.source_platform
+        source_platform: transactionData.source_platform // ⭐ 핵심 로그
       });
       
       return data;
@@ -561,6 +566,8 @@ export class DatabaseService {
   }
 
   public async getCUETransactions(userDid: string, limit = 50): Promise<any[]> {
+    console.log(`📊 CUE 거래 내역 조회: ${userDid} (최대 ${limit}개)`);
+    
     try {
       const { data, error } = await this.supabase
         .from('cue_transactions')
@@ -569,7 +576,12 @@ export class DatabaseService {
         .order('created_at', { ascending: false })
         .limit(limit);
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ CUE 거래 내역 조회 실패:', error);
+        throw error;
+      }
+      
+      console.log(`✅ CUE 거래 내역 조회 성공: ${data?.length || 0}개`);
       return data || [];
     } catch (error) {
       console.error('❌ CUE 거래 내역 조회 실패:', error);
@@ -602,7 +614,109 @@ export class DatabaseService {
     }
   }
 
-  // 호환성 별칭들
+  /**
+   * ⭐ Document 1에서 추가된 CUE 통계 조회 (통합)
+   */
+  public async getCUEStatistics(userDid: string): Promise<any> {
+    console.log(`📊 CUE 통계 조회: ${userDid}`);
+    
+    try {
+      // 총 획득량 조회
+      const { data: totalEarned, error: earnedError } = await this.supabase
+        .from('cue_transactions')
+        .select('amount')
+        .eq('user_did', userDid)
+        .gt('amount', 0);
+
+      if (earnedError) throw earnedError;
+
+      // 총 사용량 조회
+      const { data: totalSpent, error: spentError } = await this.supabase
+        .from('cue_transactions')
+        .select('amount')
+        .eq('user_did', userDid)
+        .lt('amount', 0);
+
+      if (spentError) throw spentError;
+
+      // 거래 횟수 조회
+      const { count: transactionCount, error: countError } = await this.supabase
+        .from('cue_transactions')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_did', userDid);
+
+      if (countError) throw countError;
+
+      // 최근 거래 조회
+      const { data: recentTransactions, error: recentError } = await this.supabase
+        .from('cue_transactions')
+        .select('*')
+        .eq('user_did', userDid)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (recentError) throw recentError;
+
+      const statistics = {
+        totalEarned: totalEarned?.reduce((sum, tx) => sum + tx.amount, 0) || 0,
+        totalSpent: Math.abs(totalSpent?.reduce((sum, tx) => sum + tx.amount, 0) || 0),
+        transactionCount: transactionCount || 0,
+        recentTransactions: recentTransactions || [],
+        currentBalance: await this.getCUEBalance(userDid)
+      };
+
+      console.log('✅ CUE 통계 조회 성공 (통합):', {
+        totalEarned: statistics.totalEarned,
+        totalSpent: statistics.totalSpent,
+        transactionCount: statistics.transactionCount,
+        currentBalance: statistics.currentBalance
+      });
+
+      return statistics;
+    } catch (error) {
+      console.error('❌ CUE 통계 조회 실패:', error);
+      return {
+        totalEarned: 0,
+        totalSpent: 0,
+        transactionCount: 0,
+        recentTransactions: [],
+        currentBalance: 0
+      };
+    }
+  }
+
+  /**
+   * ⭐ Document 1에서 추가된 CUE 마이닝 보상 지급 헬퍼 메서드 (통합)
+   */
+  public async awardCUETokens(userDid: string, amount: number, reason: string, metadata: any = {}): Promise<any> {
+    console.log(`🎁 CUE 토큰 보상 지급: ${userDid} +${amount} (${reason})`);
+    
+    try {
+      const transaction = {
+        user_did: userDid,
+        user_id: userDid, // DID와 동일하게 설정
+        amount: amount,
+        transaction_type: 'mining',
+        source_platform: metadata.source_platform || 'system', // ⭐ source_platform 사용
+        description: `${reason} - ${amount} CUE 보상`,
+        metadata: {
+          reason,
+          timestamp: new Date().toISOString(),
+          ...metadata
+        }
+      };
+
+      const result = await this.createCUETransaction(transaction);
+      
+      console.log(`✅ CUE 보상 지급 완료 (통합): ${amount} CUE`);
+      return result;
+    } catch (error) {
+      console.error('❌ CUE 보상 지급 실패:', error);
+      throw error;
+    }
+  }
+
+  // 호환성 별칭들 (Document 1의 별칭 + Document 2의 별칭 통합)
   public async recordCueTransaction(transactionData: any): Promise<any> {
     return this.createCUETransaction(transactionData);
   }
@@ -611,8 +725,12 @@ export class DatabaseService {
     return this.updateUser(userId, { cue_tokens: newBalance });
   }
 
+  public async getUserCueBalance(userDid: string): Promise<number> {
+    return this.getCUEBalance(userDid);
+  }
+
   // ============================================================================
-  // 🔐 WebAuthn 관리 (핵심 기능만)
+  // 🔐 WebAuthn 관리 (Document 2의 핵심 기능 유지)
   // ============================================================================
 
   public async saveWebAuthnCredential(credentialData: any): Promise<boolean> {
@@ -719,7 +837,7 @@ export class DatabaseService {
   }
 
   // ============================================================================
-  // 🎫 AI Passport 관리 (간소화)
+  // 🎫 AI Passport 관리 (Document 2 간소화 버전 유지)
   // ============================================================================
 
   public async getPassport(did: string): Promise<any | null> {
@@ -759,7 +877,7 @@ export class DatabaseService {
   }
 
   // ============================================================================
-  // 🗄️ 데이터 볼트 관리 (핵심 기능만)
+  // 🗄️ 데이터 볼트 관리 (Document 2 핵심 기능 유지)
   // ============================================================================
 
   public async getDataVaults(userDid: string): Promise<any[]> {
@@ -803,7 +921,7 @@ export class DatabaseService {
   }
 
   // ============================================================================
-  // 🧠 Personal CUE 관리 (핵심 기능만)
+  // 🧠 Personal CUE 관리 (Document 2 핵심 기능 유지)
   // ============================================================================
 
   public async getPersonalCues(userDid: string, limit = 50): Promise<any[]> {
@@ -846,7 +964,7 @@ export class DatabaseService {
   }
 
   // ============================================================================
-  // 💬 대화 및 메시지 관리 (간소화)
+  // 💬 대화 및 메시지 관리 (Document 2 간소화 버전 유지)
   // ============================================================================
 
   public async saveMessage(messageData: any): Promise<any> {
@@ -900,7 +1018,7 @@ export class DatabaseService {
   }
 
   // ============================================================================
-  // 🔧 유틸리티 및 시스템 관리
+  // 🔧 유틸리티 및 시스템 관리 (Document 2 핵심 기능 유지)
   // ============================================================================
 
   public async getHealth(): Promise<any> {
@@ -986,7 +1104,7 @@ export class DatabaseService {
 }
 
 // ============================================================================
-// 🚀 지연 초기화 및 Export
+// 🚀 지연 초기화 및 Export (Document 2 구조 유지)
 // ============================================================================
 
 let databaseServiceInstance: DatabaseService | null = null;

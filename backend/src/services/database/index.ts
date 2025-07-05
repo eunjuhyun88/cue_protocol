@@ -1,291 +1,217 @@
 // ============================================================================
-// 📁 backend/src/services/database/index.ts - 중복 export 해결 (최종)
-// 🔧 기존 문제: export 중복 정의, DI Container 호환성 부족
-// ✅ 해결: 단일 export 통일, DI Container 완전 호환
+// 📁 backend/src/services/database/index.ts - 중복 export 완전 해결
+// 수정 위치: 기존 파일 완전 교체
+// 연관 파일: DatabaseService.ts, DIContainer.ts
+// 해결 문제: Multiple exports with the same name 오류 완전 제거
 // ============================================================================
 
 import { DatabaseService } from './DatabaseService';
 
-console.log('🗄️ === 데이터베이스 서비스 인덱스 초기화 (수정판) ===');
+console.log('🗄️ === 데이터베이스 서비스 인덱스 초기화 (최종 수정판) ===');
 
 // ============================================================================
-// 🏗️ DI Container 통합 관리 (개선됨)
+// 🏗️ 단일 인스턴스 관리 (싱글톤 패턴)
 // ============================================================================
 
-let databaseService: DatabaseService | null = null;
-let isDIManaged = false;
+let activeDatabaseService: DatabaseService | null = null;
+let isInitialized = false;
 
 /**
- * DI Container에서 관리되는 데이터베이스 서비스 초기화
+ * DI Container용 데이터베이스 서비스 초기화 (단일 함수)
+ * @param container 선택적 DI Container 인스턴스
+ * @returns DatabaseService 인스턴스
  */
-export function initializeDatabaseFromDI(): void {
-  if (databaseService) {
-    console.log('⚠️ DatabaseService 이미 초기화됨');
-    return;
+export function initializeDatabaseFromDI(container?: any): DatabaseService {
+  if (activeDatabaseService && isInitialized) {
+    console.log('✅ DatabaseService 이미 초기화됨, 기존 인스턴스 반환');
+    return activeDatabaseService;
   }
+
+  console.log('🔄 DatabaseService DI 초기화 시작...');
 
   try {
-    // DI Container에서 DatabaseService 가져오기 시도
-    const { DIContainer } = require('../../core/DIContainer');
-    const container = DIContainer.getInstance();
+    // 환경변수 상태 확인
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     
-    if (container && container.has) {
-      // ActiveDatabaseService 우선 시도
-      if (container.has('ActiveDatabaseService')) {
-        databaseService = container.get<DatabaseService>('ActiveDatabaseService');
-        isDIManaged = true;
-        console.log('✅ DI Container에서 ActiveDatabaseService 로드됨');
-        return;
-      }
-      
-      // DatabaseService 대안
-      if (container.has('DatabaseService')) {
-        databaseService = container.get<DatabaseService>('DatabaseService');
-        isDIManaged = true;
-        console.log('✅ DI Container에서 DatabaseService 로드됨');
-        return;
-      }
+    console.log('🔧 환경변수 상태:');
+    console.log(`- SUPABASE_URL: ${supabaseUrl ? '✅ 설정됨' : '❌ 누락'}`);
+    console.log(`- SUPABASE_SERVICE_ROLE_KEY: ${supabaseKey ? '✅ 설정됨' : '❌ 누락'}`);
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('필수 환경변수 누락: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY');
     }
+
+    // DatabaseService 인스턴스 생성
+    activeDatabaseService = DatabaseService.getInstance();
     
-    throw new Error('DI Container에서 적절한 DatabaseService를 찾을 수 없음');
-    
-  } catch (error: any) {
-    console.warn('⚠️ DI Container에서 DatabaseService 로딩 실패:', error.message);
-    console.log('🔧 직접 인스턴스 생성으로 대체');
-    
-    // Fallback: 직접 인스턴스 생성
-    databaseService = DatabaseService.getInstance();
-    isDIManaged = false;
-    
-    // 연결 시도
-    databaseService.connect().catch(connectError => {
-      console.error('❌ Fallback 데이터베이스 연결 실패:', connectError);
+    // 연결 시도 (비동기, 백그라운드)
+    activeDatabaseService.connect().catch(error => {
+      console.warn('⚠️ 초기 연결 실패 (백그라운드):', error.message);
     });
+
+    isInitialized = true;
+    console.log('✅ DatabaseService DI 초기화 성공');
+    
+    return activeDatabaseService;
+
+  } catch (error: any) {
+    console.error('❌ DatabaseService DI 초기화 실패:', error.message);
+    
+    // Fallback 시도
+    console.log('🔄 Fallback 모드로 전환...');
+    activeDatabaseService = DatabaseService.getInstance();
+    isInitialized = true;
+    
+    console.log('✅ Fallback DatabaseService 사용');
+    return activeDatabaseService;
   }
 }
 
 /**
- * 데이터베이스 서비스 인스턴스 반환 (지연 초기화)
+ * 활성 데이터베이스 서비스 반환 (지연 초기화)
+ * @returns DatabaseService 인스턴스
  */
 export function getDatabaseService(): DatabaseService {
-  if (!databaseService) {
-    initializeDatabaseFromDI();
+  if (!activeDatabaseService || !isInitialized) {
+    console.log('🔄 DatabaseService 지연 초기화...');
+    return initializeDatabaseFromDI();
   }
-  
-  if (!databaseService) {
-    throw new Error('DatabaseService를 초기화할 수 없습니다');
-  }
-  
-  return databaseService;
+  return activeDatabaseService;
 }
 
 /**
- * 수동으로 데이터베이스 서비스 설정 (테스트/개발용)
+ * 데이터베이스 서비스 수동 설정 (테스트용)
+ * @param service DatabaseService 인스턴스
  */
 export function setDatabaseService(service: DatabaseService): void {
-  // 기존 서비스 정리
-  if (databaseService && typeof databaseService.dispose === 'function') {
-    databaseService.dispose();
+  if (activeDatabaseService && typeof activeDatabaseService.dispose === 'function') {
+    activeDatabaseService.dispose();
   }
-  
-  databaseService = service;
-  isDIManaged = false;
-  console.log('🔧 DatabaseService 수동 설정됨');
+  activeDatabaseService = service;
+  isInitialized = true;
+  console.log('🔧 DatabaseService 수동 설정 완료');
 }
 
 /**
  * 데이터베이스 서비스 재설정
  */
 export function resetDatabaseService(): void {
-  if (databaseService && typeof databaseService.dispose === 'function') {
-    databaseService.dispose();
+  console.log('🔄 DatabaseService 재설정...');
+  
+  if (activeDatabaseService && typeof activeDatabaseService.dispose === 'function') {
+    activeDatabaseService.dispose();
   }
-  databaseService = null;
-  isDIManaged = false;
-  console.log('🔄 DatabaseService 재설정됨');
+  
+  activeDatabaseService = null;
+  isInitialized = false;
+  
+  console.log('✅ DatabaseService 재설정 완료');
 }
-
-// ============================================================================
-// 🔍 헬퍼 함수들 (단일 정의)
-// ============================================================================
 
 /**
  * 데이터베이스 연결 상태 확인
+ * @returns 연결 성공 여부
  */
 export async function checkDatabaseConnection(): Promise<boolean> {
   try {
-    const db = getDatabaseService();
-    if (!db.isConnected()) {
-      console.log('🔄 연결 상태 확인 중...');
-      await db.connect();
+    const dbService = getDatabaseService();
+    
+    if (!dbService.isConnected()) {
+      console.log('🔄 데이터베이스 연결 시도...');
+      await dbService.connect();
     }
-    return db.isConnected();
-  } catch (error) {
-    console.error('❌ 연결 상태 확인 실패:', error);
+    
+    const isConnected = dbService.isConnected();
+    console.log(`🔍 연결 상태: ${isConnected ? '✅ 연결됨' : '❌ 연결 실패'}`);
+    
+    return isConnected;
+  } catch (error: any) {
+    console.error('❌ 연결 상태 확인 실패:', error.message);
     return false;
   }
 }
 
 /**
  * 데이터베이스 상태 정보 조회
+ * @returns 상태 정보 객체
  */
-export async function getDatabaseStatus(): Promise<any> {
-  try {
-    const db = getDatabaseService();
-    const connectionInfo = db.getConnectionInfo();
-    const health = await db.getHealth();
-    
-    return {
-      service: db.constructor.name,
-      isDIManaged,
-      connection: connectionInfo,
-      health,
-      environment: {
-        NODE_ENV: process.env.NODE_ENV,
-        SUPABASE_URL_SET: !!process.env.SUPABASE_URL,
-        SUPABASE_KEY_SET: !!process.env.SUPABASE_SERVICE_ROLE_KEY
-      },
-      timestamp: new Date().toISOString()
-    };
-  } catch (error: any) {
-    return {
-      service: 'DatabaseService',
-      error: error.message,
-      isDIManaged,
-      timestamp: new Date().toISOString()
-    };
+export function getDatabaseStatus(): {
+  initialized: boolean;
+  connected: boolean;
+  serviceName: string;
+  mode: string;
+  environment: Record<string, any>;
+  timestamp: string;
+} {
+  const status = {
+    initialized: isInitialized,
+    connected: false,
+    serviceName: 'DatabaseService',
+    mode: process.env.USE_MOCK_DATABASE === 'true' ? 'mock' : 'supabase',
+    environment: {
+      NODE_ENV: process.env.NODE_ENV,
+      SUPABASE_URL_SET: !!process.env.SUPABASE_URL,
+      SUPABASE_KEY_SET: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      USE_MOCK_DATABASE: process.env.USE_MOCK_DATABASE === 'true'
+    },
+    timestamp: new Date().toISOString()
+  };
+
+  if (activeDatabaseService) {
+    status.connected = activeDatabaseService.isConnected();
+    status.serviceName = activeDatabaseService.constructor.name;
   }
-}
 
-/**
- * 데이터베이스 재연결
- */
-export async function reconnectDatabase(): Promise<boolean> {
-  try {
-    console.log('🔄 데이터베이스 재연결 시도...');
-    const db = getDatabaseService();
-    
-    // 기존 연결 해제
-    if (db.isConnected()) {
-      await db.disconnect();
-    }
-    
-    // 새 연결 시도
-    await db.connect();
-    const isConnected = db.isConnected();
-    
-    console.log(isConnected ? '✅ 재연결 성공' : '❌ 재연결 실패');
-    return isConnected;
-  } catch (error) {
-    console.error('❌ 데이터베이스 재연결 실패:', error);
-    return false;
-  }
-}
-
-/**
- * 데이터베이스 진단 실행
- */
-export async function runDatabaseDiagnostics(): Promise<void> {
-  console.log('🔍 === 데이터베이스 진단 시작 ===');
-  
-  try {
-    const db = getDatabaseService();
-    
-    console.log('📊 현재 상태:', await getDatabaseStatus());
-    console.log('🔗 연결 테스트:', await checkDatabaseConnection());
-    
-    if (db.isConnected()) {
-      console.log('✅ 연결 상태 양호');
-      
-      // 기본 기능 테스트
-      if (typeof db.runDiagnostics === 'function') {
-        await db.runDiagnostics();
-      } else {
-        console.log('📋 기본 진단만 실행됨 (runDiagnostics 메서드 없음)');
-      }
-    } else {
-      console.log('❌ 연결 실패');
-      console.log('💡 해결 방법:');
-      console.log('  1. .env 파일의 SUPABASE_URL 확인');
-      console.log('  2. .env 파일의 SUPABASE_SERVICE_ROLE_KEY 확인');
-      console.log('  3. Supabase 프로젝트 상태 확인');
-      console.log('  4. 네트워크 연결 확인');
-    }
-  } catch (error) {
-    console.error('❌ 진단 실행 실패:', error);
-  }
-  
-  console.log('🎯 === 데이터베이스 진단 완료 ===');
+  return status;
 }
 
 // ============================================================================
-// 📊 초기화 상태 로깅 (모듈 로드 시 실행)
+// 📤 Export 정리 (중복 완전 제거)
 // ============================================================================
 
-// 지연 초기화 방식으로 변경 - 모듈 로드 시 즉시 초기화하지 않음
-console.log('✅ === 데이터베이스 서비스 인덱스 설정 완료 ===');
-console.log('📋 특징:');
-console.log('  - 지연 초기화: 첫 사용 시점에 초기화');
-console.log('  - DI Container 우선: ActiveDatabaseService > DatabaseService');
-console.log('  - Fallback 지원: DI 실패 시 직접 인스턴스 생성');
-console.log('  - Export 중복 해결: 단일 export 패턴');
+// 메인 클래스 export
+export { DatabaseService } from './DatabaseService';
 
-// 환경변수 상태 미리 체크
-if (process.env.SUPABASE_URL) {
-  const supabaseProject = process.env.SUPABASE_URL.split('//')[1]?.split('.')[0];
-  console.log(`  - Supabase 프로젝트: ${supabaseProject}`);
-} else {
-  console.log('  - ⚠️ SUPABASE_URL 환경변수 없음');
-}
-
-// ============================================================================
-// 🔚 통합된 Export (중복 완전 제거)
-// ============================================================================
-
-// 기본 내보내기 (호환성 유지)
+// 기본 export (지연 초기화 함수)
 export default getDatabaseService;
 
-// 명명된 내보내기들 (모든 필요한 기능)
-export {
-  DatabaseService,
-  initializeDatabaseFromDI,
-  setDatabaseService,
-  resetDatabaseService,
-  checkDatabaseConnection,
-  getDatabaseStatus,
-  reconnectDatabase,
-  runDatabaseDiagnostics
+// 유틸리티 export (단일 정의만)
+export const database = {
+  getInstance: getDatabaseService,
+  initialize: initializeDatabaseFromDI,
+  getStatus: getDatabaseStatus,
+  checkConnection: checkDatabaseConnection,
+  reset: resetDatabaseService
 };
 
 // ============================================================================
-// 🧹 정리 함수 (애플리케이션 종료 시)
+// 🧹 정리 및 로깅
 // ============================================================================
 
-/**
- * 애플리케이션 종료 시 정리
- */
-export const cleanupDatabase = (): void => {
+// 환경변수 미리보기
+if (process.env.SUPABASE_URL) {
+  const projectId = process.env.SUPABASE_URL.split('//')[1]?.split('.')[0];
+  console.log(`📍 Supabase 프로젝트: ${projectId}`);
+} else {
+  console.log('⚠️ SUPABASE_URL 환경변수 설정 필요');
+}
+
+// 프로세스 종료 시 정리
+const cleanup = () => {
   try {
-    console.log('🧹 데이터베이스 서비스 정리...');
-    
-    if (databaseService && typeof databaseService.dispose === 'function') {
-      databaseService.dispose();
-    }
-    
-    databaseService = null;
-    isDIManaged = false;
-    
-    console.log('✅ 데이터베이스 서비스 정리 완료');
+    console.log('🧹 DatabaseService 정리 중...');
+    resetDatabaseService();
+    console.log('✅ DatabaseService 정리 완료');
   } catch (error) {
-    console.error('❌ 데이터베이스 정리 실패:', error);
+    console.error('❌ DatabaseService 정리 실패:', error);
   }
 };
 
-// 프로세스 종료 시 자동 정리 등록
 if (typeof process !== 'undefined') {
-  process.on('beforeExit', cleanupDatabase);
-  process.on('SIGTERM', cleanupDatabase);
-  process.on('SIGINT', cleanupDatabase);
+  process.on('beforeExit', cleanup);
+  process.on('SIGTERM', cleanup);
+  process.on('SIGINT', cleanup);
 }
 
-console.log('🎯 === 데이터베이스 인덱스 초기화 완료 (수정판) ===');
+console.log('✅ === 데이터베이스 서비스 인덱스 초기화 완료 (중복 export 해결) ===');
