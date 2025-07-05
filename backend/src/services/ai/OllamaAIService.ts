@@ -137,7 +137,7 @@ export class OllamaAIService {
       const container = DIContainer.DIContainer?.getInstance?.();
       
       if (container) {
-        this.db = container.get('ActiveDatabaseService');
+        this.db = container.get('DatabaseService');
         console.log(`🗄️ DatabaseService 연동: ${this.db?.isConnected?.() ? '✅' : '⚠️'}`);
       }
     } catch (error) {
@@ -206,19 +206,14 @@ export class OllamaAIService {
   // ============================================================================
   // 🔍 연결 상태 관리 (ollama.ts 호환)
   // ============================================================================
-
-  /**
-   * Ollama 서버 연결 상태 확인
-   */
-// 이 부분을 다음으로 교체:
-async checkConnection(): Promise<boolean> {
+  async checkConnection(): Promise<boolean> {
   try {
-    console.log(`🔍 Ollama 연결 확인 중: ${this.baseUrl}`);
-    
+    console.log(`🔍 Ollama 연결 확인 중: ${this.baseURL}`);  // baseURL 사용
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     
-    const response = await fetch(`${this.baseUrl}/api/tags`, {
+    const response = await fetch(`${this.baseURL}/api/tags`, {
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -245,7 +240,7 @@ async checkConnection(): Promise<boolean> {
     return false;
   }
 }
-
+ 
   /**
    * 강제 헬스체크 (캐시 무시)
    */
@@ -860,64 +855,95 @@ async checkConnection(): Promise<boolean> {
   /**
    * 기존 호환 - 상태 정보
    */
-  getStatus(): {
-    available: boolean;
-    baseUrl: string;
-    lastHealthCheck: Date | null;
-    timeout: number;
-    retryCount: number;
-    modelCount: number;
-    cachedModels: string[];
-  } {
-    return {
-      available: this.isAvailable,
-      baseUrl: this.baseURL,
-      lastHealthCheck: this.lastHealthCheck ? new Date(this.lastHealthCheck) : null,
-      timeout: this.timeout,
-      retryCount: this.retryCount,
-      modelCount: this.models.length,
-      cachedModels: this.models
-    };
-  }
+ getStatus(): {
+  available: boolean;
+  baseUrl: string;
+  lastHealthCheck: Date | null;
+  timeout: number;
+  retryCount: number;
+  modelCount: number;
+  cachedModels: string[];
+} {
+  return {
+    available: this.isAvailable,
+    baseUrl: this.baseURL,  // ✅ this.baseURL 사용 (일관성 유지)
+    lastHealthCheck: this.lastHealthCheck ? new Date(this.lastHealthCheck) : null,
+    timeout: this.timeout,
+    retryCount: this.retryCount,
+    modelCount: this.models.length,
+    cachedModels: this.models
+  };
+}
 
-  /**
-   * 연결 테스트
-   */
-  async testConnection(): Promise<{success: boolean, message: string, details?: any}> {
-    try {
-      const isConnected = await this.forceHealthCheck();
-      
-      if (isConnected) {
-        await this.loadAvailableModels();
-        return {
-          success: true,
-          message: 'Ollama 연결 성공',
-          details: {
-            modelCount: this.models.length,
-            availableModels: this.models.slice(0, 5)
-          }
-        };
-      } else {
-        return {
-          success: false,
-          message: 'Ollama 서버에 연결할 수 없습니다',
-          details: {
-            baseUrl: this.baseURL,
-            suggestion: 'ollama serve 명령어로 서버를 시작하세요'
-          }
-        };
-      }
-    } catch (error: any) {
+
+// ============================================================================
+// 🔧 testConnection() 메서드에서도 통일
+// ============================================================================
+
+async testConnection(): Promise<{success: boolean, message: string, details?: any}> {
+  try {
+    const isConnected = await this.forceHealthCheck();
+    
+    if (isConnected) {
+      await this.loadAvailableModels();
+      return {
+        success: true,
+        message: 'Ollama 연결 성공',
+        details: {
+          modelCount: this.models.length,
+          availableModels: this.models.slice(0, 5)
+        }
+      };
+    } else {
       return {
         success: false,
-        message: `연결 테스트 실패: ${error.message}`,
+        message: 'Ollama 서버에 연결할 수 없습니다',
         details: {
-          baseUrl: this.baseURL,
-          error: error.message
+          baseUrl: this.baseURL,  // ✅ this.baseURL 사용
+          suggestion: 'ollama serve 명령어로 서버를 시작하세요'
         }
       };
     }
+  } catch (error: any) {
+    return {
+      success: false,
+      message: `연결 테스트 실패: ${error.message}`,
+      details: {
+        baseUrl: this.baseURL,  // ✅ this.baseURL 사용
+        error: error.message
+      }
+    };
   }
+}
+
+// ============================================================================
+// 🔧 getServiceStatus() 메서드에서도 통일
+// ============================================================================
+
+async getServiceStatus(): Promise<any> {
+  const isConnected = await this.checkConnection();
+  await this.loadAvailableModels();
+
+  return {
+    provider: 'ollama',
+    connected: isConnected,
+    baseUrl: this.baseURL,  // ✅ this.baseURL 사용
+    models: this.models,
+    defaultModel: this.getDefaultModel(),
+    features: [
+      'chat', 
+      'completion', 
+      'local', 
+      'privacy-focused',
+      'conversation_storage',
+      'personalization_support'
+    ],
+    database: {
+      connected: this.db?.isConnected?.() || false,
+      available: !!this.db
+    }
+  };
+}
 
   /**
    * 서비스 정리 (DI Container용)
