@@ -957,11 +957,7 @@ export const chat = (model: string, messages: OllamaMessage[], stream: boolean =
 // ============================================================================
 
 // 클래스와 인스턴스 export (중복 제거)
-export { OllamaAIService };
 export { ollamaService };
-
-// 기본 export
-export default ollamaService;
 
 // ============================================================================
 // 🎉 수정 완료 로그

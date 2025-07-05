@@ -710,4 +710,4 @@ setInterval(() => {
 console.log('✅ WebAuthn 라우트 로딩 완료 (실제 DB 연동)');
 
 // ✅ 올바른 기본 내보내기
-export default WebAuthnService;
+export default router;

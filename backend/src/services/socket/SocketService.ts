@@ -12,7 +12,7 @@ import express from 'express';
 import cors from 'cors';
 import { Request, Response, NextFunction } from 'express';
 import { createServer } from 'http';
-import { DatabaseService } from './services/database/DatabaseService';
+import { DatabaseService } from '../database/DatabaseService';
 import { DIContainer } from './core/DIContainer';
 import SocketService from './services/socket/SocketService';
 

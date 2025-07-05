@@ -374,28 +374,28 @@ export class CryptoService {
   /**
    * 🗄️ Vault 데이터 전용 복호화
    */
-  public decryptVaultData<T = any>(encryptedData: string): T {
-    try {
-      this.lastOperation = 'decryptVaultData';
-      
-      const decryptedData = this.decrypt(encryptedData);
-      const [timestamp, jsonData] = decryptedData.split(':', 2);
-      
-      if (!timestamp || !jsonData) {
-        throw new Error('Vault 데이터 형식이 잘못되었습니다');
-      }
-      
-      const data = JSON.parse(jsonData);
-      console.log(`🗄️ Vault 데이터 복호화 성공 (타임스탬프: ${new Date(parseInt(timestamp)).toISOString()})`);
-      
-      return data;
-      
-    } catch (error: any) {
-      this.errorCount++;
-      console.error('❌ Vault 데이터 복호화 실패:', error.message);
-      throw new Error(`Vault 데이터 복호화 실패: ${error.message}`);
+    // ✨ 수정 위치: CryptoService.ts의 decryptVaultData 메서드
+async decryptVaultData(encryptedData: string): Promise<any> {
+  try {
+    const decryptedString = this.decrypt(encryptedData);
+    
+    // 🔧 JSON 파싱 전 검증 추가
+    if (!decryptedString || decryptedString.trim() === '') {
+      throw new Error('Decrypted data is empty');
     }
+    
+    // 🔧 안전한 JSON 파싱
+    try {
+      return JSON.parse(decryptedString);
+    } catch (jsonError) {
+      console.warn('JSON 파싱 실패, 원본 데이터 반환:', decryptedString);
+      return { data: decryptedString };
+    }
+  } catch (error) {
+    console.error('Vault 데이터 복호화 실패:', error);
+    throw new Error(`Vault data decryption failed: ${error.message}`);
   }
+}
 
   /**
    * 🧪 암호화 기능 테스트
