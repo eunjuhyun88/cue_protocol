@@ -13,6 +13,7 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { DatabaseService } from './services/database/DatabaseService';
+import SocketService from './services/socket/SocketService';  // 추가
 
 // 환경 변수 로드
 dotenv.config();
@@ -254,13 +255,25 @@ async function initializeAllServices(): Promise<boolean> {
     
     // 6. WebSocket 서비스 초기화
     try {
-      const WebSocketService = await import('./services/socket/SocketService').then(m => m.default);
-      services.websocket = new WebSocketService(httpServer);
+  services.websocket = SocketService.createSafeInstance();
+  
+  if (services.websocket) {
+    const initialized = services.websocket.initializeWithServer(httpServer);
+    
+    if (initialized) {
       app.set('websocketService', services.websocket);
       console.log('✅ WebSocket 서비스 초기화 성공');
-    } catch (wsError: any) {
-      console.warn('⚠️ WebSocket 서비스 초기화 실패 (선택적 서비스):', wsError.message);
+    } else {
+      console.warn('⚠️ WebSocket 서비스 초기화 실패');
+      services.websocket = null;
     }
+  } else {
+    console.warn('⚠️ WebSocket 서비스 인스턴스 생성 실패');
+  }
+} catch (wsError: any) {
+  console.warn('⚠️ WebSocket 서비스 초기화 실패 (선택적 서비스):', wsError.message);
+  services.websocket = null;
+}
     
     console.log('🎯 === 모든 서비스 초기화 완료 (CryptoService DI 통합) ===');
     console.log('📊 서비스 상태:');
