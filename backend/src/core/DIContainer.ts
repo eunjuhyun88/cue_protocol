@@ -7,6 +7,7 @@
 //   ✅ initializeContainer 함수 추가 (app.ts 호환성)
 //   ✅ export 구조 개선
 //   ✅ 중복 함수 제거
+//   ✅ 문법 오류 수정 (1363번째 줄 중괄호 문제 해결)
 // ============================================================================
 
 import { AuthConfig } from '../config/auth';
@@ -125,11 +126,22 @@ export class DIContainer {
     this.errorLog.push(errorEntry);
     
     const icon = severity === 'error' ? '❌' : '⚠️';
-    console[severity](`${icon} [${service}] ${severity.toUpperCase()}:`);
-    console[severity](`   메시지: ${errorEntry.error}`);
-    console[severity](`   시간: ${new Date(errorEntry.timestamp).toISOString()}`);
-    if (errorEntry.stack && severity === 'error') {
-      console.error(`   스택: ${errorEntry.stack.split('\n')[1]?.trim()}`);
+    
+    // console[severity] 대신 명시적으로 console.error 또는 console.warn 사용
+    if (severity === 'error') {
+      console.error(`${icon} [${service}] ERROR:`);
+      console.error(`   메시지: ${errorEntry.error}`);
+      console.error(`   시간: ${new Date(errorEntry.timestamp).toISOString()}`);
+      if (errorEntry.stack) {
+        console.error(`   스택: ${errorEntry.stack.split('\n')[1]?.trim()}`);
+      }
+    } else {
+      console.warn(`${icon} [${service}] WARNING:`);
+      console.warn(`   메시지: ${errorEntry.error}`);
+      console.warn(`   시간: ${new Date(errorEntry.timestamp).toISOString()}`);
+      if (errorEntry.stack) {
+        console.warn(`   스택: ${errorEntry.stack.split('\n')[1]?.trim()}`);
+      }
     }
   }
 
@@ -477,24 +489,30 @@ export class DIContainer {
    * AI 서비스 등록 (Document 1의 실제 파일 기반)
    */
   private async registerAIServices(): Promise<void> {
-    // Ollama AI 서비스
+    // Ollama AI 서비스 (향상된 버전)
     this.registerSingleton('OllamaAIService', () => {
       try {
-        const { ollamaService } = require('../services/ollama');
-        console.log('✅ Ollama AI 서비스 로드됨');
-        return ollamaService;
+        const { OllamaAIService } = require('../services/ai/OllamaAIService');
+        const instance = OllamaAIService.getInstance();
+        console.log('✅ 향상된 Ollama AI 서비스 로드됨');
+        return instance;
       } catch (error: any) {
         this.logError('OllamaAIService', error, 'warning');
         // Graceful Degradation: Mock AI 서비스
         return {
-          chat: async (message: string) => ({ 
-            response: `Mock AI 응답: ${message}`, 
-            model: 'mock' 
-          })
+          generateResponse: async (message: string) => ({ 
+            content: `Mock AI 응답: ${message}`, 
+            model: 'mock',
+            provider: 'mock',
+            local: true 
+          }),
+          checkConnection: async () => false,
+          getModels: async () => ['mock-model'],
+          getDefaultModel: () => 'mock-model'
         };
       }
     }, [], {
-      description: 'Ollama AI 서비스',
+      description: '향상된 Ollama AI 서비스 (DatabaseService 통합)',
       category: 'ai'
     });
 
@@ -1268,98 +1286,11 @@ export async function connectDIRouters(app: Application, container: DIContainer)
     return { connectedCount, failedCount, failedRouters };
 
   } catch (error: any) {
-    console.error('❌ initializeContainer 실패:', error.message);
+    console.error('❌ 라우터 연결 중 심각한 오류:', error.message);
     console.error('  🔍 Document 1의 완전한 에러 추적 시스템이 활성화됩니다.');
     
     // Document 1의 에러 처리 방식 적용
-    throw new Error(`initializeContainer 초기화 실패: ${error.message}`);
-  }
-}
-
-/**
- * 의존성 주입 시스템 종료 (Document 1)
- */
-export async function shutdownDI(): Promise<void> {
-  console.log('🛑 DI 시스템 종료...');
-  
-  const container = DIContainer.getInstance();
-  await container.dispose();
-  
-  console.log('✅ DI 시스템 종료 완료');
-}
-
-/**
- * 컨테이너 상태 조회 (Document 1)
- */
-export function getDIStatus(): any {
-  return DIContainer.getInstance().getStatus();
-}
-
-/**
- * 에러 로그 조회 (Document 1)
- */
-export function getDIErrorLog(): Array<{timestamp: number, service: string, error: string, stack?: string, severity: 'error' | 'warning'}> {
-  return DIContainer.getInstance().getErrorLog();
-}
-
-/**
- * 서비스 가져오기 (Document 1의 편의 함수)
- */
-export function getService<T>(name: string): T {
-  return DIContainer.getInstance().get<T>(name);
-}
-
-/**
- * 서비스 등록 여부 확인 (Document 1)
- */
-export function hasService(name: string): boolean {
-  return DIContainer.getInstance().has(name);
-}
-
-/**
- * 서비스 재시작 (Document 1)
- */
-export async function restartService(name: string): Promise<void> {
-  return DIContainer.getInstance().restartService(name);
-}
-
-/**
- * 의존성 검증 (Document 1)
- */
-export function validateDependencies(): { valid: boolean; errors: string[] } {
-  return DIContainer.getInstance().validateDependencies();
-}
-
-// ============================================================================
-// 📤 Export (순서 수정 - 선언된 함수들만 export)
-// ============================================================================
-
-// DIContainer 클래스는 이미 위에 정의됨
-export { DIContainer };
-
-// connectDIRouters 함수는 이미 위에 정의됨  
-export { connectDIRouters };
-
-// 기본 export도 제공 (하위 호환성)
-export default DIContainer;
-
-// ============================================================================
-// 🎉 초기화 완료 로그 (initializeContainer 추가 버전)
-// ============================================================================
-
-console.log('✅ 완전 통합 DIContainer.ts 완성 (initializeContainer 호환 버전):');
-console.log('  ✅ Document 1 기반: Graceful Degradation, 실제 파일 기반, 강화된 에러 추적');
-console.log('  ✅ SessionRestoreService 중심 세션 관리, 순환 의존성 해결');
-console.log('  🚫 SupabaseService 완전 제거 (DatabaseService만 사용)');
-console.log('  💉 완전한 DatabaseService 의존성 주입');
-console.log('  🛡️ 프로덕션 레벨 안정성과 실패 허용 시스템');
-console.log('  🔐 세션 중심 인증 아키텍처');
-console.log('  📊 최고 수준의 진단 및 상태 관리');
-console.log('  🔧 Express 라우터 완전 매핑');
-console.log('  ⚡ 최적화된 초기화 프로세스');
-console.log('  🎯 프로덕션 준비 완료');
-console.log('  ⚡ NEW: initializeContainer 함수 호환성 (app.ts 에러 해결)');
-    return { connectedCount: 0, failedCount: 1, failedRouters: [{ error: error.message }] };
+    throw new Error(`라우터 연결 초기화 실패: ${error.message}`);
   }
 }
 
@@ -1431,31 +1362,111 @@ export async function initializeDI(): Promise<DIContainer> {
     throw error;
   }
 }
+
 /**
-* ⚡ NEW: app.ts 호환을 위한 initializeContainer 함수 추가
-* 이 함수는 Document 2의 간단한 방식을 모방하되, Document 1의 모든 기능을 사용합니다.
-*/
+ * ⚡ NEW: app.ts 호환을 위한 initializeContainer 함수 추가
+ * 이 함수는 Document 2의 간단한 방식을 모방하되, Document 1의 모든 기능을 사용합니다.
+ */
 export async function initializeContainer(): Promise<DIContainer> {
- console.log('🚀 === initializeContainer 호출됨 (Document 1 호환 버전) ===');
- console.log('  📝 이 함수는 app.ts의 import 호환성을 위해 제공됩니다.');
- console.log('  🎯 내부적으로는 Document 1의 완전한 initializeDI()를 실행합니다.');
- 
- try {
-   // Document 1의 완전한 초기화 함수를 호출
-   const container = await initializeDI();
-   
-   console.log('✅ === initializeContainer 완료 (Document 1 기반) ===');
-   console.log('  🎉 모든 Document 1 기능이 활성화되었습니다.');
-   console.log('  🔧 app.ts 호환성 확보');
-   console.log('  💪 프로덕션 레벨 안정성');
-   
-   return container;
-   
- } catch (error: any) {
-   console.error('❌ initializeContainer 실패:', error.message);
-   console.error('  🔍 Document 1의 완전한 에러 추적 시스템이 활성화됩니다.');
-   
-   // Document 1의 에러 처리 방식 적용
-   throw new Error(`initializeContainer 초기화 실패: ${error.message}`);
- }
+  console.log('🚀 === initializeContainer 호출됨 (Document 1 호환 버전) ===');
+  console.log('  📝 이 함수는 app.ts의 import 호환성을 위해 제공됩니다.');
+  console.log('  🎯 내부적으로는 Document 1의 완전한 initializeDI()를 실행합니다.');
+  
+  try {
+    // Document 1의 완전한 초기화 함수를 호출
+    const container = await initializeDI();
+    
+    console.log('✅ === initializeContainer 완료 (Document 1 기반) ===');
+    console.log('  🎉 모든 Document 1 기능이 활성화되었습니다.');
+    console.log('  🔧 app.ts 호환성 확보');
+    console.log('  💪 프로덕션 레벨 안정성');
+    
+    return container;
+    
+  } catch (error: any) {
+    console.error('❌ initializeContainer 실패:', error.message);
+    console.error('  🔍 Document 1의 완전한 에러 추적 시스템이 활성화됩니다.');
+    
+    // Document 1의 에러 처리 방식 적용
+    throw new Error(`initializeContainer 초기화 실패: ${error.message}`);
+  }
 }
+
+/**
+ * 의존성 주입 시스템 종료 (Document 1)
+ */
+export async function shutdownDI(): Promise<void> {
+  console.log('🛑 DI 시스템 종료...');
+  
+  const container = DIContainer.getInstance();
+  await container.dispose();
+  
+  console.log('✅ DI 시스템 종료 완료');
+}
+
+/**
+ * 컨테이너 상태 조회 (Document 1)
+ */
+export function getDIStatus(): any {
+  return DIContainer.getInstance().getStatus();
+}
+
+/**
+ * 에러 로그 조회 (Document 1)
+ */
+export function getDIErrorLog(): Array<{timestamp: number, service: string, error: string, stack?: string, severity: 'error' | 'warning'}> {
+  return DIContainer.getInstance().getErrorLog();
+}
+
+/**
+ * 서비스 가져오기 (Document 1의 편의 함수)
+ */
+export function getService<T>(name: string): T {
+  return DIContainer.getInstance().get<T>(name);
+}
+
+/**
+ * 서비스 등록 여부 확인 (Document 1)
+ */
+export function hasService(name: string): boolean {
+  return DIContainer.getInstance().has(name);
+}
+
+/**
+ * 서비스 재시작 (Document 1)
+ */
+export async function restartService(name: string): Promise<void> {
+  return DIContainer.getInstance().restartService(name);
+}
+
+/**
+ * 의존성 검증 (Document 1)
+ */
+export function validateDependencies(): { valid: boolean; errors: string[] } {
+  return DIContainer.getInstance().validateDependencies();
+}
+
+// ============================================================================
+// 📤 Export (완전한 export 구조)
+// ============================================================================
+
+// 기본 export (하위 호환성)
+export default DIContainer;
+
+// ============================================================================
+// 🎉 최종 완료 로그
+// ============================================================================
+
+console.log('✅ 완전 통합 DIContainer.ts 완성 (initializeContainer 호환 버전):');
+console.log('  ✅ Document 1 기반: Graceful Degradation, 실제 파일 기반, 강화된 에러 추적');
+console.log('  ✅ SessionRestoreService 중심 세션 관리, 순환 의존성 해결');
+console.log('  🚫 SupabaseService 완전 제거 (DatabaseService만 사용)');
+console.log('  💉 완전한 DatabaseService 의존성 주입');
+console.log('  🛡️ 프로덕션 레벨 안정성과 실패 허용 시스템');
+console.log('  🔐 세션 중심 인증 아키텍처');
+console.log('  📊 최고 수준의 진단 및 상태 관리');
+console.log('  🔧 Express 라우터 완전 매핑 (15+ 라우터)');
+console.log('  ⚡ 최적화된 초기화 프로세스');
+console.log('  🎯 프로덕션 준비 완료');
+console.log('  ⚡ NEW: initializeContainer 함수 호환성 (app.ts 에러 해결)');
+console.log('  🐛 FIXED: 1363번째 줄 중괄호 문법 오류 해결');
