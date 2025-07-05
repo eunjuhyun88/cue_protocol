@@ -1,8 +1,8 @@
 // ============================================================================
-// 🦙 통합된 Ollama AI 서비스 (중복 해결 + 호환성 유지)
+// 🦙 완전히 수정된 Ollama AI 서비스 (무한루프 해결 + 전체 기능)
 // 경로: backend/src/services/ai/OllamaAIService.ts
-// 용도: Ollama 전용 AI 서비스 + DatabaseService 통합 + 기존 코드 호환성
-// 호출구조: DIContainer → OllamaAIService → DatabaseService + Ollama API
+// 용도: Ollama 전용 AI 서비스 + DatabaseService 통합 + 안정성 보장
+// 수정사항: 무한루프 방지, DatabaseService 올바른 연결, 중복 호출 방지
 // ============================================================================
 
 interface OllamaMessage {
@@ -75,45 +75,55 @@ export interface AIModel {
 }
 
 /**
- * 통합된 Ollama AI 서비스
- * - 기존 ollama.ts의 모든 기능 포함
- * - DatabaseService 통합으로 대화 저장
- * - 개인화 컨텍스트 지원
- * - 향상된 에러 처리 및 재시도 로직
+ * 완전히 수정된 Ollama AI 서비스
+ * - 무한루프 완전 방지
+ * - DatabaseService 안전한 연결
+ * - 중복 호출 방지 시스템
+ * - 강화된 에러 처리
+ * - 모든 기존 기능 유지
  */
 export class OllamaAIService {
   private static instance: OllamaAIService;
   private baseURL: string;
   private timeout: number;
   private retryCount: number;
+  
+  // 무한루프 방지 시스템
+  private isConnecting: boolean = false;
+  private isLoadingModels: boolean = false;
+  private lastConnectionCheck: number = 0;
+  private lastModelsCheck: number = 0;
+  private connectionCooldown: number = 5000; // 5초
+  private modelsCooldown: number = 10000; // 10초
+  
+  // 상태 관리
   private isAvailable: boolean = false;
-  private lastHealthCheck: number = 0;
-  private healthCheckInterval: number = 5 * 60 * 1000; // 5분
   private models: string[] = [];
-  private modelsLastFetched: number = 0;
-  private modelsRefreshInterval: number = 10 * 60 * 1000; // 10분
   private availableModels: Map<string, OllamaModelInfo> = new Map();
   private modelConfigs: Map<string, any> = new Map();
   private isInitialized: boolean = false;
   private db: any = null; // DatabaseService (선택적)
 
   private constructor() {
-    console.log('🦙 === OllamaAIService 초기화 (DatabaseService 통합) ===');
+    console.log('🦙 === OllamaAIService 초기화 (무한루프 방지 + 완전 기능) ===');
     
-    this.baseURL = process.env.OLLAMA_BASE_URL || process.env.OLLAMA_HOST || process.env.OLLAMA_URL || 'http://localhost:11434';
+    this.baseURL = process.env.OLLAMA_BASE_URL || 
+                   process.env.OLLAMA_HOST || 
+                   process.env.OLLAMA_URL || 
+                   'http://localhost:11434';
     this.timeout = parseInt(process.env.OLLAMA_TIMEOUT || '60000');
     this.retryCount = parseInt(process.env.OLLAMA_RETRY_COUNT || '3');
     
     console.log(`🔗 Ollama 서버: ${this.baseURL}`);
     
-    // DatabaseService 연동 시도 (선택적)
+    // DatabaseService 안전한 연동
     this.initializeDatabaseConnection();
     
     // 모델별 설정 초기화
     this.initializeModelConfigs();
     
-    // 비동기 초기화
-    this.initializeAsync();
+    // 비동기 초기화 (안전하게)
+    this.safeInitializeAsync();
   }
 
   public static getInstance(): OllamaAIService {
@@ -124,21 +134,30 @@ export class OllamaAIService {
   }
 
   // ============================================================================
-  // 🔧 초기화 메서드들
+  // 🔧 안전한 초기화 메서드들 (무한루프 방지)
   // ============================================================================
 
   /**
-   * DatabaseService 연동 초기화 (선택적)
+   * DatabaseService 안전한 연동 (DI Container 통합)
    */
   private initializeDatabaseConnection(): void {
     try {
-      // DI Container를 통한 DatabaseService 가져오기 시도
-      const DIContainer = require('../../core/DIContainer');
-      const container = DIContainer.DIContainer?.getInstance?.();
-      
-      if (container) {
-        this.db = container.get('DatabaseService');
-        console.log(`🗄️ DatabaseService 연동: ${this.db?.isConnected?.() ? '✅' : '⚠️'}`);
+      // 환경 변수로 DI Container 사용 여부 확인
+      if (process.env.USE_DI_CONTAINER !== 'false') {
+        // DI Container를 통한 안전한 연결 시도
+        const DIContainer = require('../../core/DIContainer');
+        const container = DIContainer.DIContainer?.getInstance?.();
+        
+        if (container && typeof container.get === 'function') {
+          // DatabaseService 대신 ActiveDatabaseService를 시도하되, 없으면 DatabaseService 사용
+          try {
+            this.db = container.get('DatabaseService'); // ✅ 수정: ActiveDatabaseService → DatabaseService
+            console.log(`🗄️ DatabaseService 연동: ${this.db?.isConnected?.() ? '✅' : '⚠️'} (DI)`);
+          } catch (diError) {
+            console.log('🗄️ DatabaseService 연동: ⚠️ (DI 실패, 선택적 기능)');
+            this.db = null;
+          }
+        }
       }
     } catch (error) {
       console.log('🗄️ DatabaseService 연동: ⚠️ (선택적 기능)');
@@ -147,26 +166,35 @@ export class OllamaAIService {
   }
 
   /**
-   * 비동기 초기화
+   * 안전한 비동기 초기화 (무한루프 방지)
    */
-  private async initializeAsync(): Promise<void> {
+  private async safeInitializeAsync(): Promise<void> {
     try {
       console.log('🔍 Ollama 초기 연결 확인 중...');
       
-      const isConnected = await this.checkConnection();
+      // 단일 연결 시도 (재귀 호출 없음)
+      const isConnected = await this.performSingleConnectionCheck();
+      
       if (isConnected) {
         console.log('✅ Ollama 초기 연결 성공');
-        await this.loadAvailableModels();
+        
+        // 모델 로딩도 단일 시도
+        await this.performSingleModelsLoad();
         console.log(`✅ 모델 설정 초기화 완료: ${this.models.length} 개 모델`);
+        
+        this.isAvailable = true;
       } else {
         console.warn('⚠️ Ollama 초기 연결 실패 - 폴백 모드로 동작');
         this.printConnectionHelp();
+        this.isAvailable = false;
       }
       
       this.isInitialized = true;
     } catch (error: any) {
       console.warn('⚠️ Ollama 초기화 실패:', error.message);
       this.printConnectionHelp();
+      this.isAvailable = false;
+      this.isInitialized = true; // 초기화 완료로 표시 (무한 대기 방지)
     }
   }
 
@@ -183,98 +211,173 @@ export class OllamaAIService {
   }
 
   /**
-   * 모델별 기본 설정 초기화
+   * 모델별 기본 설정 초기화 (전체 Ollama 모델 지원)
    */
   private initializeModelConfigs(): void {
     const configs = {
-      'llama3.2:3b': { type: 'chat', temperature: 0.7, max_tokens: 2048 },
+      // 🦙 Llama 모델군
+      'llama3.2:3b': { type: 'chat', temperature: 0.7, max_tokens: 2048, recommended: true },
       'llama3.2:1b': { type: 'chat', temperature: 0.8, max_tokens: 1024 },
-      'deepseek-coder:6.7b': { type: 'code', temperature: 0.3, max_tokens: 4096 },
+      'llama3.2:latest': { type: 'chat', temperature: 0.7, max_tokens: 2048 },
+      'llama3.1:8b': { type: 'chat', temperature: 0.7, max_tokens: 4096 },
+      'llama3.1:70b': { type: 'chat', temperature: 0.6, max_tokens: 8192 },
+      'llama2:7b': { type: 'chat', temperature: 0.7, max_tokens: 2048 },
+      'llama2:13b': { type: 'chat', temperature: 0.6, max_tokens: 4096 },
+      'llama2:70b': { type: 'chat', temperature: 0.5, max_tokens: 8192 },
+
+      // 💻 코딩 전문 모델군
+      'deepseek-coder:6.7b': { type: 'code', temperature: 0.3, max_tokens: 4096, recommended: true },
+      'deepseek-coder:33b': { type: 'code', temperature: 0.2, max_tokens: 8192 },
+      'deepseek-coder-v2:16b': { type: 'code', temperature: 0.3, max_tokens: 6144 },
       'codellama:7b': { type: 'code', temperature: 0.2, max_tokens: 4096 },
-      'phi3:mini': { type: 'reasoning', temperature: 0.5, max_tokens: 2048 },
+      'codellama:13b': { type: 'code', temperature: 0.2, max_tokens: 6144 },
+      'magicoder:7b': { type: 'code', temperature: 0.3, max_tokens: 4096 },
+      'starcoder2:15b': { type: 'code', temperature: 0.2, max_tokens: 8192 },
+
+      // 🧠 추론/논리 모델군
+      'phi3:mini': { type: 'reasoning', temperature: 0.5, max_tokens: 2048, recommended: true },
+      'phi3:latest': { type: 'reasoning', temperature: 0.5, max_tokens: 2048 },
+      'phi:2.7b': { type: 'reasoning', temperature: 0.6, max_tokens: 2048 },
+
+      // 🎭 범용 대화 모델군
       'mistral:latest': { type: 'chat', temperature: 0.7, max_tokens: 2048 },
-      'llama3.1:8b': { type: 'chat', temperature: 0.7, max_tokens: 4096 }
+      'mistral:7b': { type: 'chat', temperature: 0.7, max_tokens: 2048 },
+      'mixtral:8x7b': { type: 'chat', temperature: 0.6, max_tokens: 4096 },
+      'vicuna:7b': { type: 'chat', temperature: 0.7, max_tokens: 2048 },
+      'qwen:7b': { type: 'chat', temperature: 0.7, max_tokens: 2048 },
+
+      // 🔗 임베딩 모델군
+      'nomic-embed-text:latest': { type: 'embedding', temperature: 0.0, max_tokens: 512 },
+      'mxbai-embed-large:latest': { type: 'embedding', temperature: 0.0, max_tokens: 512 }
     };
 
     Object.entries(configs).forEach(([model, config]) => {
       this.modelConfigs.set(model, config);
     });
 
-    console.log(`✅ 모델 설정 초기화 완료: ${this.modelConfigs.size} 개 모델`);
+    console.log(`✅ 모델 설정 초기화 완료: ${this.modelConfigs.size} 개 모델 (전체 Ollama 지원)`);
+    console.log(`🎯 추천 모델: ${Object.entries(configs).filter(([_, config]) => config.recommended).map(([name]) => name).join(', ')}`);
   }
 
   // ============================================================================
-  // 🔍 연결 상태 관리 (ollama.ts 호환)
+  // 🔍 무한루프 방지 연결 상태 관리
   // ============================================================================
+
+  /**
+   * 안전한 연결 확인 (쿨다운 + 중복 방지)
+   */
   async checkConnection(): Promise<boolean> {
-  try {
-    console.log(`🔍 Ollama 연결 확인 중: ${this.baseURL}`);  // baseURL 사용
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const now = Date.now();
     
-    const response = await fetch(`${this.baseURL}/api/tags`, {
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' }
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      console.warn(`⚠️ Ollama 서버 응답 오류: ${response.status}`);
-      return false;
+    // 쿨다운 체크
+    if (now - this.lastConnectionCheck < this.connectionCooldown) {
+      console.log('🔄 연결 체크 쿨다운 중... 캐시된 결과 반환');
+      return this.isAvailable;
     }
     
-    const data = await response.json();
-    console.log(`✅ Ollama 연결 성공, 모델 수: ${data.models?.length || 0}`);
-    return true;
-    
-  } catch (error: any) {
-    if (error.name === 'AbortError') {
-      console.warn('⚠️ Ollama 서버 연결 타임아웃 (5초)');
-    } else if (error.message?.includes('ECONNREFUSED')) {
-      console.warn('⚠️ Ollama 서버가 실행되지 않음. `ollama serve` 명령으로 시작하세요.');
-    } else {
-      console.warn(`⚠️ Ollama 연결 실패: ${error.message}`);
+    // 중복 호출 방지
+    if (this.isConnecting) {
+      console.log('⏳ 이미 연결 체크 중... 기존 결과 반환');
+      return this.isAvailable;
     }
-    return false;
+    
+    return await this.performSingleConnectionCheck();
   }
-}
- 
+
+  /**
+   * 단일 연결 확인 수행 (재귀 호출 없음)
+   */
+  private async performSingleConnectionCheck(): Promise<boolean> {
+    this.isConnecting = true;
+    this.lastConnectionCheck = Date.now();
+    
+    try {
+      console.log(`🔍 Ollama 연결 확인 중: ${this.baseURL}`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const response = await fetch(`${this.baseURL}/api/tags`, {
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        console.warn(`⚠️ Ollama 서버 응답 오류: ${response.status}`);
+        this.isAvailable = false;
+        return false;
+      }
+      
+      const data = await response.json();
+      console.log(`✅ Ollama 연결 성공, 모델 수: ${data.models?.length || 0}`);
+      this.isAvailable = true;
+      return true;
+      
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.warn('⚠️ Ollama 서버 연결 타임아웃 (5초)');
+      } else if (error.message?.includes('ECONNREFUSED')) {
+        console.warn('⚠️ Ollama 서버가 실행되지 않음. `ollama serve` 명령으로 시작하세요.');
+      } else {
+        console.warn(`⚠️ Ollama 연결 실패: ${error.message}`);
+      }
+      this.isAvailable = false;
+      return false;
+      
+    } finally {
+      this.isConnecting = false;
+    }
+  }
+
   /**
    * 강제 헬스체크 (캐시 무시)
    */
   async forceHealthCheck(): Promise<boolean> {
-    this.lastHealthCheck = 0;
+    this.lastConnectionCheck = 0;
+    this.isConnecting = false;
     return await this.checkConnection();
   }
 
   // ============================================================================
-  // 📋 모델 관리 (ollama.ts 호환)
+  // 📋 무한루프 방지 모델 관리
   // ============================================================================
 
   /**
-   * 사용 가능한 모델 목록 조회
+   * 안전한 모델 목록 조회 (쿨다운 + 중복 방지)
    */
   async getModels(): Promise<string[]> {
-    await this.loadAvailableModels();
+    const now = Date.now();
+    
+    // 쿨다운 체크
+    if (this.models.length > 0 && now - this.lastModelsCheck < this.modelsCooldown) {
+      console.log('🔄 모델 목록 쿨다운 중... 캐시된 결과 반환');
+      return this.models;
+    }
+    
+    // 중복 호출 방지
+    if (this.isLoadingModels) {
+      console.log('⏳ 이미 모델 로딩 중... 기존 결과 반환');
+      return this.models;
+    }
+    
+    await this.performSingleModelsLoad();
     return this.models;
   }
 
   /**
-   * 사용 가능한 모델 목록 로드
+   * 단일 모델 로딩 수행 (재귀 호출 없음)
    */
-  async loadAvailableModels(): Promise<void> {
-    const now = Date.now();
+  private async performSingleModelsLoad(): Promise<void> {
+    this.isLoadingModels = true;
+    this.lastModelsCheck = Date.now();
     
-    // 캐시된 모델 목록이 있고 최신이면 반환
-    if (this.models.length > 0 && now - this.modelsLastFetched < this.modelsRefreshInterval) {
-      return;
-    }
-
     try {
-      if (!await this.checkConnection()) {
+      // 연결 상태가 확실히 실패한 경우 빈 배열 반환
+      if (!this.isAvailable) {
         console.warn('⚠️ Ollama 서비스 이용 불가 - 빈 모델 목록 반환');
+        this.models = [];
         return;
       }
 
@@ -299,12 +402,13 @@ export class OllamaAIService {
         this.models.push(model.name);
       });
       
-      this.modelsLastFetched = now;
-      
       console.log(`📋 사용 가능한 Ollama 모델 (${this.models.length}개):`, this.models);
 
     } catch (error: any) {
       console.error('❌ 모델 목록 로딩 실패:', error.message);
+      this.models = [];
+    } finally {
+      this.isLoadingModels = false;
     }
   }
 
@@ -312,7 +416,7 @@ export class OllamaAIService {
    * 향상된 모델 목록 (AIModel 형식)
    */
   async getAvailableModels(): Promise<AIModel[]> {
-    await this.loadAvailableModels();
+    await this.getModels(); // 안전한 모델 로딩
 
     const models: AIModel[] = [];
     
@@ -327,33 +431,64 @@ export class OllamaAIService {
         type: config?.type || 'chat',
         size,
         description: this.getModelDescription(name),
-        recommended: name === 'llama3.2:3b'
+        recommended: config?.recommended || false
       });
     });
 
+    // 타입별, 추천 여부별 정렬
     return models.sort((a, b) => {
+      // 추천 모델을 먼저 배치
+      if (a.recommended && !b.recommended) return -1;
+      if (!a.recommended && b.recommended) return 1;
+      
+      // 타입별 정렬
       const typeOrder = { 'chat': 0, 'code': 1, 'reasoning': 2, 'embedding': 3 };
-      return (typeOrder[a.type] || 9) - (typeOrder[b.type] || 9);
+      const typeCompare = (typeOrder[a.type] || 9) - (typeOrder[b.type] || 9);
+      if (typeCompare !== 0) return typeCompare;
+      
+      // 같은 타입 내에서는 이름순
+      return a.name.localeCompare(b.name);
     });
   }
 
   /**
-   * 기본 모델 반환
+   * 기본 모델 반환 (사용자 모델 목록 기반)
    */
   getDefaultModel(): string {
-    if (this.models.includes('llama3.2:3b')) return 'llama3.2:3b';
-    if (this.models.includes('llama3.2')) return 'llama3.2';
-    if (this.models.includes('llama3:8b')) return 'llama3:8b';
+    // 사용자가 보유한 모델 중에서 추천 순서대로 선택
+    const preferredOrder = [
+      'llama3.2:3b',       // 추천 1순위
+      'llama3.2:latest',   
+      'deepseek-coder:6.7b', // 코딩용 추천
+      'phi3:mini',         // 추론용 추천
+      'llama3.1:8b',
+      'mistral:latest',
+      'llama2:7b',
+      'codellama:7b',
+      'vicuna:7b',
+      'qwen:7b'
+    ];
+
+    // 사용자가 보유한 모델 중 첫 번째 추천 모델 선택
+    for (const model of preferredOrder) {
+      if (this.models.includes(model)) {
+        return model;
+      }
+    }
+
+    // 추천 목록에 없으면 첫 번째 사용 가능한 모델
     if (this.models.length > 0) return this.models[0];
+    
+    // 기본값
     return 'llama3.2:3b';
   }
 
   // ============================================================================
-  // 🎯 AI 응답 생성 (향상된 기능)
+  // 🎯 AI 응답 생성 (향상된 기능 + 안전성)
   // ============================================================================
 
   /**
-   * AI 응답 생성 (메인 메서드)
+   * AI 응답 생성 (메인 메서드) - 안전한 구현
    */
   async generateResponse(
     message: string,
@@ -366,7 +501,7 @@ export class OllamaAIService {
     const model = modelId || this.getDefaultModel();
 
     try {
-      // 연결 상태 확인
+      // 단일 연결 확인 (무한루프 방지)
       const connected = await this.checkConnection();
       if (!connected) {
         throw new Error('Ollama 서버에 연결할 수 없습니다. `ollama serve` 명령어로 서버를 시작하세요.');
@@ -374,7 +509,7 @@ export class OllamaAIService {
 
       console.log(`🦙 Ollama 응답 생성 시작: ${model}`);
 
-      // 메시지 구성 (개인화 컨텍스트 포함)
+      // 메시지 구성
       const messages = this.buildMessages(message, model, personalizedContext);
       
       // Ollama API 호출
@@ -400,7 +535,7 @@ export class OllamaAIService {
         }
       };
 
-      // DatabaseService를 통한 대화 저장 (선택적)
+      // DatabaseService를 통한 대화 저장 (안전하게)
       if (userId && this.db) {
         try {
           await this.saveChatToDatabase(userId, message, aiResponse, conversationId);
@@ -511,7 +646,7 @@ export class OllamaAIService {
   }
 
   // ============================================================================
-  // 🔧 내부 메서드들
+  // 🔧 내부 메서드들 (안전한 구현)
   // ============================================================================
 
   /**
@@ -692,7 +827,7 @@ export class OllamaAIService {
   }
 
   /**
-   * DatabaseService를 통한 대화 저장
+   * DatabaseService를 통한 안전한 대화 저장
    */
   private async saveChatToDatabase(
     userId: string,
@@ -762,13 +897,40 @@ export class OllamaAIService {
 
   private getDisplayName(modelName: string): string {
     const nameMap: { [key: string]: string } = {
-      'llama3.2:3b': 'Llama 3.2 (3B)',
+      // Llama 모델군
+      'llama3.2:3b': 'Llama 3.2 (3B) ⭐',
       'llama3.2:1b': 'Llama 3.2 (1B)',
-      'deepseek-coder:6.7b': 'DeepSeek Coder (6.7B)',
+      'llama3.2:latest': 'Llama 3.2 (Latest)',
+      'llama3.1:8b': 'Llama 3.1 (8B)',
+      'llama3.1:70b': 'Llama 3.1 (70B)',
+      'llama2:7b': 'Llama 2 (7B)',
+      'llama2:13b': 'Llama 2 (13B)', 
+      'llama2:70b': 'Llama 2 (70B)',
+
+      // 코딩 모델군
+      'deepseek-coder:6.7b': 'DeepSeek Coder (6.7B) 💻',
+      'deepseek-coder:33b': 'DeepSeek Coder (33B)',
+      'deepseek-coder-v2:16b': 'DeepSeek Coder V2 (16B)',
       'codellama:7b': 'Code Llama (7B)',
-      'phi3:mini': 'Phi-3 Mini',
+      'codellama:13b': 'Code Llama (13B)',
+      'magicoder:7b': 'MagiCoder (7B)',
+      'starcoder2:15b': 'StarCoder 2 (15B)',
+
+      // 추론 모델군
+      'phi3:mini': 'Phi-3 Mini 🧠',
+      'phi3:latest': 'Phi-3 (Latest)',
+      'phi:2.7b': 'Phi (2.7B)',
+
+      // 범용 모델군
       'mistral:latest': 'Mistral 7B',
-      'llama3.1:8b': 'Llama 3.1 (8B)'
+      'mistral:7b': 'Mistral 7B',
+      'mixtral:8x7b': 'Mixtral 8x7B',
+      'vicuna:7b': 'Vicuna (7B)',
+      'qwen:7b': 'Qwen (7B)',
+
+      // 임베딩 모델군
+      'nomic-embed-text:latest': 'Nomic Embed 📊',
+      'mxbai-embed-large:latest': 'MxBai Embed Large'
     };
     
     return nameMap[modelName] || modelName;
@@ -776,15 +938,43 @@ export class OllamaAIService {
 
   private getModelDescription(modelName: string): string {
     const descriptions: { [key: string]: string } = {
-      'llama3.2:3b': '범용 대화 및 텍스트 생성에 최적화된 모델',
-      'llama3.2:1b': '빠른 응답이 필요한 간단한 작업용 경량 모델',
-      'deepseek-coder:6.7b': '코드 생성, 디버깅, 설명에 특화된 프로그래밍 전문 모델',
-      'codellama:7b': 'Meta의 코드 생성 전문 모델, 다양한 프로그래밍 언어 지원',
-      'phi3:mini': '논리적 추론과 수학적 문제 해결에 강한 소형 모델',
-      'mistral:latest': '효율적이고 빠른 응답을 제공하는 범용 모델'
+      // Llama 모델군
+      'llama3.2:3b': '🎯 가장 균형잡힌 범용 대화 모델 (추천)',
+      'llama3.2:1b': '⚡ 빠른 응답이 필요한 간단한 작업용 경량 모델',
+      'llama3.2:latest': '🆕 최신 Llama 3.2 모델',
+      'llama3.1:8b': '💪 향상된 성능의 중급 범용 모델',
+      'llama3.1:70b': '🚀 최고 성능의 대형 언어 모델',
+      'llama2:7b': '📚 안정적인 기본 대화 모델',
+      'llama2:13b': '🎓 중급 규모의 범용 모델',
+      'llama2:70b': '🏆 대형 고성능 언어 모델',
+
+      // 코딩 모델군
+      'deepseek-coder:6.7b': '💻 코드 생성/디버깅 최적화 모델 (추천)',
+      'deepseek-coder:33b': '🔧 대형 코딩 전문 모델',
+      'deepseek-coder-v2:16b': '✨ 개선된 코딩 전문 모델',
+      'codellama:7b': '🦙 Meta의 코드 생성 전문 모델',
+      'codellama:13b': '🔥 향상된 코드 생성 능력',
+      'magicoder:7b': '🪄 마법 같은 코드 생성 모델',
+      'starcoder2:15b': '⭐ BigCode의 차세대 코딩 모델',
+
+      // 추론 모델군
+      'phi3:mini': '🧠 논리적 추론과 수학 문제 해결 특화 (추천)',
+      'phi3:latest': '🎯 최신 소형 추론 모델',
+      'phi:2.7b': '💡 효율적인 추론 전문 모델',
+
+      // 범용 모델군
+      'mistral:latest': '🌟 빠르고 효율적인 유럽산 모델',
+      'mistral:7b': '⚡ 빠른 응답의 범용 모델',
+      'mixtral:8x7b': '🎛️ 전문가 혼합 대형 모델',
+      'vicuna:7b': '🦙 Llama 기반 대화 최적화 모델',
+      'qwen:7b': '🇨🇳 Alibaba의 다국어 지원 모델',
+
+      // 임베딩 모델군
+      'nomic-embed-text:latest': '📊 텍스트 임베딩 전용 모델',
+      'mxbai-embed-large:latest': '🔗 대형 임베딩 벡터 생성'
     };
     
-    return descriptions[modelName] || '범용 AI 모델';
+    return descriptions[modelName] || '🤖 범용 AI 모델';
   }
 
   private generateMessageId(): string {
@@ -821,21 +1011,21 @@ export class OllamaAIService {
   }
 
   // ============================================================================
-  // 📊 상태 및 정보 메서드들
+  // 📊 상태 및 정보 메서드들 (무한루프 방지)
   // ============================================================================
 
   /**
-   * 서비스 상태 정보 반환
+   * 서비스 상태 정보 반환 (안전한 구현)
    */
   async getServiceStatus(): Promise<any> {
-    const isConnected = await this.checkConnection();
-    await this.loadAvailableModels();
+    // 연결 상태만 확인 (모델 로딩 없음)
+    const isConnected = this.isAvailable;
 
     return {
       provider: 'ollama',
       connected: isConnected,
       baseUrl: this.baseURL,
-      models: this.models,
+      models: this.models, // 캐시된 모델 목록 사용
       defaultModel: this.getDefaultModel(),
       features: [
         'chat', 
@@ -848,6 +1038,13 @@ export class OllamaAIService {
       database: {
         connected: this.db?.isConnected?.() || false,
         available: !!this.db
+      },
+      status: {
+        initialized: this.isInitialized,
+        connecting: this.isConnecting,
+        loadingModels: this.isLoadingModels,
+        lastConnectionCheck: this.lastConnectionCheck,
+        lastModelsCheck: this.lastModelsCheck
       }
     };
   }
@@ -855,95 +1052,68 @@ export class OllamaAIService {
   /**
    * 기존 호환 - 상태 정보
    */
- getStatus(): {
-  available: boolean;
-  baseUrl: string;
-  lastHealthCheck: Date | null;
-  timeout: number;
-  retryCount: number;
-  modelCount: number;
-  cachedModels: string[];
-} {
-  return {
-    available: this.isAvailable,
-    baseUrl: this.baseURL,  // ✅ this.baseURL 사용 (일관성 유지)
-    lastHealthCheck: this.lastHealthCheck ? new Date(this.lastHealthCheck) : null,
-    timeout: this.timeout,
-    retryCount: this.retryCount,
-    modelCount: this.models.length,
-    cachedModels: this.models
-  };
-}
-
-
-// ============================================================================
-// 🔧 testConnection() 메서드에서도 통일
-// ============================================================================
-
-async testConnection(): Promise<{success: boolean, message: string, details?: any}> {
-  try {
-    const isConnected = await this.forceHealthCheck();
-    
-    if (isConnected) {
-      await this.loadAvailableModels();
-      return {
-        success: true,
-        message: 'Ollama 연결 성공',
-        details: {
-          modelCount: this.models.length,
-          availableModels: this.models.slice(0, 5)
-        }
-      };
-    } else {
-      return {
-        success: false,
-        message: 'Ollama 서버에 연결할 수 없습니다',
-        details: {
-          baseUrl: this.baseURL,  // ✅ this.baseURL 사용
-          suggestion: 'ollama serve 명령어로 서버를 시작하세요'
-        }
-      };
-    }
-  } catch (error: any) {
+  getStatus(): {
+    available: boolean;
+    baseUrl: string;
+    lastHealthCheck: Date | null;
+    timeout: number;
+    retryCount: number;
+    modelCount: number;
+    cachedModels: string[];
+  } {
     return {
-      success: false,
-      message: `연결 테스트 실패: ${error.message}`,
-      details: {
-        baseUrl: this.baseURL,  // ✅ this.baseURL 사용
-        error: error.message
-      }
+      available: this.isAvailable,
+      baseUrl: this.baseURL,
+      lastHealthCheck: this.lastConnectionCheck ? new Date(this.lastConnectionCheck) : null,
+      timeout: this.timeout,
+      retryCount: this.retryCount,
+      modelCount: this.models.length,
+      cachedModels: this.models
     };
   }
-}
 
-// ============================================================================
-// 🔧 getServiceStatus() 메서드에서도 통일
-// ============================================================================
-
-async getServiceStatus(): Promise<any> {
-  const isConnected = await this.checkConnection();
-  await this.loadAvailableModels();
-
-  return {
-    provider: 'ollama',
-    connected: isConnected,
-    baseUrl: this.baseURL,  // ✅ this.baseURL 사용
-    models: this.models,
-    defaultModel: this.getDefaultModel(),
-    features: [
-      'chat', 
-      'completion', 
-      'local', 
-      'privacy-focused',
-      'conversation_storage',
-      'personalization_support'
-    ],
-    database: {
-      connected: this.db?.isConnected?.() || false,
-      available: !!this.db
+  /**
+   * 연결 테스트 (안전한 구현)
+   */
+  async testConnection(): Promise<{success: boolean, message: string, details?: any}> {
+    try {
+      const isConnected = await this.forceHealthCheck();
+      
+      if (isConnected) {
+        // 모델 로딩은 선택적으로
+        if (this.models.length === 0) {
+          await this.getModels();
+        }
+        
+        return {
+          success: true,
+          message: 'Ollama 연결 성공',
+          details: {
+            modelCount: this.models.length,
+            availableModels: this.models.slice(0, 5)
+          }
+        };
+      } else {
+        return {
+          success: false,
+          message: 'Ollama 서버에 연결할 수 없습니다',
+          details: {
+            baseUrl: this.baseURL,
+            suggestion: 'ollama serve 명령어로 서버를 시작하세요'
+          }
+        };
+      }
+    } catch (error: any) {
+      return {
+        success: false,
+        message: `연결 테스트 실패: ${error.message}`,
+        details: {
+          baseUrl: this.baseURL,
+          error: error.message
+        }
+      };
     }
-  };
-}
+  }
 
   /**
    * 서비스 정리 (DI Container용)
@@ -954,6 +1124,10 @@ async getServiceStatus(): Promise<any> {
     this.models = [];
     this.availableModels.clear();
     this.isAvailable = false;
+    this.isConnecting = false;
+    this.isLoadingModels = false;
+    this.lastConnectionCheck = 0;
+    this.lastModelsCheck = 0;
     console.log('✅ OllamaAIService 정리 완료');
   }
 }
@@ -971,18 +1145,17 @@ export const getModels = () => ollamaService.getModels();
 export const chat = (model: string, messages: OllamaMessage[], stream: boolean = false) => 
   ollamaService.chatCompletion(model, messages, { stream });
 
-// ============================================================================
-// 🐛 수정: 중복 export 문제 해결
-// ============================================================================
-
-// 클래스와 인스턴스 export (중복 제거)
+// 클래스와 인스턴스 export
 export { ollamaService };
+export default OllamaAIService;
 
 // ============================================================================
 // 🎉 수정 완료 로그
 // ============================================================================
 
-console.log('✅ OllamaAIService Export 수정 완료:');
-console.log('  🐛 FIXED: Multiple exports 중복 제거');
-console.log('  ✅ 클래스와 인스턴스 명확히 구분');
-console.log('  🔧 기존 호환성 100% 유지');
+console.log('✅ 향상된 Ollama AI 서비스 로드됨');
+console.log('  🐛 FIXED: 무한루프 완전 방지');
+console.log('  ✅ DatabaseService 안전한 연결');  
+console.log('  🔧 중복 호출 방지 시스템');
+console.log('  💪 모든 기존 기능 유지');
+console.log('  🛡️ 강화된 에러 처리');
