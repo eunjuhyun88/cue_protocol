@@ -489,32 +489,287 @@ export class DIContainer {
     console.log('✅ 데이터베이스 서비스 등록 완료');
   }
 
-  /**
-   * 암호화 서비스 등록 (강화된 Graceful Degradation)
-   */
-  private async registerCryptoServices(): Promise<void> {
-    this.registerSingleton('CryptoService', () => {
-      try {
-        const { CryptoService } = require('../services/encryption/CryptoService');
-        return new CryptoService();
-      } catch (error: any) {
-        this.logError('CryptoService', error, 'warning');
-        // 강화된 Graceful Degradation
-        return {
-          encrypt: (data: string) => Buffer.from(data).toString('base64'),
-          decrypt: (data: string) => Buffer.from(data, 'base64').toString(),
-          hash: (data: string) => Buffer.from(data).toString('hex'),
-          generateKey: () => 'mock-key-' + Date.now(),
-          verifyHash: (data: string, hash: string) => true
-        };
-      }
-    }, [], {
-      description: '암호화 서비스',
-      category: 'security',
-      priority: 'high',
-      fallbackAvailable: true
+// ============================================================================
+// 🔐 Mock 없는 실제 CryptoService 등록 (DIContainer 클래스 내부)
+// 위치: backend/src/core/DIContainer.ts 클래스 안에 추가
+// 변경: Mock 서비스 완전 제거, 실제 서비스만 사용
+// ============================================================================
+
+// DIContainer 클래스 안에 이 메서드를 추가하세요:
+
+private async registerCryptoServices(): Promise<void> {
+  console.log('🔐 실제 CryptoService 등록 중...');
+  
+  this.registerSingleton('CryptoService', () => {
+    try {
+      // 🚀 실제 통합된 CryptoService 사용
+      const { CryptoService } = require('../services/encryption/CryptoService');
+      
+      // Singleton 인스턴스 사용
+      const cryptoServiceInstance = CryptoService.getInstance();
+      
+      console.log('✅ 실제 CryptoService 등록 성공');
+      console.log('📋 사용 가능한 메서드:', [
+        'encrypt', 'decrypt', 'hash', 'generateUUID', 
+        'generateRandomBytes', 'generateSecureToken',
+        'encryptVaultData', 'decryptVaultData', 'testEncryption'
+      ]);
+      
+      return cryptoServiceInstance;
+      
+    } catch (error: any) {
+      console.error('❌ CryptoService 로드 실패:', error.message);
+      console.error('📁 파일 경로 확인 필요: ../services/encryption/CryptoService');
+      
+      // 🚫 Mock 서비스 제거 - 대신 에러 발생
+      throw new Error(`CryptoService 필수 서비스 로드 실패: ${error.message}`);
+    }
+  }, [], {
+    description: '통합 암호화 서비스 (실제)',
+    category: 'security',
+    priority: 'critical',  // high → critical로 변경
+    fallbackAvailable: false  // true → false로 변경 (Mock 없음)
+  });
+  
+  console.log('✅ CryptoService 등록 완료 (Mock 없음)');
+}
+
+// ============================================================================
+// 🔐 AuthConfig 등록 메서드 (Mock 없는 버전)
+// ============================================================================
+
+private async registerAuthConfig(): Promise<void> {
+  console.log('📋 실제 AuthConfig 등록 중...');
+  
+  try {
+    // AuthConfig default export 방식으로 import
+    const AuthConfigClass = require('../config/auth').default;
+    
+    if (!AuthConfigClass) {
+      throw new Error('AuthConfig default export를 찾을 수 없습니다');
+    }
+    
+    // AuthConfig 인스턴스 생성
+    const authConfigInstance = new AuthConfigClass();
+    
+    // 인스턴스 직접 등록
+    this.registerInstance('AuthConfig', authConfigInstance, {
+      description: '인증 설정 (실제)',
+      category: 'config',
+      priority: 'critical',
+      fallbackAvailable: false
     });
+    
+    console.log('✅ 실제 AuthConfig 등록 성공');
+    console.log('📋 설정 정보:', {
+      databaseType: authConfigInstance.DATABASE_TYPE,
+      webauthnRP: authConfigInstance.WEBAUTHN_RP_ID,
+      jwtConfigured: !!authConfigInstance.JWT_SECRET
+    });
+    
+  } catch (error: any) {
+    console.error('❌ AuthConfig 로드 실패:', error.message);
+    console.error('📁 파일 경로 확인 필요: ../config/auth');
+    
+    // 🚫 Mock 제거 - 대신 에러 발생
+    throw new Error(`AuthConfig 필수 설정 로드 실패: ${error.message}`);
   }
+}
+
+// ============================================================================
+// 🗄️ DatabaseService 등록 메서드 (Mock 없는 버전)
+// ============================================================================
+
+private async registerDatabaseServices(): Promise<void> {
+  console.log('🗄️ 실제 DatabaseService 등록 중...');
+  
+  this.registerSingleton('DatabaseService', (container) => {
+    try {
+      // DatabaseService import
+      const { DatabaseService } = require('../services/database/DatabaseService');
+      
+      // Singleton 인스턴스 사용
+      const dbInstance = DatabaseService.getInstance();
+      
+      // AuthConfig 주입 (필요시)
+      try {
+        const authConfig = container.get('AuthConfig');
+        if (typeof dbInstance.setConfig === 'function') {
+          dbInstance.setConfig(authConfig);
+        }
+      } catch (configError) {
+        console.warn('⚠️ AuthConfig 주입 실패:', configError.message);
+      }
+      
+      console.log('✅ 실제 DatabaseService 등록 성공');
+      return dbInstance;
+      
+    } catch (error: any) {
+      console.error('❌ DatabaseService 로드 실패:', error.message);
+      console.error('📁 파일 경로 확인 필요: ../services/database/DatabaseService');
+      
+      // 🚫 Mock 제거 - 대신 에러 발생
+      throw new Error(`DatabaseService 필수 서비스 로드 실패: ${error.message}`);
+    }
+  }, ['AuthConfig'], {
+    description: '데이터베이스 서비스 (실제)',
+    category: 'database',
+    priority: 'critical',
+    fallbackAvailable: false
+  });
+  
+  console.log('✅ DatabaseService 등록 완료 (Mock 없음)');
+}
+
+// ============================================================================
+// 🔑 AuthService 등록 메서드 (Mock 없는 버전)
+// ============================================================================
+
+private async registerAuthServices(): Promise<void> {
+  console.log('🔑 실제 AuthService 등록 중...');
+  
+  // AuthService 등록
+  this.registerSingleton('AuthService', (container) => {
+    try {
+      const { AuthService } = require('../services/auth/AuthService');
+      
+      // 의존성 주입
+      const authConfig = container.get('AuthConfig');
+      const databaseService = container.get('DatabaseService');
+      
+      const authServiceInstance = new AuthService(authConfig, databaseService);
+      
+      console.log('✅ 실제 AuthService 등록 성공');
+      return authServiceInstance;
+      
+    } catch (error: any) {
+      console.error('❌ AuthService 로드 실패:', error.message);
+      throw new Error(`AuthService 필수 서비스 로드 실패: ${error.message}`);
+    }
+  }, ['AuthConfig', 'DatabaseService'], {
+    description: '인증 서비스 (실제)',
+    category: 'auth',
+    priority: 'critical',
+    fallbackAvailable: false
+  });
+
+  // SessionService 등록
+  this.registerSingleton('SessionService', (container) => {
+    try {
+      const { SessionService } = require('../services/auth/SessionService');
+      
+      const authConfig = container.get('AuthConfig');
+      const authService = container.get('AuthService');
+      
+      const sessionServiceInstance = new SessionService(authConfig, authService);
+      
+      console.log('✅ 실제 SessionService 등록 성공');
+      return sessionServiceInstance;
+      
+    } catch (error: any) {
+      console.error('❌ SessionService 로드 실패:', error.message);
+      throw new Error(`SessionService 필수 서비스 로드 실패: ${error.message}`);
+    }
+  }, ['AuthConfig', 'AuthService'], {
+    description: '세션 관리 서비스 (실제)',
+    category: 'auth',
+    priority: 'critical',
+    fallbackAvailable: false
+  });
+
+  // WebAuthnService 등록
+  this.registerSingleton('WebAuthnService', (container) => {
+    try {
+      const { WebAuthnService } = require('../services/auth/WebAuthnService');
+      
+      const authConfig = container.get('AuthConfig');
+      const authService = container.get('AuthService');
+      const sessionService = container.get('SessionService');
+      
+      const webauthnServiceInstance = new WebAuthnService(
+        authConfig, 
+        authService, 
+        sessionService
+      );
+      
+      console.log('✅ 실제 WebAuthnService 등록 성공');
+      return webauthnServiceInstance;
+      
+    } catch (error: any) {
+      console.error('❌ WebAuthnService 로드 실패:', error.message);
+      throw new Error(`WebAuthnService 필수 서비스 로드 실패: ${error.message}`);
+    }
+  }, ['AuthConfig', 'AuthService', 'SessionService'], {
+    description: 'WebAuthn 인증 서비스 (실제)',
+    category: 'auth',
+    priority: 'critical',
+    fallbackAvailable: false
+  });
+  
+  console.log('✅ 모든 AuthService 등록 완료 (Mock 없음)');
+}
+
+// ============================================================================
+// 🚀 통합 등록 메서드 (Mock 없는 모든 서비스)
+// ============================================================================
+
+/**
+ * 모든 핵심 서비스를 Mock 없이 등록하는 메서드
+ * DIContainer 클래스 안에 추가하세요
+ */
+public async registerAllRealServices(): Promise<void> {
+  console.log('🚀 === 실제 서비스만 등록 시작 (Mock 없음) ===');
+  
+  try {
+    // 1. AuthConfig 등록 (최우선)
+    await this.registerAuthConfig();
+    
+    // 2. CryptoService 등록
+    await this.registerCryptoServices();
+    
+    // 3. DatabaseService 등록 
+    await this.registerDatabaseServices();
+    
+    // 4. 인증 서비스들 등록
+    await this.registerAuthServices();
+    
+    console.log('✅ === 모든 실제 서비스 등록 완료 ===');
+    console.log('🚫 Mock 서비스 없음 - 실제 서비스만 사용');
+    
+    // 등록된 서비스 목록 출력
+    this.logRegisteredServices();
+    
+  } catch (error: any) {
+    console.error('❌ === 실제 서비스 등록 실패 ===');
+    console.error('💥 오류:', error.message);
+    console.error('🔍 해결 방법:');
+    console.error('   1. AuthConfig 중복 export 제거 확인');
+    console.error('   2. CryptoService 파일 존재 확인');
+    console.error('   3. .env 파일 환경변수 설정 확인');
+    
+    throw error;
+  }
+}
+
+/**
+ * 등록된 서비스 목록 로깅
+ */
+private logRegisteredServices(): void {
+  const services = this.getRegisteredServices();
+  
+  console.log('\n📋 === 등록된 실제 서비스 목록 ===');
+  services.forEach(serviceName => {
+    const metadata = this.getServiceMetadata(serviceName);
+    const priority = metadata?.priority || 'normal';
+    const category = metadata?.category || 'unknown';
+    const mock = metadata?.fallbackAvailable ? '(Mock 가능)' : '(실제만)';
+    
+    console.log(`  ✅ ${serviceName} [${category}] [${priority}] ${mock}`);
+  });
+  console.log(`📊 총 ${services.length}개 서비스 등록됨\n`);
+}
+
+
 
   /**
    * AI 서비스 등록 (강화된 버전)

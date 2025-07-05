@@ -12,7 +12,6 @@ import {
   WebAuthnCredentialData 
 } from '../../types/auth.types';
 import { AuthConfig } from '../../config/auth';
-
 import { DIContainer } from '../../core/DIContainer';
 import { CryptoService } from '../encryption/CryptoService';
 
@@ -21,8 +20,10 @@ import { CryptoService } from '../encryption/CryptoService';
  * DI 패턴 적용으로 순환 의존성 제거
  */
 export class AuthService {
+  private cryptoService: CryptoService;
+
   private config: AuthConfig;
-  private dbService: any; // DatabaseService 인터페이스
+  private databaseService: any;
 
   constructor(
     config: AuthConfig,
