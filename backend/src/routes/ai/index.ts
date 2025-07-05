@@ -509,9 +509,20 @@ function generateServiceRecommendations(): any {
   };
 }
 
+// ✅ 로그 출력 (기존 로그들 있으면 제거하고 이것만)
+console.log('🚀 AI 통합 라우터 초기화 중...');
+console.log('🧠 개인화 AI Routes 초기화 - AI Passport 연동');
+console.log('✅ 개인화 AI Routes 로딩 완료');
+console.log('🧠 AI Passport 연동, 고급 개인화 기능 활성화');
 console.log('✅ AI 통합 라우터 초기화 완료');
 console.log('🦙 Ollama 경로: /api/ai/ollama/*');
 console.log('🧠 개인화 AI 경로: /api/ai/personal/*');
 console.log('🎯 스마트 채팅: /api/ai/chat');
 
+// ✅ 함수 형태 export (DI Container 호환)
+export function createAIIndexRoutes(): Router {
+  return router;
+}
+
+// ✅ 기본 export (기존 호환성) - 기존 것 있으면 교체
 export default router;

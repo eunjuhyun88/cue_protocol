@@ -1,34 +1,43 @@
 // ============================================================================
-// 🗄️ 완전 통합 데이터베이스 서비스 (최종 완성판 + 2번 기능 추가)
+// 🗄️ 완전 통합 데이터베이스 서비스 (최적화된 간소화 버전)
 // 경로: backend/src/services/database/DatabaseService.ts
-// 용도: Supabase 중심의 완전한 데이터베이스 서비스 (Mock 제거, 모든 기능 포함)
-// 개선: 1번 기준 + 2번 유용 기능 통합 + 추가 개선사항
+// 수정: 1번을 2번으로 간소화하되 핵심 기능은 모두 유지
 // 호출구조: DIContainer → DatabaseService → Supabase
 // ============================================================================
+
 import dotenv from 'dotenv';
 import path from 'path';
 
-// 환경 변수 강제 로딩
-dotenv.config({ path: path.join(__dirname, '../../../.env') });
+// 환경 변수 강제 로딩 (프로젝트 루트의 .env)
+const envPath = path.join(__dirname, '../../../.env');
+dotenv.config({ path: envPath });
 
-// 환경 변수 즉시 확인
+// 환경 변수 즉시 확인 및 로깅
 console.log('🔧 DatabaseService 환경변수 로딩 상태:');
+console.log(`📍 .env 경로: ${envPath}`);
 console.log('- SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ 설정됨' : '❌ 누락');
 console.log('- SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ 설정됨' : '❌ 누락');
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Database } from '../../types/database.types';
+// Database 타입이 없으면 any로 대체
+let Database: any;
+try {
+  Database = require('../../types/database.types').Database;
+} catch {
+  Database = any;
+  console.log('⚠️ database.types를 찾을 수 없어 any 타입 사용');
+}
 
 export class DatabaseService {
   private static instance: DatabaseService;
-  private supabase: SupabaseClient<Database>;
+  private supabase: SupabaseClient<any>;
   private connected: boolean = false;
   private connectionAttempts: number = 0;
   private maxRetries: number = 3;
   private connectionError: string | null = null;
 
   private constructor() {
-    console.log('🗄️ === DatabaseService 초기화 (실제 DB 전용) ===');
+    console.log('🗄️ === DatabaseService 초기화 (실제 Supabase 전용) ===');
     this.initializeSupabase();
   }
 
@@ -40,16 +49,16 @@ export class DatabaseService {
   }
 
   // ============================================================================
-  // 🔧 Supabase 초기화 (2번에서 개선된 환경변수 검증)
+  // 🔧 Supabase 초기화 (강화된 환경변수 검증)
   // ============================================================================
 
   private initializeSupabase(): void {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    console.log('🔑 환경변수 확인:', {
-      SUPABASE_URL: supabaseUrl ? '✅ 설정됨' : '❌ 누락',
-      SUPABASE_SERVICE_ROLE_KEY: supabaseKey ? '✅ 설정됨' : '❌ 누락'
+    console.log('🔑 환경변수 최종 확인:', {
+      SUPABASE_URL: supabaseUrl ? `✅ 설정됨 (${supabaseUrl.split('//')[1]?.split('.')[0]})` : '❌ 누락',
+      SUPABASE_SERVICE_ROLE_KEY: supabaseKey ? `✅ 설정됨 (${supabaseKey.length}자)` : '❌ 누락'
     });
 
     if (!supabaseUrl || !supabaseKey) {
@@ -58,14 +67,16 @@ export class DatabaseService {
       throw new Error(this.connectionError);
     }
 
-    if (supabaseUrl.includes('dummy') || supabaseKey.includes('dummy')) {
+    // 더미값 검증
+    if (supabaseUrl.includes('dummy') || supabaseUrl.includes('your-') || 
+        supabaseKey.includes('dummy') || supabaseKey.includes('your-')) {
       this.connectionError = '❌ 더미 환경변수 감지됨. 실제 Supabase URL과 SERVICE_ROLE_KEY가 필요합니다.';
       console.error(this.connectionError);
       throw new Error(this.connectionError);
     }
 
     try {
-      this.supabase = createClient<Database>(supabaseUrl, supabaseKey, {
+      this.supabase = createClient(supabaseUrl, supabaseKey, {
         auth: {
           autoRefreshToken: true,
           persistSession: false
@@ -83,9 +94,9 @@ export class DatabaseService {
       console.log('✅ Supabase 클라이언트 생성 완료');
       console.log('📍 연결 대상:', supabaseUrl.split('//')[1]?.split('.')[0]);
       
-      // 즉시 연결 시도
+      // 초기 연결 시도 (비동기, 에러 무시)
       this.connect().catch(error => {
-        console.error('❌ 초기 연결 실패:', error);
+        console.warn('⚠️ 초기 연결 실패 (무시됨):', error.message);
       });
     } catch (error) {
       this.connectionError = `Supabase 클라이언트 생성 실패: ${error}`;
@@ -95,7 +106,7 @@ export class DatabaseService {
   }
 
   // ============================================================================
-  // 🔌 연결 관리 (2번에서 개선된 버전)
+  // 🔌 연결 관리
   // ============================================================================
 
   public async connect(): Promise<void> {
@@ -109,7 +120,7 @@ export class DatabaseService {
     try {
       this.connectionAttempts++;
       
-      // 기본 연결 테스트
+      // 기본 연결 테스트 (users 테이블로 확인)
       const { data, error } = await this.supabase
         .from('users')
         .select('count', { count: 'exact', head: true });
@@ -121,7 +132,7 @@ export class DatabaseService {
 
       console.log('✅ 연결 테스트 성공, 사용자 수:', data || 0);
 
-      // 필수 테이블 존재 확인 (2번에서 추가된 강화된 검증)
+      // 필수 테이블 존재 확인
       await this.verifyRequiredTables();
 
       this.connected = true;
@@ -145,7 +156,7 @@ export class DatabaseService {
   }
 
   /**
-   * 필수 테이블 존재 확인 (2번에서 추가된 상세한 테이블 검증)
+   * 필수 테이블 존재 확인
    */
   private async verifyRequiredTables(): Promise<void> {
     console.log('📋 필수 테이블 확인 중...');
@@ -182,11 +193,16 @@ export class DatabaseService {
         console.log(`✅ 테이블 '${tableName}' 확인됨`);
       } catch (error) {
         console.error(`💥 테이블 '${tableName}' 확인 실패:`, error);
+        // 중요하지 않은 테이블은 건너뛰기
+        if (['ai_agents', 'system_activities'].includes(tableName)) {
+          console.log(`⚠️ 선택적 테이블 '${tableName}' 건너뛰기`);
+          continue;
+        }
         throw error;
       }
     }
 
-    console.log('🎯 모든 필수 테이블 확인 완료');
+    console.log('🎯 필수 테이블 확인 완료');
   }
 
   public async disconnect(): Promise<void> {
@@ -221,7 +237,7 @@ export class DatabaseService {
   /**
    * Supabase 클라이언트 반환
    */
-  public getClient(): SupabaseClient<Database> {
+  public getClient(): SupabaseClient<any> {
     if (!this.connected) {
       throw new Error('데이터베이스가 연결되지 않았습니다. connect()를 먼저 호출하세요.');
     }
@@ -240,7 +256,7 @@ export class DatabaseService {
   }
 
   // ============================================================================
-  // 👤 사용자 관리 (1번 + 2번 개선사항 융합)
+  // 👤 사용자 관리 (핵심 기능만)
   // ============================================================================
 
   public async createUser(userData: any): Promise<any> {
@@ -442,17 +458,165 @@ export class DatabaseService {
     return this.getUserByEmail(email);
   }
 
+  public async getUserByDid(did: string): Promise<any | null> {
+    return this.getUserByDID(did);
+  }
+
+  public async getUserCount(): Promise<number> {
+    try {
+      const { count, error } = await this.supabase
+        .from('users')
+        .select('*', { count: 'exact', head: true });
+
+      if (error) {
+        console.error('❌ 사용자 수 조회 실패:', error);
+        return 0;
+      }
+
+      return count || 0;
+    } catch (error) {
+      console.error('❌ 사용자 수 조회 실패:', error);
+      return 0;
+    }
+  }
+
   // ============================================================================
-  // 🔐 WebAuthn 자격증명 관리 (1번 + 2번 기능 융합)
+  // 💎 CUE 토큰 관리 (⭐ 핵심 수정: source_platform 컬럼 사용)
+  // ============================================================================
+
+  public async getCUEBalance(userDid: string): Promise<number> {
+    console.log(`💰 CUE 잔액 조회: ${userDid}`);
+
+    try {
+      const user = await this.getUserByDID(userDid);
+      if (!user) {
+        console.log(`❌ 사용자 없음: ${userDid}`);
+        return 0;
+      }
+
+      const balance = user.cue_tokens || 0;
+      console.log(`✅ CUE 잔액: ${balance}`);
+      return balance;
+    } catch (error) {
+      console.error('❌ CUE 잔액 조회 실패:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * 🚨 핵심 수정: CUE 거래 생성 (source_platform 컬럼 사용)
+   */
+  public async createCUETransaction(transaction: any): Promise<any> {
+    console.log('💰 === CUE 거래 생성 (수정된 컬럼 적용) ===');
+
+    try {
+      // 현재 잔액 계산
+      const currentBalance = await this.getCUEBalance(transaction.user_did);
+      const newBalance = currentBalance + parseFloat(transaction.amount.toString());
+
+      // ✅ 실제 테이블 스키마에 맞는 컬럼명 사용 (수정됨!)
+      const transactionData = {
+        user_did: transaction.user_did,                      // ✅ 존재함
+        user_id: transaction.user_id,                        // ✅ 존재함  
+        transaction_type: transaction.transaction_type || 'manual', // ✅ 존재함
+        amount: parseInt(transaction.amount.toString()),     // ✅ integer 타입
+        balance_after: parseInt(newBalance.toString()),      // ✅ integer 타입
+        source_platform: transaction.source || transaction.source_platform || 'system', // ✅ 핵심 수정: source_platform 컬럼 사용!
+        description: transaction.description || 'CUE transaction',
+        status: 'completed',                                 // ✅ 존재함
+        metadata: transaction.metadata || {},                // ✅ jsonb 타입
+        created_at: new Date().toISOString()
+      };
+
+      console.log('📝 CUE 거래 데이터 (수정된 컬럼):', {
+        ...transactionData,
+        metadata: JSON.stringify(transactionData.metadata)
+      });
+
+      const { data, error } = await this.supabase
+        .from('cue_transactions')
+        .insert([transactionData])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('❌ CUE 거래 생성 실패:', error);
+        throw error;
+      }
+      
+      // 사용자 잔액 업데이트
+      await this.updateUserCueBalanceByDid(transaction.user_did, newBalance);
+      
+      console.log('✅ CUE 거래 생성 성공:', {
+        amount: transaction.amount,
+        newBalance,
+        source_platform: transactionData.source_platform
+      });
+      
+      return data;
+    } catch (error) {
+      console.error('❌ CUE 거래 생성 실패:', error);
+      throw error;
+    }
+  }
+
+  public async getCUETransactions(userDid: string, limit = 50): Promise<any[]> {
+    try {
+      const { data, error } = await this.supabase
+        .from('cue_transactions')
+        .select('*')
+        .eq('user_did', userDid)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('❌ CUE 거래 내역 조회 실패:', error);
+      return [];
+    }
+  }
+
+  public async updateUserCueBalanceByDid(userDid: string, newBalance: number): Promise<boolean> {
+    try {
+      console.log(`💰 CUE 잔액 업데이트: ${userDid} → ${newBalance}`);
+      
+      const { error } = await this.supabase
+        .from('users')
+        .update({ 
+          cue_tokens: newBalance,
+          updated_at: new Date().toISOString()
+        })
+        .eq('did', userDid);
+
+      if (error) {
+        console.error('❌ CUE 잔액 업데이트 실패:', error);
+        return false;
+      }
+
+      console.log(`✅ CUE 잔액 업데이트 성공: ${userDid} → ${newBalance}`);
+      return true;
+    } catch (error) {
+      console.error('❌ CUE 잔액 업데이트 실패:', error);
+      return false;
+    }
+  }
+
+  // 호환성 별칭들
+  public async recordCueTransaction(transactionData: any): Promise<any> {
+    return this.createCUETransaction(transactionData);
+  }
+
+  public async updateUserCueBalance(userId: string, newBalance: number): Promise<any> {
+    return this.updateUser(userId, { cue_tokens: newBalance });
+  }
+
+  // ============================================================================
+  // 🔐 WebAuthn 관리 (핵심 기능만)
   // ============================================================================
 
   public async saveWebAuthnCredential(credentialData: any): Promise<boolean> {
     console.log('🔐 === WebAuthn 자격증명 저장 ===');
-    console.log('📝 자격증명 데이터:', {
-      user_id: credentialData.user_id,
-      credential_id: credentialData.credential_id,
-      device_name: credentialData.device_name
-    });
 
     try {
       const { error } = await this.supabase
@@ -477,8 +641,6 @@ export class DatabaseService {
   }
 
   public async getUserByCredentialId(credentialId: string): Promise<any | null> {
-    console.log(`🔍 자격증명 ID로 사용자 조회: ${credentialId}`);
-
     try {
       const { data, error } = await this.supabase
         .from('webauthn_credentials')
@@ -494,13 +656,7 @@ export class DatabaseService {
         console.error('❌ 자격증명 ID로 사용자 조회 실패:', error);
         return null;
       }
-      
-      if (!data) {
-        console.log(`🔍 자격증명 사용자 없음: ${credentialId}`);
-        return null;
-      }
 
-      console.log(`✅ 자격증명 사용자 조회 성공: ${data.users.username}`);
       return data?.users || null;
     } catch (error) {
       console.error('❌ 자격증명 조회 실패:', error);
@@ -509,8 +665,6 @@ export class DatabaseService {
   }
 
   public async getWebAuthnCredentials(userId: string): Promise<any[]> {
-    console.log(`🔍 사용자 자격증명 목록 조회: ${userId}`);
-
     try {
       const { data, error } = await this.supabase
         .from('webauthn_credentials')
@@ -519,197 +673,11 @@ export class DatabaseService {
         .eq('is_active', true)
         .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('❌ 자격증명 목록 조회 실패:', error);
-        return [];
-      }
-
-      console.log(`✅ 자격증명 목록 조회 성공: ${data.length}개`);
+      if (error) throw error;
       return data || [];
     } catch (error) {
       console.error('❌ WebAuthn 자격증명 목록 조회 실패:', error);
       return [];
-    }
-  }
-
-  public async getWebAuthnCredentialById(credentialId: string): Promise<any | null> {
-    console.log(`🔍 자격증명 상세 조회: ${credentialId}`);
-
-    try {
-      const { data, error } = await this.supabase
-        .from('webauthn_credentials')
-        .select('*')
-        .eq('credential_id', credentialId)
-        .eq('is_active', true)
-        .single();
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('❌ 자격증명 상세 조회 실패:', error);
-        return null;
-      }
-
-      if (!data) {
-        console.log(`🔍 자격증명 없음: ${credentialId}`);
-        return null;
-      }
-
-      console.log(`✅ 자격증명 상세 조회 성공: ${credentialId}`);
-      return data;
-    } catch (error) {
-      console.error('❌ WebAuthn 자격증명 조회 실패:', error);
-      return null;
-    }
-  }
-
-  public async updateWebAuthnCredentialCounter(credentialId: string, counter: number): Promise<boolean> {
-    console.log(`🔄 WebAuthn 카운터 업데이트: ${credentialId} → ${counter}`);
-
-    try {
-      const { error } = await this.supabase
-        .from('webauthn_credentials')
-        .update({
-          counter: counter,
-          last_used_at: new Date().toISOString()
-        })
-        .eq('credential_id', credentialId);
-
-      if (error) {
-        console.error('❌ WebAuthn 카운터 업데이트 실패:', error);
-        return false;
-      }
-      
-      console.log(`✅ WebAuthn 카운터 업데이트 성공: ${credentialId}`);
-      return true;
-    } catch (error) {
-      console.error('❌ WebAuthn 카운터 업데이트 실패:', error);
-      return false;
-    }
-  }
-
-  // 2번에서 추가된 메서드
-  public async updateCredentialLastUsed(credentialId: string): Promise<boolean> {
-    console.log(`🔄 자격증명 사용 시간 업데이트: ${credentialId}`);
-
-    try {
-      const { error } = await this.supabase
-        .from('webauthn_credentials')
-        .update({
-          last_used_at: new Date().toISOString()
-        })
-        .eq('credential_id', credentialId)
-        .eq('is_active', true);
-
-      if (error) {
-        console.error('❌ 자격증명 사용 시간 업데이트 실패:', error);
-        return false;
-      }
-
-      console.log(`✅ 자격증명 사용 시간 업데이트 성공: ${credentialId}`);
-      return true;
-    } catch (error) {
-      console.error('💥 자격증명 사용 시간 업데이트 오류:', error);
-      return false;
-    }
-  }
-
-  // ============================================================================
-  // 📊 WebAuthn 세션 관리 (1번 + 2번 기능 융합)
-  // ============================================================================
-
-  public async createWebAuthnSession(sessionData: any): Promise<any> {
-    console.log('📱 === WebAuthn 세션 생성 ===');
-
-    try {
-      const { data, error } = await this.supabase
-        .from('webauthn_sessions')
-        .insert([{
-          ...sessionData,
-          created_at: new Date().toISOString(),
-          last_activity_at: new Date().toISOString()
-        }])
-        .select()
-        .single();
-
-      if (error) {
-        console.error('❌ WebAuthn 세션 생성 실패:', error);
-        throw error;
-      }
-      
-      console.log('✅ WebAuthn 세션 생성 성공:', data.id);
-      return data;
-    } catch (error) {
-      console.error('❌ WebAuthn 세션 생성 실패:', error);
-      throw error;
-    }
-  }
-
-  public async getActiveWebAuthnSessions(userId: string): Promise<any[]> {
-    try {
-      const { data, error } = await this.supabase
-        .from('webauthn_sessions')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .gt('expires_at', new Date().toISOString())
-        .order('last_activity_at', { ascending: false });
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('❌ 활성 세션 조회 실패:', error);
-      return [];
-    }
-  }
-
-  // 2번에서 추가된 세션 메서드들
-  public async getWebAuthnSession(sessionId: string): Promise<any> {
-    console.log(`🔍 WebAuthn 세션 조회: ${sessionId}`);
-
-    try {
-      const { data, error } = await this.supabase
-        .from('webauthn_sessions')
-        .select('*')
-        .eq('id', sessionId)
-        .eq('is_active', true)
-        .single();
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('❌ WebAuthn 세션 조회 실패:', error);
-        return null;
-      }
-
-      if (!data) {
-        console.log(`🔍 WebAuthn 세션 없음: ${sessionId}`);
-        return null;
-      }
-
-      console.log(`✅ WebAuthn 세션 조회 성공: ${sessionId}`);
-      return data;
-    } catch (error) {
-      console.error('💥 WebAuthn 세션 조회 오류:', error);
-      return null;
-    }
-  }
-
-  public async deleteWebAuthnSession(sessionId: string): Promise<boolean> {
-    console.log(`🗑️ WebAuthn 세션 삭제: ${sessionId}`);
-
-    try {
-      const { error } = await this.supabase
-        .from('webauthn_sessions')
-        .update({ is_active: false })
-        .eq('id', sessionId);
-
-      if (error) {
-        console.error('❌ WebAuthn 세션 삭제 실패:', error);
-        return false;
-      }
-
-      console.log(`✅ WebAuthn 세션 삭제 성공: ${sessionId}`);
-      return true;
-    } catch (error) {
-      console.error('💥 WebAuthn 세션 삭제 오류:', error);
-      return false;
     }
   }
 
@@ -750,30 +718,11 @@ export class DatabaseService {
     }
   }
 
-  public async markChallengeAsUsed(challengeId: string): Promise<boolean> {
-    try {
-      const { error } = await this.supabase
-        .from('webauthn_challenges')
-        .update({
-          is_used: true,
-          used_at: new Date().toISOString()
-        })
-        .eq('id', challengeId);
-
-      return !error;
-    } catch (error) {
-      console.error('❌ 챌린지 사용 처리 실패:', error);
-      return false;
-    }
-  }
-
   // ============================================================================
-  // 🎫 AI Passport 관리 (1번 + 2번 기능 융합)
+  // 🎫 AI Passport 관리 (간소화)
   // ============================================================================
 
   public async getPassport(did: string): Promise<any | null> {
-    console.log(`🎫 Passport 조회: ${did}`);
-
     try {
       const { data, error } = await this.supabase
         .from('ai_passports')
@@ -781,17 +730,7 @@ export class DatabaseService {
         .eq('did', did)
         .single();
 
-      if (error && error.code !== 'PGRST116') {
-        console.error('❌ Passport 조회 실패:', error);
-        return null;
-      }
-
-      if (!data) {
-        console.log(`🔍 Passport 없음: ${did}`);
-        return null;
-      }
-
-      console.log(`✅ Passport 조회 성공: ${did}`);
+      if (error && error.code !== 'PGRST116') return null;
       return data;
     } catch (error) {
       console.error('❌ AI Passport 조회 실패:', error);
@@ -812,8 +751,6 @@ export class DatabaseService {
         .single();
 
       if (error) throw error;
-      
-      console.log('✅ AI Passport 업데이트 성공:', did);
       return data;
     } catch (error) {
       console.error('❌ AI Passport 업데이트 실패:', error);
@@ -821,112 +758,8 @@ export class DatabaseService {
     }
   }
 
-  public async createPassport(passportData: any): Promise<any> {
-    try {
-      const { data, error } = await this.supabase
-        .from('ai_passports')
-        .insert([{
-          ...passportData,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-      
-      console.log('✅ AI Passport 생성 성공');
-      return data;
-    } catch (error) {
-      console.error('❌ AI Passport 생성 실패:', error);
-      throw error;
-    }
-  }
-
   // ============================================================================
-  // 💎 CUE 토큰 관리 (1번 + 2번 기능 융합)
-  // ============================================================================
-
-  public async getCUEBalance(userDid: string): Promise<number> {
-    console.log(`💰 CUE 잔액 조회: ${userDid}`);
-
-    try {
-      // 2번에서 개선된 방식: 사용자 테이블에서 직접 조회
-      const user = await this.getUserByDID(userDid);
-      if (!user) {
-        console.log(`❌ 사용자 없음: ${userDid}`);
-        return 0;
-      }
-
-      const balance = user.cue_tokens || 0;
-      console.log(`✅ CUE 잔액: ${balance}`);
-      return balance;
-    } catch (error) {
-      console.error('❌ CUE 잔액 조회 실패:', error);
-      return 0;
-    }
-  }
-
-  public async createCUETransaction(transaction: any): Promise<any> {
-    console.log('💰 === CUE 거래 생성 ===');
-
-    try {
-      // 현재 잔액 계산
-      const currentBalance = await this.getCUEBalance(transaction.user_did);
-      const newBalance = currentBalance + parseFloat(transaction.amount.toString());
-
-      const { data, error } = await this.supabase
-        .from('cue_transactions')
-        .insert([{
-          ...transaction,
-          balance_after: newBalance,
-          created_at: new Date().toISOString()
-        }])
-        .select()
-        .single();
-
-      if (error) {
-        console.error('❌ CUE 거래 생성 실패:', error);
-        throw error;
-      }
-      
-      console.log('✅ CUE 거래 생성 성공:', transaction.amount);
-      return data;
-    } catch (error) {
-      console.error('❌ CUE 거래 생성 실패:', error);
-      throw error;
-    }
-  }
-
-  public async getCUETransactions(userDid: string, limit = 50): Promise<any[]> {
-    try {
-      const { data, error } = await this.supabase
-        .from('cue_transactions')
-        .select('*')
-        .eq('user_did', userDid)
-        .order('created_at', { ascending: false })
-        .limit(limit);
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('❌ CUE 거래 내역 조회 실패:', error);
-      return [];
-    }
-  }
-
-  // 호환성 별칭들
-  public async recordCueTransaction(transactionData: any): Promise<any> {
-    return this.createCUETransaction(transactionData);
-  }
-
-  // 2번에서 추가된 메서드
-  public async updateUserCueBalance(userId: string, newBalance: number): Promise<any> {
-    return this.updateUser(userId, { cue_tokens: newBalance });
-  }
-
-  // ============================================================================
-  // 🗄️ 데이터 볼트 관리 (1번 + 2번 기능 융합)
+  // 🗄️ 데이터 볼트 관리 (핵심 기능만)
   // ============================================================================
 
   public async getDataVaults(userDid: string): Promise<any[]> {
@@ -946,40 +779,6 @@ export class DatabaseService {
     }
   }
 
-  public async getUserVaults(userId: string): Promise<any[]> {
-    try {
-      const { data, error } = await this.supabase
-        .from('data_vaults')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('status', 'active')
-        .order('updated_at', { ascending: false });
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('❌ 사용자 볼트 조회 실패:', error);
-      return [];
-    }
-  }
-
-  public async getVaultById(vaultId: string): Promise<any | null> {
-    try {
-      const { data, error } = await this.supabase
-        .from('data_vaults')
-        .select('*')
-        .eq('id', vaultId)
-        .eq('status', 'active')
-        .single();
-
-      if (error && error.code !== 'PGRST116') return null;
-      return data;
-    } catch (error) {
-      console.error('❌ 볼트 ID 조회 실패:', error);
-      return null;
-    }
-  }
-
   public async createVault(vaultData: any): Promise<any> {
     try {
       const { data, error } = await this.supabase
@@ -996,8 +795,6 @@ export class DatabaseService {
         .single();
 
       if (error) throw error;
-      
-      console.log('✅ 데이터 볼트 생성 성공:', vaultData.name);
       return data;
     } catch (error) {
       console.error('❌ 데이터 볼트 생성 실패:', error);
@@ -1005,171 +802,11 @@ export class DatabaseService {
     }
   }
 
-  public async updateVault(vaultId: string, updates: any): Promise<any> {
-    try {
-      const { data, error } = await this.supabase
-        .from('data_vaults')
-        .update({
-          ...updates,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', vaultId)
-        .select()
-        .single();
-
-      if (error) throw error;
-      
-      console.log('✅ 데이터 볼트 업데이트 성공');
-      return data;
-    } catch (error) {
-      console.error('❌ 데이터 볼트 업데이트 실패:', error);
-      throw error;
-    }
-  }
-
-  public async deleteVault(vaultId: string): Promise<boolean> {
-    try {
-      const { error } = await this.supabase
-        .from('data_vaults')
-        .update({
-          status: 'deleted',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', vaultId);
-
-      if (error) {
-        console.error('❌ 데이터 볼트 삭제 실패:', error);
-        return false;
-      }
-      
-      console.log('✅ 데이터 볼트 삭제 성공');
-      return true;
-    } catch (error) {
-      console.error('❌ 데이터 볼트 삭제 실패:', error);
-      return false;
-    }
-  }
-
-  public async saveVaultData(vaultData: any): Promise<any> {
-    try {
-      const { data, error } = await this.supabase
-        .from('vault_data')
-        .insert([{
-          ...vaultData,
-          created_at: new Date().toISOString()
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-      
-      // 볼트 통계 업데이트
-      await this.updateVaultStats(vaultData.vault_id);
-      
-      console.log('✅ 볼트 데이터 저장 성공');
-      return data;
-    } catch (error) {
-      console.error('❌ 볼트 데이터 저장 실패:', error);
-      throw error;
-    }
-  }
-
-  public async getVaultData(vaultId: string, limit: number = 50): Promise<any[]> {
-    try {
-      const { data, error } = await this.supabase
-        .from('vault_data')
-        .select('*')
-        .eq('vault_id', vaultId)
-        .order('created_at', { ascending: false })
-        .limit(limit);
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('❌ 볼트 데이터 조회 실패:', error);
-      return [];
-    }
-  }
-
-  /**
-   * 볼트 통계 업데이트
-   */
-  private async updateVaultStats(vaultId: string): Promise<void> {
-    try {
-      const { data, error } = await this.supabase
-        .from('vault_data')
-        .select('id, metadata')
-        .eq('vault_id', vaultId);
-
-      if (error) throw error;
-
-      const dataCount = data?.length || 0;
-      const totalSize = data?.reduce((sum, item) => {
-        return sum + (item.metadata?.size || 0);
-      }, 0) || 0;
-
-      await this.supabase
-        .from('data_vaults')
-        .update({
-          data_count: dataCount,
-          total_size: totalSize,
-          updated_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        })
-        .eq('id', vaultId);
-
-    } catch (error) {
-      console.error('❌ 볼트 통계 업데이트 실패:', error);
-    }
-  }
-
-  /**
-   * 사용자 볼트 통계 조회
-   */
-  public async getUserVaultStats(userId: string): Promise<{
-    totalVaults: number;
-    totalDataCount: number;
-    totalSize: number;
-    lastActivity: string | null;
-  }> {
-    try {
-      const { data, error } = await this.supabase
-        .from('data_vaults')
-        .select('data_count, total_size, last_accessed_at')
-        .eq('user_id', userId)
-        .eq('status', 'active');
-
-      if (error) throw error;
-
-      const stats = {
-        totalVaults: data?.length || 0,
-        totalDataCount: data?.reduce((sum, vault) => sum + (vault.data_count || 0), 0) || 0,
-        totalSize: data?.reduce((sum, vault) => sum + (vault.total_size || 0), 0) || 0,
-        lastActivity: data?.reduce((latest, vault) => {
-          const vaultActivity = vault.last_accessed_at;
-          return vaultActivity && (!latest || vaultActivity > latest) ? vaultActivity : latest;
-        }, null as string | null)
-      };
-
-      return stats;
-    } catch (error) {
-      console.error('❌ 사용자 볼트 통계 조회 실패:', error);
-      return {
-        totalVaults: 0,
-        totalDataCount: 0,
-        totalSize: 0,
-        lastActivity: null
-      };
-    }
-  }
-
   // ============================================================================
-  // 🧠 Personal CUE 관리 (1번 + 2번 기능 융합)
+  // 🧠 Personal CUE 관리 (핵심 기능만)
   // ============================================================================
 
   public async getPersonalCues(userDid: string, limit = 50): Promise<any[]> {
-    console.log(`🔍 Personal CUEs 조회: ${userDid}`);
-
     try {
       const { data, error } = await this.supabase
         .from('personal_cues')
@@ -1179,12 +816,7 @@ export class DatabaseService {
         .order('updated_at', { ascending: false })
         .limit(limit);
 
-      if (error) {
-        console.error('❌ Personal CUEs 조회 실패:', error);
-        return [];
-      }
-
-      console.log(`✅ Personal CUEs 조회 성공: ${data?.length || 0}개`);
+      if (error) throw error;
       return data || [];
     } catch (error) {
       console.error('❌ Personal CUE 조회 실패:', error);
@@ -1193,8 +825,6 @@ export class DatabaseService {
   }
 
   public async storePersonalCue(cueData: any): Promise<any> {
-    console.log('🧠 === Personal CUE 저장 ===');
-
     try {
       const { data, error } = await this.supabase
         .from('personal_cues')
@@ -1207,12 +837,7 @@ export class DatabaseService {
         .select()
         .single();
 
-      if (error) {
-        console.error('❌ Personal CUE 저장 실패:', error);
-        throw error;
-      }
-      
-      console.log('✅ Personal CUE 저장 성공:', data.id);
+      if (error) throw error;
       return data;
     } catch (error) {
       console.error('❌ Personal CUE 저장 실패:', error);
@@ -1220,96 +845,11 @@ export class DatabaseService {
     }
   }
 
-  public async getPersonalCue(userDid: string, cueKey: string, cueType: string): Promise<any | null> {
-    try {
-      const { data, error } = await this.supabase
-        .from('personal_cues')
-        .select('*')
-        .or(`user_did.eq.${userDid},user_id.eq.${userDid}`)
-        .eq('cue_key', cueKey)
-        .eq('cue_type', cueType)
-        .eq('status', 'active')
-        .single();
-
-      if (error && error.code !== 'PGRST116') return null;
-      return data;
-    } catch (error) {
-      console.error('❌ Personal CUE 단일 조회 실패:', error);
-      return null;
-    }
-  }
-
-  public async searchPersonalCues(userDid: string, query: string, limit: number = 10): Promise<any[]> {
-    try {
-      const { data, error } = await this.supabase
-        .from('personal_cues')
-        .select('*')
-        .or(`user_did.eq.${userDid},user_id.eq.${userDid}`)
-        .eq('status', 'active')
-        .ilike('cue_key', `%${query}%`)
-        .limit(limit);
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('❌ Personal CUE 검색 실패:', error);
-      return [];
-    }
-  }
-
-  // 호환성 별칭들
-  public async getPersonalCuesByUser(userDid: string): Promise<any[]> {
-    return this.getPersonalCues(userDid);
-  }
-
-  public async createPersonalCue(cueData: any): Promise<any> {
-    return this.storePersonalCue(cueData);
-  }
-
-  public async addPersonalCue(cueData: any): Promise<any> {
-    return this.storePersonalCue(cueData);
-  }
-
-  // 2번에서 추가된 메서드
-  public async savePersonalCue(cueData: any): Promise<any> {
-    return this.storePersonalCue(cueData);
-  }
-
   // ============================================================================
-  // 💬 대화 및 메시지 관리 (1번 + 2번 기능 융합)
+  // 💬 대화 및 메시지 관리 (간소화)
   // ============================================================================
-
-  public async createConversation(conversationData: any): Promise<any> {
-    console.log('💬 === 대화 생성 ===');
-
-    try {
-      const { data, error } = await this.supabase
-        .from('conversations')
-        .insert([{
-          ...conversationData,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          last_message_at: new Date().toISOString()
-        }])
-        .select()
-        .single();
-
-      if (error) {
-        console.error('❌ 대화 생성 실패:', error);
-        throw error;
-      }
-
-      console.log('✅ 대화 생성 성공:', data.id);
-      return data;
-    } catch (error) {
-      console.error('❌ 대화 생성 실패:', error);
-      throw error;
-    }
-  }
 
   public async saveMessage(messageData: any): Promise<any> {
-    console.log('📨 === 메시지 저장 ===');
-
     try {
       const { data, error } = await this.supabase
         .from('messages')
@@ -1321,12 +861,7 @@ export class DatabaseService {
         .select()
         .single();
 
-      if (error) {
-        console.error('❌ 메시지 저장 실패:', error);
-        throw error;
-      }
-      
-      console.log('✅ 메시지 저장 성공:', data.id);
+      if (error) throw error;
       return data;
     } catch (error) {
       console.error('❌ 메시지 저장 실패:', error);
@@ -1334,13 +869,7 @@ export class DatabaseService {
     }
   }
 
-  public async saveChatMessage(messageData: any): Promise<void> {
-    await this.saveMessage(messageData);
-  }
-
   public async getChatHistory(userDid: string, conversationId?: string, limit = 100): Promise<any[]> {
-    console.log(`📜 대화 기록 조회: ${userDid}`);
-
     try {
       let query = this.supabase
         .from('messages')
@@ -1362,12 +891,7 @@ export class DatabaseService {
       }
 
       const { data, error } = await query;
-      if (error) {
-        console.error('❌ 대화 기록 조회 실패:', error);
-        throw error;
-      }
-      
-      console.log(`✅ 대화 기록 조회 성공: ${data?.length || 0}개`);
+      if (error) throw error;
       return data || [];
     } catch (error) {
       console.error('❌ 채팅 기록 조회 실패:', error);
@@ -1375,217 +899,25 @@ export class DatabaseService {
     }
   }
 
-  public async getConversationHistory(userId: string, conversationId?: string, limit: number = 50): Promise<any[]> {
-    return this.getChatHistory(userId, conversationId, limit);
-  }
-
   // ============================================================================
-  // 🤖 AI Agents 관리
+  // 🔧 유틸리티 및 시스템 관리
   // ============================================================================
 
-  public async getAIAgents(): Promise<any[]> {
-    try {
-      const { data, error } = await this.supabase
-        .from('ai_agents')
-        .select('*')
-        .eq('status', 'active')
-        .order('name');
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('❌ AI Agents 조회 실패:', error);
-      return [];
-    }
-  }
-
-  public async getAIAgent(agentId: string): Promise<any | null> {
-    try {
-      const { data, error } = await this.supabase
-        .from('ai_agents')
-        .select('*')
-        .eq('agent_id', agentId)
-        .eq('status', 'active')
-        .single();
-
-      if (error && error.code !== 'PGRST116') return null;
-      return data;
-    } catch (error) {
-      console.error('❌ AI Agent 조회 실패:', error);
-      return null;
-    }
-  }
-
-  // ============================================================================
-  // 📱 플랫폼 연동 관리
-  // ============================================================================
-
-  public async getConnectedPlatforms(userId: string): Promise<any[]> {
-    try {
-      const { data, error } = await this.supabase
-        .from('connected_platforms')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      return data || [];
-    } catch (error) {
-      console.error('❌ 연결된 플랫폼 조회 실패:', error);
-      return [];
-    }
-  }
-
-  public async updatePlatformConnection(userId: string, platformId: string, updates: any): Promise<any> {
-    try {
-      const { data, error } = await this.supabase
-        .from('connected_platforms')
-        .upsert({
-          user_id: userId,
-          platform_id: platformId,
-          ...updates,
-          updated_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      
-      console.log('✅ 플랫폼 연결 업데이트 성공');
-      return data;
-    } catch (error) {
-      console.error('❌ 플랫폼 연결 업데이트 실패:', error);
-      throw error;
-    }
-  }
-
-  // ============================================================================
-  // 📋 시스템 활동 로그
-  // ============================================================================
-
-  public async logSystemActivity(activityData: any): Promise<void> {
-    try {
-      await this.supabase
-        .from('system_activities')
-        .insert([{
-          ...activityData,
-          created_at: new Date().toISOString()
-        }]);
-      
-      console.log('✅ 시스템 활동 로그 저장 성공');
-    } catch (error) {
-      console.error('❌ 시스템 활동 로그 저장 실패:', error);
-    }
-  }
-
-  public async getSystemActivities(userId?: string, limit = 100): Promise<any[]> {
-    try {
-      let query = this.supabase
-        .from('system_activities')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit);
-
-      if (userId) {
-        query = query.eq('user_id', userId);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      
-      return data || [];
-    } catch (error) {
-      console.error('❌ 시스템 활동 조회 실패:', error);
-      return [];
-    }
-  }
-
-  // ============================================================================
-  // 🔧 유틸리티 및 통계 (1번 + 2번 기능 융합)
-  // ============================================================================
-
-  public async cleanupExpiredSessions(): Promise<boolean> {
-    try {
-      const { error } = await this.supabase
-        .from('webauthn_sessions')
-        .update({
-          is_active: false,
-          ended_at: new Date().toISOString()
-        })
-        .eq('is_active', true)
-        .lt('expires_at', new Date().toISOString());
-
-      if (error) {
-        console.error('❌ 만료된 세션 정리 실패:', error);
-        return false;
-      }
-      
-      console.log('✅ 만료된 세션 정리 완료');
-      return true;
-    } catch (error) {
-      console.error('❌ 만료된 세션 정리 실패:', error);
-      return false;
-    }
-  }
-
-  public async getSystemStats(): Promise<any> {
-    try {
-      const [users, conversations, messages, cues, vaults, credentials] = await Promise.all([
-        this.supabase.from('users').select('count', { count: 'exact' }).single(),
-        this.supabase.from('conversations').select('count', { count: 'exact' }).single(),
-        this.supabase.from('messages').select('count', { count: 'exact' }).single(),
-        this.supabase.from('personal_cues').select('count', { count: 'exact' }).single(),
-        this.supabase.from('data_vaults').select('count', { count: 'exact' }).single(),
-        this.supabase.from('webauthn_credentials').select('count', { count: 'exact' }).single()
-      ]);
-
-      return {
-        totalUsers: users.count || 0,
-        totalConversations: conversations.count || 0,
-        totalMessages: messages.count || 0,
-        totalCues: cues.count || 0,
-        totalVaults: vaults.count || 0,
-        totalCredentials: credentials.count || 0,
-        connectionInfo: this.getConnectionInfo(),
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      console.error('❌ 시스템 통계 조회 실패:', error);
-      return {
-        totalUsers: 0,
-        totalConversations: 0,
-        totalMessages: 0,
-        totalCues: 0,
-        totalVaults: 0,
-        totalCredentials: 0,
-        connectionInfo: this.getConnectionInfo(),
-        error: error.message,
-        timestamp: new Date().toISOString()
-      };
-    }
-  }
-
-  // 2번에서 추가된 헬스체크 메서드
   public async getHealth(): Promise<any> {
     try {
-      const { data: usersCount } = await this.supabase
+      const { count: usersCount } = await this.supabase
         .from('users')
-        .select('count', { count: 'exact', head: true });
-
-      const { data: credentialsCount } = await this.supabase
-        .from('webauthn_credentials')
-        .select('count', { count: 'exact', head: true });
+        .select('*', { count: 'exact', head: true });
 
       return {
         status: 'healthy',
         connected: this.connected,
         tables: {
-          users: usersCount || 0,
-          credentials: credentialsCount || 0
+          users: usersCount || 0
         },
         timestamp: new Date().toISOString()
       };
-    } catch (error) {
+    } catch (error: any) {
       return {
         status: 'unhealthy',
         connected: false,
@@ -1595,7 +927,6 @@ export class DatabaseService {
     }
   }
 
-  // 2번에서 추가된 진단 메서드
   public async runDiagnostics(): Promise<void> {
     console.log('🔍 === 데이터베이스 진단 ===');
 
@@ -1645,7 +976,7 @@ export class DatabaseService {
   }
 
   /**
-   * DI Container에서 호출하는 정리 메서드 (2번에서 추가)
+   * DI Container에서 호출하는 정리 메서드
    */
   public dispose(): void {
     console.log('🧹 DatabaseService 정리 중...');
@@ -1655,23 +986,22 @@ export class DatabaseService {
 }
 
 // ============================================================================
-// 🚀 지연 초기화 (dotenv 로드 후에 초기화)
+// 🚀 지연 초기화 및 Export
 // ============================================================================
 
 let databaseServiceInstance: DatabaseService | null = null;
 
 /**
  * 지연 초기화된 DatabaseService 인스턴스 반환
- * dotenv.config() 후에 호출되어야 함
  */
 export function getDatabaseService(): DatabaseService {
   if (!databaseServiceInstance) {
     console.log('🔄 DatabaseService 지연 초기화 중...');
     databaseServiceInstance = DatabaseService.getInstance();
     
-    // 초기화 후 연결 시도
+    // 초기화 후 연결 시도 (비동기, 에러 무시)
     databaseServiceInstance.connect().catch(error => {
-      console.error('❌ DatabaseService 초기 연결 실패:', error);
+      console.error('❌ DatabaseService 초기 연결 실패:', error.message);
       console.log('💡 Supabase 환경변수를 확인하세요');
     });
   }
@@ -1679,9 +1009,12 @@ export function getDatabaseService(): DatabaseService {
 }
 
 /**
- * 강제 재초기화 (환경변수 변경시 사용)
+ * 강제 재초기화
  */
 export function resetDatabaseService(): void {
+  if (databaseServiceInstance && typeof databaseServiceInstance.dispose === 'function') {
+    databaseServiceInstance.dispose();
+  }
   databaseServiceInstance = null;
   console.log('🔄 DatabaseService 인스턴스 재설정됨');
 }

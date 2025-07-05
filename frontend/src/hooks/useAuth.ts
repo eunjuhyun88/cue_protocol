@@ -1,6 +1,6 @@
 // ============================================================================
-// 📁 frontend/src/hooks/useAuth.ts - 수정된 인증 훅
-// 🔧 세션 토큰 저장 및 자동 복원 개선
+// 📁 frontend/src/hooks/useAuth.ts - 통합 WebAuthn API 사용
+// 🔧 실제 WebAuthnAPI 메서드에 맞춘 인증 훅
 // ============================================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -13,8 +13,11 @@ interface User {
   email?: string;
   authenticated: boolean;
   cueBalance?: number;
+  cue_tokens?: number;
   trustScore?: number;
+  trust_score?: number;
   passportLevel?: string;
+  passport_level?: string;
 }
 
 interface AuthState {
@@ -40,21 +43,60 @@ export const useAuth = () => {
 
   const saveSessionToken = useCallback((token: string) => {
     try {
+      console.log('💾 세션 토큰 저장 시도:', token ? token.substring(0, 20) + '...' : 'null');
+      
+      if (!token || typeof token !== 'string' || token.length < 10) {
+        console.error('❌ 잘못된 토큰 형식:', token);
+        return false;
+      }
+
+      // 테스트 토큰 거부
+      if (token.startsWith('force_token') || token.startsWith('test_') || token.startsWith('mock_')) {
+        console.error('❌ 테스트 토큰 거부:', token.substring(0, 20));
+        return false;
+      }
+
       localStorage.setItem('session_token', token);
+      localStorage.setItem('cue_session_token', token); // WebAuthnAPI가 사용하는 키
       localStorage.setItem('auth_timestamp', Date.now().toString());
       
       // WebAuthnAPI에도 토큰 설정
       webauthnAPI.setSessionToken(token);
       
-      console.log('💾 세션 토큰 저장 완료');
+      console.log('✅ 세션 토큰 저장 완료');
+      return true;
     } catch (error) {
       console.error('❌ 세션 토큰 저장 실패:', error);
+      return false;
     }
   }, [webauthnAPI]);
 
   const getSessionToken = useCallback(() => {
     try {
-      return localStorage.getItem('session_token');
+      // 먼저 새로운 키에서 토큰 확인
+      let token = localStorage.getItem('session_token');
+      
+      // 없으면 WebAuthnAPI가 사용하는 키에서 확인
+      if (!token) {
+        token = localStorage.getItem('cue_session_token');
+      }
+      
+      if (!token) return null;
+
+      // 토큰 만료 검사 (7일)
+      const timestamp = localStorage.getItem('auth_timestamp');
+      if (timestamp) {
+        const age = Date.now() - parseInt(timestamp);
+        const maxAge = 7 * 24 * 60 * 60 * 1000; // 7일
+        
+        if (age > maxAge) {
+          console.log('⏰ 세션 토큰 만료, 삭제 중...');
+          clearSessionToken();
+          return null;
+        }
+      }
+      
+      return token;
     } catch (error) {
       console.error('❌ 세션 토큰 조회 실패:', error);
       return null;
@@ -64,6 +106,8 @@ export const useAuth = () => {
   const clearSessionToken = useCallback(() => {
     try {
       localStorage.removeItem('session_token');
+      localStorage.removeItem('cue_session_token');
+      localStorage.removeItem('cue_session_id');
       localStorage.removeItem('auth_timestamp');
       webauthnAPI.clearSessionToken();
       console.log('🗑️ 세션 토큰 삭제 완료');
@@ -73,10 +117,11 @@ export const useAuth = () => {
   }, [webauthnAPI]);
 
   // ============================================================================
-  // 🔧 세션 복원
+  // 🔧 세션 복원 (WebAuthnAPI 메서드 사용)
   // ============================================================================
 
   const restoreSession = useCallback(async () => {
+    console.log('🔄 === 세션 복원 시작 ===');
     setAuthState(prev => ({ ...prev, isLoading: true }));
     
     try {
@@ -90,47 +135,44 @@ export const useAuth = () => {
           isAuthenticated: false,
           sessionToken: null
         });
-        return;
+        return { success: false, reason: 'no_token' };
       }
 
-      console.log('🔄 세션 복원 시도 중...');
+      console.log('🔍 세션 토큰 복원 시도:', savedToken.substring(0, 20) + '...');
       
-      // 1. WebAuthnAPI에 토큰 설정
+      // WebAuthnAPI에 토큰 설정
       webauthnAPI.setSessionToken(savedToken);
       
-      // 2. 세션 복원 API 호출
-      const response = await fetch('http://localhost:3001/api/auth/session/restore', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${savedToken}`
-        },
-        body: JSON.stringify({ sessionToken: savedToken })
-      });
+      // WebAuthnAPI의 restoreSession 메서드 사용
+      const result = await webauthnAPI.restoreSession();
+      
+      if (result && result.success && result.user) {
+        const user = {
+          ...result.user,
+          authenticated: true,
+          cueBalance: result.user.cue_tokens || result.user.cueBalance || 0,
+          trustScore: result.user.trust_score || result.user.trustScore || 50,
+          passportLevel: result.user.passport_level || result.user.passportLevel || 'Basic'
+        };
 
-      const data = await response.json();
-
-      if (data.success && data.user) {
-        console.log('✅ 세션 복원 성공:', data.user.username);
-        
         setAuthState({
-          user: data.user,
+          user,
           isLoading: false,
           isAuthenticated: true,
           sessionToken: savedToken
         });
+        
+        console.log('✅ 세션 복원 성공:', user.username);
+        return { success: true, user };
       } else {
-        console.warn('⚠️ 세션 복원 실패:', data.message);
-        clearSessionToken();
-        setAuthState({
-          user: null,
-          isLoading: false,
-          isAuthenticated: false,
-          sessionToken: null
-        });
+        console.log('❌ 세션 복원 실패');
+        throw new Error('세션 복원 실패');
       }
-    } catch (error) {
-      console.error('💥 세션 복원 오류:', error);
+
+    } catch (error: any) {
+      console.error('💥 세션 복원 실패:', error.message);
+      
+      // 실패 시 토큰 정리
       clearSessionToken();
       setAuthState({
         user: null,
@@ -138,103 +180,131 @@ export const useAuth = () => {
         isAuthenticated: false,
         sessionToken: null
       });
+      
+      return { success: false, reason: error.message };
     }
   }, [getSessionToken, clearSessionToken, webauthnAPI]);
 
   // ============================================================================
-  // 🔧 로그인 함수들
+  // 🔧 통합 WebAuthn 인증 (등록/로그인 자동 처리)
   // ============================================================================
 
-  const loginWithWebAuthn = useCallback(async (userEmail?: string) => {
+  const authenticateWithWebAuthn = useCallback(async () => {
     try {
+      console.log('🔐 === 통합 WebAuthn 인증 시작 ===');
       setAuthState(prev => ({ ...prev, isLoading: true }));
       
-      console.log('🔐 WebAuthn 로그인 시작...');
+      // WebAuthnAPI의 unifiedWebAuthnAuth 메서드 사용
+      const result = await webauthnAPI.unifiedWebAuthnAuth();
       
-      const result = await webauthnAPI.loginWithWebAuthn(userEmail);
+      console.log('📦 통합 인증 결과:', {
+        success: result.success,
+        action: result.action,
+        isExisting: result.isExistingUser,
+        hasUser: !!result.user,
+        hasToken: !!result.sessionToken
+      });
       
       if (result.success && result.user) {
         // 세션 토큰 저장
-        const token = result.sessionToken || result.token;
-        if (token) {
-          saveSessionToken(token);
+        if (result.sessionToken && saveSessionToken(result.sessionToken)) {
+          const user = {
+            ...result.user,
+            authenticated: true,
+            cueBalance: result.user.cue_tokens || result.user.cueBalance || 0,
+            trustScore: result.user.trust_score || result.user.trustScore || 50,
+            passportLevel: result.user.passport_level || result.user.passportLevel || 'Basic'
+          };
+
+          setAuthState({
+            user,
+            isLoading: false,
+            isAuthenticated: true,
+            sessionToken: result.sessionToken
+          });
+          
+          if (result.isExistingUser) {
+            console.log('✅ 기존 사용자 로그인 성공:', user.username);
+          } else {
+            console.log('✅ 새 사용자 등록 성공:', user.username);
+          }
+          
+          return {
+            ...result,
+            user
+          };
+        } else {
+          throw new Error('세션 토큰 저장 실패');
         }
-        
-        setAuthState({
-          user: result.user,
-          isLoading: false,
-          isAuthenticated: true,
-          sessionToken: token
-        });
-        
-        console.log('✅ WebAuthn 로그인 성공:', result.user.username);
-        return result;
       } else {
-        throw new Error(result.message || '로그인 실패');
+        throw new Error(result.message || '인증 실패');
       }
     } catch (error: any) {
-      console.error('💥 WebAuthn 로그인 실패:', error);
+      console.error('💥 통합 WebAuthn 인증 실패:', error);
       setAuthState(prev => ({ ...prev, isLoading: false }));
       throw error;
     }
   }, [webauthnAPI, saveSessionToken]);
+
+  // ============================================================================
+  // 🔧 명시적 등록/로그인 (호환성을 위해 유지)
+  // ============================================================================
 
   const registerWithWebAuthn = useCallback(async (userName?: string, userEmail?: string) => {
     try {
-      setAuthState(prev => ({ ...prev, isLoading: true }));
+      console.log('📝 === WebAuthn 등록 (통합 인증 사용) ===');
       
-      console.log('📝 WebAuthn 등록 시작...');
+      // 통합 인증을 사용하되, 사용자에게는 "등록"으로 표시
+      const result = await authenticateWithWebAuthn();
       
-      const result = await webauthnAPI.registerWithWebAuthn(userName, userEmail);
-      
-      if (result.success && result.user) {
-        // 세션 토큰 저장
-        const token = result.sessionToken || result.token;
-        if (token) {
-          saveSessionToken(token);
-        }
-        
-        setAuthState({
-          user: result.user,
-          isLoading: false,
-          isAuthenticated: true,
-          sessionToken: token
-        });
-        
-        console.log('✅ WebAuthn 등록 성공:', result.user.username);
-        return result;
-      } else {
-        throw new Error(result.message || '등록 실패');
-      }
+      // 결과를 등록 형식으로 반환
+      return {
+        ...result,
+        message: result.isExistingUser 
+          ? '기존 계정으로 성공적으로 로그인되었습니다!' 
+          : '새 계정이 성공적으로 등록되었습니다!'
+      };
     } catch (error: any) {
       console.error('💥 WebAuthn 등록 실패:', error);
-      setAuthState(prev => ({ ...prev, isLoading: false }));
       throw error;
     }
-  }, [webauthnAPI, saveSessionToken]);
+  }, [authenticateWithWebAuthn]);
+
+  const loginWithWebAuthn = useCallback(async (userEmail?: string) => {
+    try {
+      console.log('🔐 === WebAuthn 로그인 (통합 인증 사용) ===');
+      
+      // 통합 인증을 사용하되, 사용자에게는 "로그인"으로 표시
+      const result = await authenticateWithWebAuthn();
+      
+      // 결과를 로그인 형식으로 반환
+      return {
+        ...result,
+        message: result.isExistingUser 
+          ? '성공적으로 로그인되었습니다!' 
+          : '새 계정이 생성되어 로그인되었습니다!'
+      };
+    } catch (error: any) {
+      console.error('💥 WebAuthn 로그인 실패:', error);
+      throw error;
+    }
+  }, [authenticateWithWebAuthn]);
 
   // ============================================================================
-  // 🔧 로그아웃
+  // 🔧 로그아웃 (WebAuthnAPI 메서드 사용)
   // ============================================================================
 
   const logout = useCallback(async () => {
     try {
+      console.log('🚪 === 로그아웃 시작 ===');
       setAuthState(prev => ({ ...prev, isLoading: true }));
       
-      // 서버에 로그아웃 요청
-      const token = getSessionToken();
-      if (token) {
-        try {
-          await fetch('http://localhost:3001/api/auth/logout', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          });
-        } catch (error) {
-          console.warn('⚠️ 서버 로그아웃 요청 실패:', error);
-        }
+      // WebAuthnAPI의 logout 메서드 사용
+      try {
+        await webauthnAPI.logout();
+        console.log('✅ 서버 로그아웃 성공');
+      } catch (error) {
+        console.warn('⚠️ 서버 로그아웃 실패:', error);
       }
       
       // 로컬 세션 정리
@@ -247,7 +317,7 @@ export const useAuth = () => {
         sessionToken: null
       });
       
-      console.log('🚪 로그아웃 완료');
+      console.log('✅ 로그아웃 완료');
     } catch (error) {
       console.error('💥 로그아웃 오류:', error);
       // 오류가 있어도 로컬 상태는 정리
@@ -259,7 +329,7 @@ export const useAuth = () => {
         sessionToken: null
       });
     }
-  }, [getSessionToken, clearSessionToken]);
+  }, [webauthnAPI, clearSessionToken]);
 
   // ============================================================================
   // 🔧 사용자 정보 새로고침
@@ -267,22 +337,39 @@ export const useAuth = () => {
 
   const refreshUser = useCallback(async () => {
     try {
+      console.log('🔄 사용자 정보 새로고침...');
       const token = getSessionToken();
-      if (!token) return;
+      if (!token) {
+        console.log('📭 토큰 없음, 새로고침 불가');
+        return;
+      }
 
+      // API 엔드포인트로 직접 호출
       const response = await fetch('http://localhost:3001/api/auth/me', {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
         }
       });
 
       const data = await response.json();
       
       if (data.success && data.user) {
+        const user = {
+          ...data.user,
+          authenticated: true,
+          cueBalance: data.user.cue_tokens || data.user.cueBalance || 0,
+          trustScore: data.user.trust_score || data.user.trustScore || 50,
+          passportLevel: data.user.passport_level || data.user.passportLevel || 'Basic'
+        };
+
         setAuthState(prev => ({
           ...prev,
-          user: data.user
+          user
         }));
+        console.log('✅ 사용자 정보 새로고침 완료:', user.username);
+      } else {
+        console.warn('⚠️ 사용자 정보 새로고침 실패:', data.message);
       }
     } catch (error) {
       console.error('💥 사용자 정보 새로고침 실패:', error);
@@ -290,11 +377,48 @@ export const useAuth = () => {
   }, [getSessionToken]);
 
   // ============================================================================
+  // 🔧 디버깅 및 유틸리티
+  // ============================================================================
+
+  const getDebugInfo = useCallback(() => {
+    const webauthnDebug = webauthnAPI.getDebugInfo();
+    
+    return {
+      auth: {
+        isAuthenticated: authState.isAuthenticated,
+        hasUser: !!authState.user,
+        hasToken: !!authState.sessionToken,
+        username: authState.user?.username,
+        cueBalance: authState.user?.cueBalance,
+        isLoading: authState.isLoading
+      },
+      tokens: {
+        sessionToken: !!localStorage.getItem('session_token'),
+        cueSessionToken: !!localStorage.getItem('cue_session_token'),
+        cueSessionId: !!localStorage.getItem('cue_session_id'),
+        authTimestamp: localStorage.getItem('auth_timestamp')
+      },
+      webauthn: webauthnDebug,
+      timestamp: new Date().toISOString()
+    };
+  }, [authState, webauthnAPI]);
+
+  const testAuthentication = useCallback(async () => {
+    try {
+      console.log('🧪 인증 테스트 시작...');
+      return await webauthnAPI.testAuthentication();
+    } catch (error) {
+      console.error('🧪 인증 테스트 실패:', error);
+      return { success: false, error: error.message };
+    }
+  }, [webauthnAPI]);
+
+  // ============================================================================
   // 🔧 초기화 Effect
   // ============================================================================
 
   useEffect(() => {
-    // 앱 시작 시 세션 복원 시도
+    console.log('🚀 useAuth 초기화 - 세션 복원 시도');
     restoreSession();
   }, [restoreSession]);
 
@@ -309,9 +433,14 @@ export const useAuth = () => {
     isAuthenticated: authState.isAuthenticated,
     sessionToken: authState.sessionToken,
     
-    // 함수
+    // 통합 인증 (권장)
+    authenticateWithWebAuthn,
+    
+    // 호환성 인증 함수 (내부적으로 통합 인증 사용)
     loginWithWebAuthn,
     registerWithWebAuthn,
+    
+    // 세션 관리
     logout,
     restoreSession,
     refreshUser,
@@ -319,106 +448,10 @@ export const useAuth = () => {
     // 토큰 관리
     saveSessionToken,
     getSessionToken,
-    clearSessionToken
+    clearSessionToken,
+    
+    // 디버깅 및 테스트
+    getDebugInfo,
+    testAuthentication
   };
-};
-
-// ============================================================================
-// 📁 frontend/src/components/auth/LoginForm.tsx - 수정된 로그인 폼
-// 🔧 useAuth 훅 사용하여 세션 관리 개선
-// ============================================================================
-
-import React, { useState } from 'react';
-import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
-import { LoadingSpinner } from '../ui/LoadingSpinner';
-import { useAuth } from '../../hooks/useAuth';
-
-interface LoginFormProps {
-  onSuccess?: (user: any) => void;
-  onError?: (error: string) => void;
-}
-
-export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onError }) => {
-  const [email, setEmail] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  
-  const { loginWithWebAuthn, registerWithWebAuthn } = useAuth();
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-
-    try {
-      let result;
-      
-      if (mode === 'login') {
-        console.log('🔐 로그인 시도...');
-        result = await loginWithWebAuthn(email || undefined);
-      } else {
-        console.log('📝 회원가입 시도...');
-        result = await registerWithWebAuthn(undefined, email || undefined);
-      }
-
-      if (result.success) {
-        console.log(`✅ ${mode === 'login' ? '로그인' : '회원가입'} 성공!`);
-        onSuccess?.(result.user);
-      } else {
-        throw new Error(result.message || `${mode === 'login' ? '로그인' : '회원가입'} 실패`);
-      }
-    } catch (error: any) {
-      console.error(`💥 ${mode === 'login' ? '로그인' : '회원가입'} 실패:`, error);
-      onError?.(error.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-
-  return (
-    <div className="max-w-md mx-auto bg-white p-6 rounded-lg shadow-lg">
-      <h2 className="text-2xl font-bold mb-6 text-center">
-        {mode === 'login' ? '🔐 로그인' : '📝 회원가입'}
-      </h2>
-      
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium mb-2">
-            이메일 (선택사항)
-          </label>
-          <Input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="user@example.com"
-            disabled={isLoading}
-          />
-        </div>
-
-        <Button
-          type="submit"
-          disabled={isLoading}
-          className="w-full"
-        >
-          {isLoading ? (
-            <LoadingSpinner />
-          ) : (
-            `👆 ${mode === 'login' ? '생체인증으로 로그인' : '생체인증으로 회원가입'}`
-          )}
-        </Button>
-
-        <div className="text-center">
-          <button
-            type="button"
-            onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-            className="text-blue-600 hover:underline"
-            disabled={isLoading}
-          >
-            {mode === 'login' ? '계정이 없으신가요? 회원가입' : '이미 계정이 있으신가요? 로그인'}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
 };

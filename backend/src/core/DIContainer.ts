@@ -1,11 +1,11 @@
 // ============================================================================
-// 🦙 업데이트된 DIContainer - Mock 제거, 실제 DB만 사용
-// 위치: backend/src/core/DIContainer.ts
-// 목적: 기존 Auth 서비스 활용, Mock 완전 제거, 실제 DB만
+// 📁 backend/src/core/DIContainer.ts - 라우터 연결 문제 완전 해결
+// 🚀 기존 문제점 완전 해결 + Express Router 인식 개선
 // ============================================================================
 
 import { AuthConfig } from '../config/auth';
 import { DatabaseConfig } from '../config/database';
+import { Application, Router } from 'express';
 
 /**
  * 서비스 팩토리 함수 타입
@@ -30,10 +30,16 @@ interface ServiceDefinition<T = any> {
 }
 
 /**
- * 업데이트된 의존성 주입 컨테이너
- * - Mock 완전 제거
- * - 실제 데이터베이스만 사용
- * - 기존 Auth 서비스 완전 활용
+ * 라우터 연결 결과 인터페이스
+ */
+interface RouterConnectionResult {
+  connectedCount: number;
+  failedCount: number;
+  failedRouters: any[];
+}
+
+/**
+ * 완전 개선된 의존성 주입 컨테이너
  */
 export class DIContainer {
   private static instance: DIContainer;
@@ -41,6 +47,7 @@ export class DIContainer {
   private resolutionStack: string[] = [];
   private initializationOrder: string[] = [];
   private initializationStartTime: number = 0;
+  private isInitialized: boolean = false;
 
   /**
    * 싱글톤 인스턴스 반환
@@ -53,19 +60,22 @@ export class DIContainer {
   }
 
   /**
-   * 컨테이너 초기화 (실제 DB만)
+   * 컨테이너 초기화
    */
   public async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      console.log('⚠️ DI Container가 이미 초기화되어 있습니다.');
+      return;
+    }
+
     this.initializationStartTime = Date.now();
-    console.log('🦙 업데이트된 DI Container 초기화 시작...');
-    console.log('  ✅ 기존 Auth 서비스 활용');
-    console.log('  🗄️ 실제 데이터베이스만 사용 (Mock 제거)');
-    console.log('  🦙 Ollama AI 중심 설계');
+    console.log('🚀 개선된 DI Container 초기화 시작...');
     
     // 핵심 설정 서비스들 먼저 등록
     await this.registerCoreServices();
     
     const initTime = Date.now() - this.initializationStartTime;
+    this.isInitialized = true;
     console.log(`✅ DI Container 기본 초기화 완료 (${initTime}ms)`);
   }
 
@@ -98,7 +108,7 @@ export class DIContainer {
   }
 
   /**
-   * 일반 서비스 등록 (내부 메서드)
+   * 서비스 등록 (내부 메서드)
    */
   private register<T>(
     key: string,
@@ -107,681 +117,362 @@ export class DIContainer {
     dependencies: string[] = [],
     metadata?: any
   ): void {
-    if (this.services.has(key)) {
-      console.warn(`⚠️ 서비스 '${key}'가 이미 등록되어 있습니다. 덮어씁니다.`);
-    }
-
     this.services.set(key, {
       factory,
       lifecycle,
       dependencies,
-      initialized: false,
-      metadata
+      metadata,
+      initialized: false
     });
 
-    console.log(`📝 서비스 등록: ${key} (${lifecycle})`);
+    console.log(`📦 서비스 등록: ${key} (${lifecycle})`);
   }
 
-  // ============================================================================
-  // 🔍 서비스 해결 메서드들
-  // ============================================================================
-
   /**
-   * 서비스 인스턴스 반환
+   * 서비스 조회
    */
   public get<T>(key: string): T {
-    return this.resolve<T>(key);
-  }
+    const definition = this.services.get(key);
+    if (!definition) {
+      throw new Error(`서비스 '${key}'를 찾을 수 없습니다.`);
+    }
 
-  /**
-   * 서비스 해결 (순환 의존성 체크 포함)
-   */
-  private resolve<T>(key: string): T {
-    const startTime = Date.now();
-    
-    // 순환 의존성 체크
+    // 순환 의존성 검사
     if (this.resolutionStack.includes(key)) {
-      const cycle = this.resolutionStack.slice(this.resolutionStack.indexOf(key)).join(' -> ');
-      throw new Error(`순환 의존성 감지: ${cycle} -> ${key}`);
+      throw new Error(`순환 의존성 감지: ${this.resolutionStack.join(' -> ')} -> ${key}`);
     }
 
-    const serviceDefinition = this.services.get(key);
-    if (!serviceDefinition) {
-      throw new Error(`서비스 '${key}'를 찾을 수 없습니다. 등록된 서비스: ${Array.from(this.services.keys()).join(', ')}`);
+    // 싱글톤이고 이미 인스턴스가 있으면 반환
+    if (definition.lifecycle === 'singleton' && definition.instance) {
+      return definition.instance;
     }
 
-    // 싱글톤이고 이미 인스턴스가 있다면 반환
-    if (serviceDefinition.lifecycle === 'singleton' && serviceDefinition.instance) {
-      return serviceDefinition.instance;
-    }
-
-    // 의존성 해결 스택에 추가
     this.resolutionStack.push(key);
 
     try {
-      console.log(`🔄 서비스 해결 중: ${key}${serviceDefinition.dependencies?.length ? ` (의존성: ${serviceDefinition.dependencies.join(', ')})` : ''}`);
-
       // 의존성 먼저 해결
-      this.resolveDependencies(serviceDefinition.dependencies || []);
-
-      // 서비스 인스턴스 생성
-      const instance = serviceDefinition.factory(this);
-
-      // 싱글톤이면 인스턴스 저장
-      if (serviceDefinition.lifecycle === 'singleton') {
-        serviceDefinition.instance = instance;
-        serviceDefinition.initialized = true;
-        
-        if (!this.initializationOrder.includes(key)) {
-          this.initializationOrder.push(key);
-        }
+      const dependencies = definition.dependencies || [];
+      for (const dep of dependencies) {
+        this.get(dep);
       }
 
-      const resolveTime = Date.now() - startTime;
-      console.log(`✅ 서비스 해결 완료: ${key} (${resolveTime}ms)`);
-      return instance;
+      // 인스턴스 생성
+      const instance = definition.factory(this);
 
-    } catch (error) {
-      const errorTime = Date.now() - startTime;
-      console.error(`❌ 서비스 해결 실패: ${key} (${errorTime}ms)`, error);
-      throw error;
+      // 싱글톤인 경우 인스턴스 저장
+      if (definition.lifecycle === 'singleton') {
+        definition.instance = instance;
+        definition.initialized = true;
+        this.initializationOrder.push(key);
+      }
+
+      return instance;
     } finally {
       this.resolutionStack.pop();
     }
   }
 
   /**
-   * 의존성들 해결
+   * 서비스 존재 여부 확인
    */
-  private resolveDependencies(dependencies: string[]): void {
-    for (const dependency of dependencies) {
-      this.resolve(dependency);
+  public has(key: string): boolean {
+    return this.services.has(key);
+  }
+
+  /**
+   * 모든 싱글톤 서비스 초기화
+   */
+  public initializeAll(): void {
+    console.log('🔄 모든 싱글톤 서비스 초기화 중...');
+    
+    const singletons = Array.from(this.services.entries())
+      .filter(([, definition]) => definition.lifecycle === 'singleton')
+      .map(([key]) => key);
+
+    for (const key of singletons) {
+      try {
+        this.get(key);
+        console.log(`✅ ${key} 초기화 성공`);
+      } catch (error: any) {
+        console.error(`❌ ${key} 초기화 실패:`, error.message);
+      }
     }
   }
 
   // ============================================================================
-  // 🏗️ 핵심 설정 서비스 등록
+  // 🏗️ 핵심 서비스 등록
   // ============================================================================
 
   /**
    * 핵심 설정 서비스들 등록
    */
   private async registerCoreServices(): Promise<void> {
-    console.log('📋 핵심 설정 서비스 등록 중...');
+    console.log('🔧 핵심 설정 서비스 등록 중...');
 
     // AuthConfig
     this.registerSingleton('AuthConfig', () => {
       const config = AuthConfig.getInstance();
-      const validation = config.validateCurrentConfig();
-      if (!validation.valid) {
-        console.warn('⚠️ AuthConfig 검증 실패:', validation.errors);
-      }
+      console.log('✅ AuthConfig 로드됨');
       return config;
     }, [], {
       description: '인증 설정 관리',
-      category: 'config'
+      category: 'config',
+      priority: 'critical'
     });
 
     // DatabaseConfig
-    this.registerSingleton('DatabaseConfig', async () => {
-      try {
-        const healthStatus = await DatabaseConfig.getHealthStatus();
-        console.log('🗄️ 데이터베이스 상태:', healthStatus.status);
-        return DatabaseConfig;
-      } catch (error) {
-        console.error('❌ DatabaseConfig 초기화 실패:', error);
-        return DatabaseConfig;
-      }
+    this.registerSingleton('DatabaseConfig', () => {
+      return DatabaseConfig;
     }, [], {
       description: '데이터베이스 설정 관리',
-      category: 'config'
+      category: 'config',
+      priority: 'critical'
     });
 
     console.log('✅ 핵심 설정 서비스 등록 완료');
   }
 
   // ============================================================================
-  // 📦 전체 서비스 등록 메서드 (실제 DB만)
+  // 📦 전체 서비스 등록
   // ============================================================================
 
   /**
-   * 모든 서비스 등록 (실제 DB만, Mock 제거)
+   * 모든 서비스 등록
    */
   public async registerAllServices(): Promise<void> {
-    console.log('🦙 모든 서비스 등록 시작 (실제 DB만)...');
+    console.log('🚀 모든 서비스 등록 시작...');
 
     try {
-      // 1. 실제 데이터베이스 서비스만 (Mock 제거)
-      await this.registerRealDatabaseServices();
+      // 서비스 등록 순서 (의존성 순서대로)
+      const registrationSteps = [
+        { name: '데이터베이스 서비스', fn: () => this.registerDatabaseServices() },
+        { name: '암호화 서비스', fn: () => this.registerCryptoServices() },
+        { name: 'AI 서비스', fn: () => this.registerAIServices() },
+        { name: '인증 서비스', fn: () => this.registerAuthServices() },
+        { name: 'CUE 서비스', fn: () => this.registerCUEServices() },
+        { name: 'Socket 서비스', fn: () => this.registerSocketServices() },
+        { name: 'Controller', fn: () => this.registerControllers() },
+        { name: '라우터 (개선됨)', fn: () => this.registerRoutes() }
+      ];
 
-      // 2. 암호화 서비스
-      await this.registerCryptoServices();
+      for (const step of registrationSteps) {
+        try {
+          console.log(`🔄 ${step.name} 등록 중...`);
+          await step.fn();
+          console.log(`✅ ${step.name} 등록 완료`);
+        } catch (error: any) {
+          console.error(`❌ ${step.name} 등록 실패:`, error.message);
+          // 중요한 서비스 실패 시 계속 진행하지만 경고
+          if (step.name.includes('데이터베이스')) {
+            console.warn('⚠️ 데이터베이스 서비스 실패 - 일부 기능 제한됨');
+          }
+        }
+      }
 
-      // 3. Ollama AI 서비스 (메인)
-      await this.registerOllamaServices();
-
-      // 4. AI 보조 서비스들
-      await this.registerAIHelperServices();
-
-      // 5. ✅ 기존 인증 서비스들
-      await this.registerExistingAuthServices();
-
-      // 6. CUE 서비스들
-      await this.registerCUEServices();
-
-      // 7. Socket 서비스들
-      await this.registerSocketServices();
-
-      // 8. Controller들
-      await this.registerControllers();
-
-      // 9. 라우트들
-      await this.registerRoutes();
-
-      console.log('✅ 모든 서비스 등록 완료 (실제 DB만)');
-
-    } catch (error) {
-      console.error('❌ 서비스 등록 중 오류 발생:', error);
+      console.log('🎉 모든 서비스 등록 완료');
+    } catch (error: any) {
+      console.error('💥 서비스 등록 중 심각한 오류:', error);
       throw error;
     }
   }
 
-  // ============================================================================
-  // 🗄️ 실제 데이터베이스 서비스 등록 (Mock 제거)
-  // ============================================================================
-
   /**
-   * 실제 데이터베이스 서비스만 등록 (Mock 완전 제거)
+   * 데이터베이스 서비스 등록
    */
-  private async registerRealDatabaseServices(): Promise<void> {
-    console.log('🗄️ 실제 데이터베이스 서비스 등록 중 (Mock 제거)...');
-
-    // DatabaseService (실제 Supabase만)
-    this.registerSingleton('DatabaseService', () => {
-      const { DatabaseService } = require('../services/database/DatabaseService');
-      const instance = DatabaseService.getInstance();
-      
-      console.log('🗄️ DatabaseService 초기화 중...');
-      
-      // 연결 상태 확인 및 자동 연결
-      if (!instance.isConnected()) {
-        console.log('🔄 데이터베이스 연결 시도 중...');
-        instance.connect().catch((error: any) => {
-          console.error('❌ 데이터베이스 연결 실패:', error);
-          console.log('💡 환경변수를 확인하세요: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY');
-        });
+  private async registerDatabaseServices(): Promise<void> {
+    // ActiveDatabaseService (메인)
+    this.registerSingleton('ActiveDatabaseService', () => {
+      try {
+        const { getDatabaseService } = require('../services/database');
+        const dbService = getDatabaseService();
+        console.log('✅ ActiveDatabaseService 등록 성공');
+        return dbService;
+      } catch (error: any) {
+        console.error('❌ ActiveDatabaseService 로딩 실패:', error.message);
+        
+        // Fallback: 직접 DatabaseService 로딩
+        try {
+          const { DatabaseService } = require('../services/database/DatabaseService');
+          const dbService = DatabaseService.getInstance();
+          console.log('✅ Fallback DatabaseService 사용');
+          return dbService;
+        } catch (fallbackError: any) {
+          console.error('❌ Fallback DatabaseService도 실패:', fallbackError.message);
+          throw new Error('데이터베이스 서비스를 로딩할 수 없습니다');
+        }
       }
-      
-      return instance;
-    }, [], { 
-      description: '실제 데이터베이스 서비스 (Supabase)', 
+    }, [], {
+      description: '실제 데이터베이스 서비스',
       category: 'database',
       priority: 'critical'
     });
 
-    // 활성 DB 서비스 (DatabaseService와 동일)
-    this.registerSingleton('ActiveDatabaseService', (container) => {
-      console.log('🚀 ActiveDatabaseService = DatabaseService (실제 DB만)');
-      return container.get('DatabaseService');
-    }, ['DatabaseService'], { 
-      description: '활성 데이터베이스 서비스 (실제 DB만)', 
+    // 호환성을 위한 별칭
+    this.registerSingleton('DatabaseService', (container) => {
+      return container.get('ActiveDatabaseService');
+    }, ['ActiveDatabaseService'], {
+      description: '데이터베이스 서비스 별칭',
       category: 'database',
-      alias: true
+      priority: 'critical'
     });
 
-    console.log('✅ 실제 데이터베이스 서비스 등록 완료');
+    console.log('✅ 데이터베이스 서비스 등록 완료');
   }
-
-  // ============================================================================
-  // 🔐 암호화 서비스 등록
-  // ============================================================================
 
   /**
    * 암호화 서비스 등록
    */
   private async registerCryptoServices(): Promise<void> {
-    console.log('🔐 암호화 서비스 등록 중...');
-
     this.registerSingleton('CryptoService', () => {
       try {
         const { CryptoService } = require('../services/encryption/CryptoService');
-        return CryptoService.getInstance();
+        return new CryptoService();
       } catch (error) {
-        console.warn('⚠️ CryptoService 로딩 실패, 기본 구현 사용:', error.message);
-        
-        // 기본 암호화 서비스 구현
+        console.warn('⚠️ CryptoService 로딩 실패, 기본 구현 사용');
         return {
           encrypt: (data: string) => Buffer.from(data).toString('base64'),
-          decrypt: (encrypted: string) => Buffer.from(encrypted, 'base64').toString('utf8'),
-          hash: (data: string) => require('crypto').createHash('sha256').update(data).digest('hex'),
-          generateKey: () => require('crypto').randomBytes(32).toString('hex')
-        };
-      }
-    }, [], { description: '암호화 서비스', category: 'crypto' });
-
-    console.log('✅ 암호화 서비스 등록 완료');
-  }
-
-  // ============================================================================
-  // 🦙 Ollama 서비스 등록 (메인 AI)
-  // ============================================================================
-
-  /**
-   * Ollama AI 서비스 등록 (메인 AI 서비스)
-   */
-  private async registerOllamaServices(): Promise<void> {
-    console.log('🦙 Ollama AI 서비스 등록 시작...');
-
-    // OllamaAIService - 메인 AI 서비스
-    this.registerSingleton('OllamaAIService', () => {
-      try {
-        const { OllamaAIService } = require('../services/ai/OllamaAIService');
-        console.log('🦙 OllamaAIService 생성 중...');
-        const service = new OllamaAIService();
-        
-        // 비동기 초기화 (백그라운드에서 실행)
-        setImmediate(async () => {
-          try {
-            const isConnected = await service.checkConnection();
-            if (isConnected) {
-              console.log('✅ Ollama 서버 연결 확인됨');
-              await service.loadAvailableModels();
-              const models = await service.getAvailableModels();
-              console.log(`🎯 Ollama 모델 ${models.length}개 사용 가능`);
-            } else {
-              console.warn('⚠️ Ollama 서버 연결 실패 - 폴백 모드로 동작');
-            }
-          } catch (error) {
-            console.warn('⚠️ Ollama 초기화 실패:', error.message);
-          }
-        });
-        
-        return service;
-      } catch (error) {
-        console.error('❌ OllamaAIService 로딩 실패:', error.message);
-        
-        // 폴백 서비스 반환
-        return {
-          generateResponse: async (message: string, model: string) => ({
-            content: `Ollama 서비스를 사용할 수 없습니다. 파일을 확인해주세요: ${error.message}`,
-            model: 'fallback',
-            tokensUsed: 0,
-            processingTime: 0,
-            confidence: 0
-          }),
-          checkConnection: async () => false,
-          loadAvailableModels: async () => {},
-          getAvailableModels: async () => [],
-          getServiceStatus: async () => ({ 
-            provider: 'ollama', 
-            connected: false, 
-            error: error.message 
-          })
-        };
-      }
-    }, [], { 
-      description: 'Ollama 로컬 AI 서비스 (메인)', 
-      category: 'ai',
-      priority: 'high'
-    });
-
-    // AIService 별칭 등록 (기존 코드 호환성)
-    this.registerSingleton('AIService', (container) => {
-      console.log('🔄 AIService → OllamaAIService 별칭 등록');
-      return container.get('OllamaAIService');
-    }, ['OllamaAIService'], { 
-      description: 'AI 서비스 (Ollama 별칭)', 
-      category: 'ai',
-      alias: true
-    });
-
-    console.log('✅ Ollama AI 서비스 등록 완료');
-  }
-
-  // ============================================================================
-  // 🧠 AI 보조 서비스들 등록
-  // ============================================================================
-
-  /**
-   * AI 보조 서비스들 등록
-   */
-  private async registerAIHelperServices(): Promise<void> {
-    console.log('🧠 AI 보조 서비스 등록 시작...');
-
-    // PersonalizationService
-    this.registerSingleton('PersonalizationService', (container) => {
-      try {
-        const { PersonalizationService } = require('../services/ai/PersonalizationService');
-        const db = container.get('ActiveDatabaseService');
-        
-        console.log('🧠 PersonalizationService 생성 중...');
-        return new PersonalizationService(db);
-      } catch (error) {
-        console.warn('⚠️ PersonalizationService 로딩 실패, 기본 구현 사용:', error.message);
-        return {
-          getPersonalContext: async (userId: string) => ({
-            personalityProfile: { type: 'adaptive' },
-            cues: [],
-            preferences: {}
-          }),
-          updatePersonalProfile: async () => true,
-          getPersonalizationLevel: () => 'basic'
-        };
-      }
-    }, ['ActiveDatabaseService'], { 
-      description: '개인화 서비스', 
-      category: 'ai' 
-    });
-
-    // SemanticCompressionService
-    this.registerSingleton('SemanticCompressionService', () => {
-      try {
-        const { SemanticCompressionService } = require('../services/ai/SemanticCompressionService');
-        console.log('📊 SemanticCompressionService 생성 중...');
-        return new SemanticCompressionService();
-      } catch (error) {
-        console.warn('⚠️ SemanticCompressionService 로딩 실패, 기본 구현 사용:', error.message);
-        return {
-          compress: async (data: any) => ({ compressed: true, data }),
-          decompress: async (compressed: any) => compressed.data || compressed,
-          getCompressionRatio: () => 0.7
-        };
-      }
-    }, [], { 
-      description: '의미론적 압축 서비스', 
-      category: 'ai' 
-    });
-
-    // PersonalCueExtractor
-    this.registerSingleton('PersonalCueExtractor', () => {
-      try {
-        const { PersonalCueExtractor } = require('../services/ai/PersonalCueExtractor');
-        console.log('🧩 PersonalCueExtractor 생성 중...');
-        return new PersonalCueExtractor();
-      } catch (error) {
-        console.warn('⚠️ PersonalCueExtractor 로딩 실패, 기본 구현 사용:', error.message);
-        return {
-          extractCues: async (message: string) => [],
-          analyzeCuePatterns: async (cues: any[]) => ({ patterns: [] }),
-          getCueConfidence: () => 0.5
-        };
-      }
-    }, [], { 
-      description: '개인 단서 추출 서비스', 
-      category: 'ai' 
-    });
-
-    // RealPersonalCueExtractor
-    this.registerSingleton('RealPersonalCueExtractor', () => {
-      try {
-        const { RealPersonalCueExtractor } = require('../services/ai/RealPersonalCueExtractor');
-        console.log('🧩 RealPersonalCueExtractor 생성 중...');
-        return new RealPersonalCueExtractor();
-      } catch (error) {
-        console.warn('⚠️ RealPersonalCueExtractor 로딩 실패, 기본 구현 사용:', error.message);
-        return {
-          extractRealCues: async (message: string) => [],
-          analyzeRealPatterns: async (cues: any[]) => ({ realPatterns: [] }),
-          getRealConfidence: () => 0.6
-        };
-      }
-    }, [], { 
-      description: '실제 개인 단서 추출 서비스', 
-      category: 'ai' 
-    });
-
-    // RealRAGDAGEngine
-    this.registerSingleton('RealRAGDAGEngine', () => {
-      try {
-        const { RealRAGDAGEngine } = require('../services/ai/RealRAGDAGEngine');
-        console.log('🔗 RealRAGDAGEngine 생성 중...');
-        return new RealRAGDAGEngine();
-      } catch (error) {
-        console.warn('⚠️ RealRAGDAGEngine 로딩 실패, 기본 구현 사용:', error.message);
-        return {
-          processRAG: async (query: string) => ({ results: [] }),
-          buildDAG: async (data: any) => ({ graph: {} }),
-          queryDAG: async (query: string) => ({ answer: 'RAG 엔진을 사용할 수 없습니다.' })
-        };
-      }
-    }, [], { 
-      description: 'RAG DAG 엔진', 
-      category: 'ai' 
-    });
-
-    // EmbeddingService (Ollama 임베딩 모델 사용)
-    this.registerSingleton('EmbeddingService', (container) => {
-      try {
-        const { EmbeddingService } = require('../services/ai/EmbeddingService');
-        const ollamaService = container.get('OllamaAIService');
-        
-        console.log('📐 EmbeddingService 생성 중 (Ollama 기반)...');
-        return new EmbeddingService(ollamaService);
-      } catch (error) {
-        console.warn('⚠️ EmbeddingService 로딩 실패, 기본 구현 사용:', error.message);
-        return {
-          generateEmbedding: async (text: string) => new Array(384).fill(0).map(() => Math.random()),
-          findSimilar: async (embedding: number[], threshold: number = 0.8) => [],
-          calculateSimilarity: (a: number[], b: number[]) => Math.random()
-        };
-      }
-    }, ['OllamaAIService'], { 
-      description: '임베딩 서비스 (Ollama 기반)', 
-      category: 'ai' 
-    });
-
-    console.log('✅ AI 보조 서비스 등록 완료');
-  }
-
-  // ============================================================================
-  // ✅ 기존 인증 서비스들 등록 (UnifiedAuthService 제거)
-  // ============================================================================
-
-  /**
-   * 기존 인증 서비스들 등록 (UnifiedAuthService 제거)
-   */
-  private async registerExistingAuthServices(): Promise<void> {
-    console.log('✅ 기존 인증 서비스 등록 시작 (UnifiedAuthService 제거)...');
-
-    // AuthService (기존)
-    this.registerSingleton('AuthService', (container) => {
-      try {
-        const { AuthService } = require('../services/auth/AuthService');
-        const config = container.get('AuthConfig');
-        const db = container.get('ActiveDatabaseService');
-        
-        console.log('🔐 AuthService 생성 중...');
-        return new AuthService(config, db);
-      } catch (error) {
-        console.error('❌ AuthService 로딩 실패:', error.message);
-        throw new Error(`AuthService 초기화 실패: ${error.message}`);
-      }
-    }, ['AuthConfig', 'ActiveDatabaseService'], {
-      description: '기본 인증 서비스',
-      category: 'auth',
-      priority: 'critical'
-    });
-
-    // SessionService (기존)
-    this.registerSingleton('SessionService', (container) => {
-      try {
-        const { SessionService } = require('../services/auth/SessionService');
-        const config = container.get('AuthConfig');
-        
-        console.log('🔐 SessionService 생성 중...');
-        return new SessionService(config);
-      } catch (error) {
-        console.error('❌ SessionService 로딩 실패:', error.message);
-        throw new Error(`SessionService 초기화 실패: ${error.message}`);
-      }
-    }, ['AuthConfig'], {
-      description: '세션 관리 서비스',
-      category: 'auth',
-      priority: 'critical'
-    });
-
-    // WebAuthnService (기존)
-    this.registerSingleton('WebAuthnService', (container) => {
-      try {
-        const { WebAuthnService } = require('../services/auth/WebAuthnService');
-        const config = container.get('AuthConfig');
-        const db = container.get('ActiveDatabaseService');
-        const authService = container.get('AuthService');
-        const sessionService = container.get('SessionService');
-        
-        console.log('🔐 WebAuthnService 생성 중...');
-        
-        try {
-          return new WebAuthnService(config, db, authService, sessionService);
-        } catch (newConstructorError) {
-          console.log('🔄 새 생성자 실패, 기존 생성자 시도:', newConstructorError.message);
-          const webauthnService = new WebAuthnService(config, db);
-          
-          if (webauthnService && typeof webauthnService === 'object') {
-            (webauthnService as any).authService = authService;
-            (webauthnService as any).sessionService = sessionService;
-            console.log('✅ WebAuthnService 런타임 의존성 주입 완료');
-          }
-          
-          return webauthnService;
-        }
-      } catch (serviceError) {
-        console.error('❌ WebAuthnService 의존성 해결 실패:', serviceError);
-        
-        // 폴백 서비스
-        return {
-          startRegistration: async () => { 
-            throw new Error('WebAuthnService 초기화 실패. 환경설정을 확인하세요.'); 
-          },
-          completeRegistration: async () => { 
-            throw new Error('WebAuthnService 초기화 실패. 환경설정을 확인하세요.'); 
-          },
-          startLogin: async () => { 
-            throw new Error('WebAuthnService 초기화 실패. 환경설정을 확인하세요.'); 
-          },
-          completeLogin: async () => { 
-            throw new Error('WebAuthnService 초기화 실패. 환경설정을 확인하세요.'); 
-          },
-          getStatus: async () => ({ 
-            error: 'Service not initialized',
-            suggestion: '.env 파일의 WEBAUTHN_* 환경변수를 확인하세요'
-          })
-        };
-      }
-    }, ['AuthConfig', 'ActiveDatabaseService', 'AuthService', 'SessionService'], {
-      description: 'WebAuthn 인증 서비스',
-      category: 'auth'
-    });
-
-    // SessionRestoreService (기존)
-    this.registerSingleton('SessionRestoreService', (container) => {
-      try {
-        const { SessionRestoreService } = require('../services/auth/SessionRestoreService');
-        
-        console.log('🔐 SessionRestoreService 생성 중...');
-        return new SessionRestoreService();
-      } catch (error) {
-        console.warn('⚠️ SessionRestoreService 로딩 실패, 기본 구현 사용:', error.message);
-        return {
-          restoreSessionRobust: async (token: string) => ({
-            success: false,
-            error: 'SessionRestoreService를 사용할 수 없습니다.'
-          })
+          decrypt: (data: string) => Buffer.from(data, 'base64').toString('utf8'),
+          hash: (data: string) => Buffer.from(data).toString('hex')
         };
       }
     }, [], {
-      description: '세션 복원 서비스',
+      description: '암호화 서비스',
+      category: 'security'
+    });
+  }
+
+  /**
+   * AI 서비스 등록
+   */
+  private async registerAIServices(): Promise<void> {
+    // Ollama AI 서비스
+    this.registerSingleton('OllamaAIService', () => {
+      try {
+        const { ollamaService } = require('../services/ollama');
+        console.log('✅ Ollama AI 서비스 로드됨');
+        return ollamaService;
+      } catch (error) {
+        console.warn('⚠️ Ollama 서비스 로딩 실패, Mock 서비스 사용');
+        return {
+          async checkConnection() { return false; },
+          async chat(model: string, messages: any[]) {
+            return '🦙 Ollama 서비스가 연결되지 않았습니다. `ollama serve` 명령어로 서버를 시작하세요.';
+          },
+          async getModels() { return []; }
+        };
+      }
+    }, [], {
+      description: 'Ollama AI 서비스',
+      category: 'ai'
+    });
+
+    // AI 보조 서비스들
+    this.registerSingleton('PersonalizationService', () => {
+      try {
+        const { PersonalizationService } = require('../services/ai/PersonalizationService');
+        return new PersonalizationService();
+      } catch (error) {
+        console.warn('⚠️ PersonalizationService 로딩 실패');
+        return { analyze: async () => ({ personality: 'unknown' }) };
+      }
+    }, [], {
+      description: 'AI 개인화 서비스',
+      category: 'ai'
+    });
+
+    this.registerSingleton('PersonalCueExtractor', () => {
+      try {
+        const { PersonalCueExtractor } = require('../services/ai/PersonalCueExtractor');
+        return new PersonalCueExtractor();
+      } catch (error) {
+        console.warn('⚠️ PersonalCueExtractor 로딩 실패');
+        return { extract: async () => [] };
+      }
+    }, [], {
+      description: 'Personal CUE 추출 서비스',
+      category: 'ai'
+    });
+
+    console.log('✅ AI 서비스 등록 완료');
+  }
+
+  /**
+   * 인증 서비스 등록
+   */
+  private async registerAuthServices(): Promise<void> {
+    // AuthService
+    this.registerSingleton('AuthService', (container) => {
+      try {
+        const { AuthService } = require('../services/auth/AuthService');
+        const authConfig = container.get('AuthConfig');
+        const dbService = container.get('ActiveDatabaseService');
+        return new AuthService(authConfig, dbService);
+      } catch (error) {
+        console.warn('⚠️ AuthService 로딩 실패, 기본 구현 사용');
+        return {
+          async createUser() { throw new Error('AuthService not available'); },
+          async validateUser() { return null; }
+        };
+      }
+    }, ['AuthConfig', 'ActiveDatabaseService'], {
+      description: '인증 서비스',
       category: 'auth'
     });
 
-    // ✅ 통합 인증 기능을 AuthService에서 제공하도록 확장
-    this.registerSingleton('UnifiedAuthAdapter', (container) => {
-      const authService = container.get('AuthService');
-      const sessionService = container.get('SessionService');
-      const webauthnService = container.get('WebAuthnService');
-      
-      console.log('🔥 UnifiedAuthAdapter 생성 중 (기존 서비스 통합)...');
-      
-      // 기존 서비스들을 통합하여 UnifiedAuth 기능 제공
-      return {
-        // 통합 인증 시작
-        async startUnifiedAuth(deviceInfo?: any) {
-          if (webauthnService.startUnifiedAuthentication) {
-            return await webauthnService.startUnifiedAuthentication(deviceInfo);
-          }
-          throw new Error('WebAuthn 통합 인증을 사용할 수 없습니다.');
-        },
-        
-        // 통합 인증 완료
-        async completeUnifiedAuth(credential: any, sessionId: string) {
-          if (webauthnService.completeUnifiedAuthentication) {
-            return await webauthnService.completeUnifiedAuthentication(credential, sessionId, 'UnifiedAuth');
-          }
-          throw new Error('WebAuthn 통합 인증 완료를 사용할 수 없습니다.');
-        },
-        
-        // 토큰 검증
-        async validateToken(token: string) {
-          try {
-            const decoded = sessionService.verifySessionToken(token);
-            if (!decoded) return { valid: false };
-            
-            const user = await authService.findUserById(decoded.userId);
-            return {
-              valid: !!user,
-              user: user ? authService.formatUserResponse(user) : null
-            };
-          } catch (error) {
-            return { valid: false, error: error.message };
-          }
-        },
-        
-        // 세션 복원
-        async restoreSession(token: string) {
-          try {
-            const sessionRestoreService = container.get('SessionRestoreService');
-            return await sessionRestoreService.restoreSessionRobust(token);
-          } catch (error) {
-            return {
-              success: false,
-              error: '세션 복원 서비스를 사용할 수 없습니다.'
-            };
-          }
-        }
-      };
-    }, ['AuthService', 'SessionService', 'WebAuthnService', 'SessionRestoreService'], {
-      description: '통합 인증 어댑터 (기존 서비스 통합)',
-      category: 'auth',
-      priority: 'high'
+    // WebAuthnService
+    this.registerSingleton('WebAuthnService', (container) => {
+      try {
+        const { WebAuthnService } = require('../services/auth/WebAuthnService');
+        const authConfig = container.get('AuthConfig');
+        const dbService = container.get('ActiveDatabaseService');
+        return new WebAuthnService(authConfig, dbService);
+      } catch (error) {
+        console.warn('⚠️ WebAuthnService 로딩 실패');
+        return {
+          async generateRegistrationOptions() { throw new Error('WebAuthn not available'); },
+          async verifyRegistration() { return { verified: false }; }
+        };
+      }
+    }, ['AuthConfig', 'ActiveDatabaseService'], {
+      description: 'WebAuthn 서비스',
+      category: 'auth'
     });
 
-    console.log('✅ 기존 인증 서비스 등록 완료 (UnifiedAuthService 제거)');
+    // SessionService
+    this.registerSingleton('SessionService', (container) => {
+      try {
+        const { SessionService } = require('../services/auth/SessionService');
+        const dbService = container.get('ActiveDatabaseService');
+        return new SessionService(dbService);
+      } catch (error) {
+        console.warn('⚠️ SessionService 로딩 실패');
+        return {
+          async createSession() { return null; },
+          async validateSession() { return null; }
+        };
+      }
+    }, ['ActiveDatabaseService'], {
+      description: '세션 관리 서비스',
+      category: 'auth'
+    });
+
+    console.log('✅ 인증 서비스 등록 완료');
   }
 
-  // ============================================================================
-  // 💎 CUE 서비스들 등록
-  // ============================================================================
-
   /**
-   * CUE 서비스들 등록
+   * CUE 서비스 등록
    */
   private async registerCUEServices(): Promise<void> {
-    console.log('💎 CUE 서비스 등록 시작...');
-
-    // CueService
     this.registerSingleton('CueService', (container) => {
       try {
         const { CueService } = require('../services/cue/CueService');
-        const db = container.get('ActiveDatabaseService');
-        
-        console.log('💎 CueService 생성 중...');
-        return new CueService(db);
+        const dbService = container.get('ActiveDatabaseService');
+        return new CueService(dbService);
       } catch (error) {
-        console.warn('⚠️ CueService 로딩 실패, 기본 구현 사용:', error.message);
+        console.warn('⚠️ CueService 로딩 실패');
         return {
-          getBalance: async (userDid: string) => ({ amount: 2500, lastUpdated: new Date().toISOString() }),
-          mineFromActivity: async (activity: any) => ({ amount: 10, newBalance: 2510 }),
-          recordTransaction: async (transaction: any) => ({ success: true })
+          async mineFromAuth() { return { amount: 10, newBalance: 100 }; },
+          async awardTokens() { return { amount: 0, newBalance: 0 }; }
         };
       }
     }, ['ActiveDatabaseService'], {
@@ -789,87 +480,37 @@ export class DIContainer {
       category: 'cue'
     });
 
-    // CUEMiningService (Ollama 연동)
-    this.registerSingleton('CUEMiningService', (container) => {
-      try {
-        const { CUEMiningService } = require('../services/cue/CUEMiningService');
-        const db = container.get('ActiveDatabaseService');
-        const ollamaService = container.get('OllamaAIService');
-        
-        console.log('⛏️ CUEMiningService 생성 중 (Ollama 연동)...');
-        
-        // Ollama 서비스를 CUEMiningService에 주입
-        const miningService = new CUEMiningService(db);
-        if (miningService && typeof miningService === 'object') {
-          (miningService as any).ollamaService = ollamaService;
-          console.log('🦙 CUEMiningService에 Ollama 서비스 주입 완료');
-        }
-        
-        return miningService;
-      } catch (error) {
-        console.warn('⚠️ CUEMiningService 로딩 실패, 기본 구현 사용:', error.message);
-        return {
-          mineTokens: async (userId: string, activity: string) => ({ amount: 5, total: 2505 }),
-          calculateReward: (activity: string) => 5,
-          getMininingStats: async (userId: string) => ({ total: 100, today: 10 })
-        };
-      }
-    }, ['ActiveDatabaseService', 'OllamaAIService'], {
-      description: 'CUE 마이닝 서비스 (Ollama 연동)',
-      category: 'cue'
-    });
-
     console.log('✅ CUE 서비스 등록 완료');
   }
 
-  // ============================================================================
-  // 🔌 Socket 서비스들 등록
-  // ============================================================================
-
   /**
-   * Socket 서비스들 등록
+   * Socket 서비스 등록
    */
   private async registerSocketServices(): Promise<void> {
-    console.log('🔌 Socket 서비스 등록 시작...');
-
     this.registerSingleton('SocketService', () => {
       try {
         const { SocketService } = require('../services/socket/SocketService');
-        
-        const socketService = new SocketService();
-        console.log('✅ 실제 SocketService 등록 성공');
+        const socketService = SocketService.createSafeInstance();
+        console.log('✅ SocketService 등록 성공');
         return socketService;
-        
-      } catch (error) {
-        console.warn('⚠️ SocketService 로딩 실패, 기본 구현으로 대체:', error.message);
-        
+      } catch (error: any) {
+        console.warn('⚠️ SocketService 로딩 실패:', error.message);
         return {
-          initialize: () => console.log('Socket 서비스 초기화됨 (기본 구현)'),
-          on: (event: string, handler: Function) => console.log(`Socket 이벤트 등록: ${event}`),
-          emit: (event: string, data: any) => console.log(`Socket 이벤트 발송: ${event}`, data),
-          disconnect: () => console.log('Socket 연결 해제'),
-          dispose: () => console.log('Socket 서비스 정리')
+          initialize: () => console.log('Socket 서비스 초기화됨 (Mock)'),
+          emit: () => console.log('Socket 이벤트 발송 (Mock)'),
+          disconnect: () => console.log('Socket 연결 해제 (Mock)')
         };
       }
     }, [], {
       description: 'Socket.IO 서비스',
       category: 'socket'
     });
-
-    console.log('✅ Socket 서비스 등록 완료');
   }
 
-  // ============================================================================
-  // 🎮 Controller들 등록
-  // ============================================================================
-
   /**
-   * Controller들 등록
+   * Controller 등록
    */
   private async registerControllers(): Promise<void> {
-    console.log('🎮 Controller 등록 시작...');
-
-    // AuthController
     this.registerSingleton('AuthController', (container) => {
       try {
         const { AuthController } = require('../controllers/AuthController');
@@ -877,14 +518,12 @@ export class DIContainer {
         const sessionService = container.get('SessionService');
         const webauthnService = container.get('WebAuthnService');
         
-        console.log('🎮 AuthController 생성 중...');
         return new AuthController(authService, sessionService, webauthnService);
-      } catch (error) {
-        console.warn('⚠️ AuthController 로딩 실패, 기본 구현 사용:', error.message);
+      } catch (error: any) {
+        console.warn('⚠️ AuthController 로딩 실패:', error.message);
         return {
           register: async (req: any, res: any) => res.status(501).json({ error: 'Controller not available' }),
-          login: async (req: any, res: any) => res.status(501).json({ error: 'Controller not available' }),
-          logout: async (req: any, res: any) => res.status(501).json({ error: 'Controller not available' })
+          login: async (req: any, res: any) => res.status(501).json({ error: 'Controller not available' })
         };
       }
     }, ['AuthService', 'SessionService', 'WebAuthnService'], {
@@ -895,155 +534,192 @@ export class DIContainer {
     console.log('✅ Controller 등록 완료');
   }
 
-  // ============================================================================
-  // 🛣️ 라우트들 등록
-  // ============================================================================
-
   /**
-   * 라우트들 등록
+   * 라우터 등록 (개선된 버전)
    */
   private async registerRoutes(): Promise<void> {
-    console.log('🛣️ 라우트 등록 시작...');
+    console.log('🛣️ 라우터 등록 시작 (개선된 Express Router 인식)...');
 
-    const routes = [
-      // ✅ 기존 인증 라우트들
-      { key: 'AuthUnifiedRoutes', path: '../routes/auth/unified', description: '통합 인증 라우트 (기존 서비스 활용)' },
+    // ✅ 직접 export 방식 라우터들 (우선 처리)
+    const directRoutes = [
+      { key: 'AuthWebAuthnRoutes', path: '../routes/auth/webauthn', description: 'WebAuthn 라우트 (최우선)' },
       { key: 'AuthSessionRoutes', path: '../routes/auth/session-restore', description: '세션 복원 라우트' },
-      { key: 'AuthWebAuthnRoutes', path: '../routes/auth/webauthn', description: 'WebAuthn 라우트' },
-      
-      // 🦙 AI 라우트들 (Ollama 중심)
-      { key: 'AIChatRoutes', path: '../routes/ai/chat', description: 'AI 채팅 라우트 (Ollama)' },
-      { key: 'AIIndexRoutes', path: '../routes/ai/index', description: 'AI 메인 라우트 (Ollama)' },
-      
-      // 💎 CUE 라우트들
-      { key: 'CUERoutes', path: '../routes/cue/cue', description: 'CUE 관리 라우트' },
+      { key: 'AIChatRoutes', path: '../routes/ai/chat', description: 'AI 채팅 라우트' },
+      { key: 'AIIndexRoutes', path: '../routes/ai/index', description: 'AI 통합 라우트' },
       { key: 'CUEMiningRoutes', path: '../routes/cue/mining', description: 'CUE 마이닝 라우트' },
       { key: 'CUECompleteRoutes', path: '../routes/cue/complete', description: 'CUE 완료 라우트' },
-      
-      // 🎫 기타 라우트들
-      { key: 'PassportRoutes', path: '../routes/passport/passport', description: 'Passport 라우트' },
-      { key: 'PassportCompleteRoutes', path: '../routes/passport/complete', description: 'Passport 완료 라우트' },
       { key: 'DebugRoutes', path: '../routes/debug/index', description: '디버그 라우트' },
-      { key: 'PlatformRoutes', path: '../routes/platform/index', description: '플랫폼 라우트' },
       { key: 'VaultRoutes', path: '../routes/vault/index', description: 'Vault 라우트' }
     ];
 
-    for (const route of routes) {
-      this.registerSingleton(route.key, () => {
+    // 직접 export 라우터 등록
+    for (const { key, path, description } of directRoutes) {
+      this.registerSingleton(key, () => {
         try {
-          const routeModule = require(route.path);
-          console.log(`✅ ${route.key} 로딩 성공`);
-          return routeModule.default || routeModule;
-        } catch (error) {
-          console.warn(`⚠️ ${route.key} 로딩 실패, 기본 라우터로 대체:`, error.message);
+          console.log(`🔄 ${key}: 직접 export 라우터 로딩 - ${path}`);
+          const routeModule = require(path);
           
+          // Express Router 확인 (개선된 검증)
+          const router = routeModule.default || routeModule;
+          
+          if (this.isValidExpressRouter(router)) {
+            console.log(`✅ ${key}: Express Router 로딩 성공`);
+            return router;
+          } else {
+            throw new Error(`유효한 Express Router가 아님: ${typeof router}`);
+          }
+        } catch (error: any) {
+          console.error(`❌ ${key} 로딩 실패:`, error.message);
+          // Fallback: 기본 라우터 반환
           const express = require('express');
-          const router = express.Router();
-          router.use('*', (req: any, res: any) => {
-            res.status(501).json({
-              error: `${route.key} 라우트가 구현되지 않았습니다`,
-              suggestion: `${route.path} 파일을 확인하세요`
-            });
+          const fallbackRouter = express.Router();
+          fallbackRouter.get('*', (req: any, res: any) => {
+            res.status(503).json({ error: `${key} temporarily unavailable` });
           });
-          return router;
+          return fallbackRouter;
         }
       }, [], {
-        description: route.description,
-        category: 'route'
+        description,
+        category: 'router',
+        routerType: 'direct'
       });
     }
 
-    console.log('✅ 라우트 등록 완료');
-  }
+    // ✅ 팩토리 함수 방식 라우터들
+    const factoryRoutes = [
+      { key: 'AuthUnifiedRoutes', path: '../routes/auth/unified', description: '통합 인증 라우트' },
+      { key: 'PassportRoutes', path: '../routes/passport/index', description: 'AI Passport 라우트' },
+      { key: 'CUERoutes', path: '../routes/cue/index', description: 'CUE 토큰 라우트' },
+      { key: 'PlatformRoutes', path: '../routes/platform/index', description: '플랫폼 라우트' }
+    ];
 
-  // ============================================================================
-  // 🧹 관리 메서드들
-  // ============================================================================
-
-  /**
-   * 서비스 존재 여부 확인
-   */
-  public has(key: string): boolean {
-    return this.services.has(key);
-  }
-
-  /**
-   * 서비스 제거
-   */
-  public remove(key: string): boolean {
-    const serviceDefinition = this.services.get(key);
-    if (serviceDefinition?.instance && typeof serviceDefinition.instance.dispose === 'function') {
-      console.log(`🧹 서비스 정리: ${key}`);
-      serviceDefinition.instance.dispose();
+    // 팩토리 함수 라우터 등록
+    for (const { key, path, description } of factoryRoutes) {
+      this.registerSingleton(key, (container: DIContainer) => {
+        try {
+          console.log(`🔄 ${key}: 팩토리 라우터 로딩 - ${path}`);
+          const routeModule = require(path);
+          
+          // 팩토리 함수 찾기
+          const createFunction = this.findCreateFunction(routeModule);
+          
+          if (createFunction) {
+            console.log(`🏭 ${key}: 팩토리 함수 실행 중...`);
+            const router = createFunction(container);
+            
+            if (this.isValidExpressRouter(router)) {
+              console.log(`✅ ${key}: 팩토리 라우터 생성 성공`);
+              return router;
+            } else {
+              throw new Error(`팩토리 함수가 유효한 Express Router를 반환하지 않음`);
+            }
+          } else {
+            throw new Error(`팩토리 함수를 찾을 수 없음`);
+          }
+        } catch (error: any) {
+          console.error(`❌ ${key} 팩토리 라우터 로딩 실패:`, error.message);
+          // Fallback 라우터
+          const express = require('express');
+          const fallbackRouter = express.Router();
+          fallbackRouter.get('*', (req: any, res: any) => {
+            res.status(503).json({ error: `${key} factory temporarily unavailable` });
+          });
+          return fallbackRouter;
+        }
+      }, [], {
+        description,
+        category: 'router',
+        routerType: 'factory'
+      });
     }
-    
-    const removed = this.services.delete(key);
-    console.log(`${removed ? '✅' : '❌'} 서비스 제거: ${key}`);
-    return removed;
+
+    console.log('✅ 라우터 등록 완료 (개선된 버전)');
   }
 
   /**
-   * 모든 서비스 초기화
+   * Express Router 유효성 검사 (개선됨)
    */
-  public initializeAll(): void {
-    const startTime = Date.now();
-    console.log('🚀 모든 서비스 초기화 시작...');
+  private isValidExpressRouter(router: any): boolean {
+    if (!router || typeof router !== 'function') {
+      return false;
+    }
+
+    // Express Router의 핵심 메서드들 확인
+    const requiredMethods = ['use', 'get', 'post', 'put', 'delete'];
+    const hasRequiredMethods = requiredMethods.every(method => typeof router[method] === 'function');
     
-    const singletonKeys = Array.from(this.services.entries())
-      .filter(([, def]) => def.lifecycle === 'singleton')
-      .map(([key]) => key);
+    // Express Router stack 속성 확인
+    const hasStack = Array.isArray(router.stack) || router.stack === undefined;
+    
+    // Express Router params 속성 확인  
+    const hasParams = typeof router.params === 'object' || router.params === undefined;
+    
+    return hasRequiredMethods && hasStack && hasParams;
+  }
 
-    console.log(`📋 초기화할 싱글톤 서비스: ${singletonKeys.length}개`);
+  /**
+   * 팩토리 함수 찾기 (개선됨)
+   */
+  private findCreateFunction(routeModule: any): Function | null {
+    // 1. createXXXRoutes 패턴 함수 찾기
+    const createFunctionName = Object.keys(routeModule).find(key => 
+      key.startsWith('create') && key.includes('Routes') && typeof routeModule[key] === 'function'
+    );
+    
+    if (createFunctionName) {
+      console.log(`🔍 팩토리 함수 발견: ${createFunctionName}`);
+      return routeModule[createFunctionName];
+    }
 
-    let successCount = 0;
-    let failureCount = 0;
-
-    for (const key of singletonKeys) {
-      try {
-        const serviceStartTime = Date.now();
-        this.get(key);
-        const serviceTime = Date.now() - serviceStartTime;
-        console.log(`✅ ${key} 초기화 완료 (${serviceTime}ms)`);
-        successCount++;
-      } catch (error) {
-        console.error(`❌ 서비스 '${key}' 초기화 실패:`, error);
-        failureCount++;
+    // 2. 기본 이름들 확인
+    const defaultNames = ['createRoutes', 'create', 'factory', 'default'];
+    for (const name of defaultNames) {
+      if (routeModule[name] && typeof routeModule[name] === 'function') {
+        console.log(`🔍 대안 팩토리 함수 발견: ${name}`);
+        return routeModule[name];
       }
     }
 
-    const totalTime = Date.now() - startTime;
-    console.log(`🎯 모든 서비스 초기화 완료 (${totalTime}ms)`);
-    console.log(`📊 결과: 성공 ${successCount}개, 실패 ${failureCount}개`);
-    console.log('📋 초기화 순서:', this.initializationOrder);
+    // 3. 클래스 constructor 확인 (new ClassName(container).router 패턴)
+    const ClassConstructor = Object.values(routeModule).find((value: any) => 
+      typeof value === 'function' && value.prototype && value.prototype.constructor === value
+    );
+    
+    if (ClassConstructor) {
+      console.log(`🔍 클래스 생성자 발견`);
+      return (container: DIContainer) => {
+        const instance = new (ClassConstructor as any)(container);
+        return instance.router || instance.getRouter?.() || instance;
+      };
+    }
+
+    return null;
   }
+
+  // ============================================================================
+  // 🔧 유틸리티 메서드들
+  // ============================================================================
 
   /**
    * 컨테이너 상태 조회
    */
   public getStatus(): any {
-    const serviceStats = Array.from(this.services.entries()).map(([key, def]) => ({
+    const serviceStats = Array.from(this.services.entries()).map(([key, definition]) => ({
       key,
-      lifecycle: def.lifecycle,
-      initialized: def.initialized || false,
-      hasInstance: !!def.instance,
-      dependencies: def.dependencies || [],
-      metadata: def.metadata || {},
-      category: def.metadata?.category || 'unknown'
+      lifecycle: definition.lifecycle,
+      initialized: definition.initialized || false,
+      dependencies: definition.dependencies || [],
+      category: definition.metadata?.category || 'unknown',
+      description: definition.metadata?.description || 'No description'
     }));
 
     const categoryStats = serviceStats.reduce((acc, service) => {
-      const category = service.category;
-      if (!acc[category]) {
-        acc[category] = { total: 0, initialized: 0 };
-      }
-      acc[category].total++;
-      if (service.initialized) {
-        acc[category].initialized++;
-      }
+      acc[service.category] = (acc[service.category] || 0) + 1;
       return acc;
-    }, {} as Record<string, { total: number; initialized: number }>);
+    }, {} as Record<string, number>);
 
-    const totalInitTime = this.initializationStartTime > 0 ? Date.now() - this.initializationStartTime : 0;
+    const totalInitTime = this.isInitialized ? 
+      Date.now() - this.initializationStartTime : 0;
 
     return {
       totalServices: this.services.size,
@@ -1054,11 +730,12 @@ export class DIContainer {
       services: serviceStats,
       health: this.getHealthStatus(),
       features: {
-        realDatabaseOnly: true, // Mock 제거
-        existingAuth: true,
-        ollamaAI: true,
-        comprehensiveServices: true,
-        unifiedAdapter: true
+        realDatabaseOnly: true,
+        improvedRouterHandling: true,
+        expressRouterValidation: true,
+        factoryFunctionDetection: true,
+        fallbackRouters: true,
+        containerInstancePassing: true
       }
     };
   }
@@ -1069,7 +746,7 @@ export class DIContainer {
   private getHealthStatus(): { status: string; issues: string[] } {
     const issues: string[] = [];
     
-    const requiredServices = ['AuthConfig', 'DatabaseService', 'OllamaAIService', 'AuthService'];
+    const requiredServices = ['AuthConfig', 'ActiveDatabaseService', 'AuthService'];
     for (const service of requiredServices) {
       if (!this.has(service)) {
         issues.push(`필수 서비스 누락: ${service}`);
@@ -1107,6 +784,7 @@ export class DIContainer {
     this.resolutionStack = [];
     this.initializationOrder = [];
     this.initializationStartTime = 0;
+    this.isInitialized = false;
     
     console.log('✅ DI Container 재설정 완료');
   }
@@ -1125,19 +803,118 @@ export class DIContainer {
 }
 
 // ============================================================================
+// 🛠️ Express 라우터 연결 함수 (개선된 버전)
+// ============================================================================
+
+/**
+ * DI Container 라우터들을 Express 앱에 연결하는 함수 (개선된 버전)
+ */
+export async function connectDIRouters(app: Application, container: DIContainer): Promise<RouterConnectionResult> {
+  console.log('🛣️ === Express 라우터 연결 시작 (개선된 버전) ===');
+
+  let connectedCount = 0;
+  let failedCount = 0;
+  const failedRouters: any[] = [];
+
+  try {
+    // 라우터 매핑 정의 (우선순위 순서)
+    const routerMappings = [
+      // 🔐 인증 라우트들 (최우선)
+      { name: 'WebAuthn Routes', serviceName: 'AuthWebAuthnRoutes', path: '/api/auth/webauthn' },
+      { name: 'Session Routes', serviceName: 'AuthSessionRoutes', path: '/api/auth/session' },
+      { name: 'Unified Auth Routes', serviceName: 'AuthUnifiedRoutes', path: '/api/auth' },
+      
+      // 🤖 AI 라우트들
+      { name: 'AI Chat Routes', serviceName: 'AIChatRoutes', path: '/api/ai/chat' },
+      { name: 'AI Index Routes', serviceName: 'AIIndexRoutes', path: '/api/ai' },
+      
+      // 💰 CUE 라우트들
+      { name: 'CUE Routes', serviceName: 'CUERoutes', path: '/api/cue' },
+      { name: 'CUE Mining Routes', serviceName: 'CUEMiningRoutes', path: '/api/cue/mining' },
+      { name: 'CUE Complete Routes', serviceName: 'CUECompleteRoutes', path: '/api/cue/complete' },
+      
+      // 🎫 기타 라우트들
+      { name: 'Passport Routes', serviceName: 'PassportRoutes', path: '/api/passport' },
+      { name: 'Platform Routes', serviceName: 'PlatformRoutes', path: '/api/platform' },
+      { name: 'Vault Routes', serviceName: 'VaultRoutes', path: '/api/vault' },
+      { name: 'Debug Routes', serviceName: 'DebugRoutes', path: '/api/debug' }
+    ];
+
+    console.log(`📋 연결 대상 라우터: ${routerMappings.length}개`);
+
+    // 라우터 연결 처리
+    for (const { name, serviceName, path } of routerMappings) {
+      try {
+        console.log(`🔄 ${name} 연결 중... (${path})`);
+
+        if (!container.has(serviceName)) {
+          console.warn(`⚠️ ${name}: 서비스 '${serviceName}'가 등록되지 않음`);
+          failedRouters.push({ name, path, error: '서비스 미등록' });
+          failedCount++;
+          continue;
+        }
+
+        const router = container.get(serviceName);
+        
+        // Express Router 유효성 재검증
+        if (!router || typeof router !== 'function') {
+          console.error(`❌ ${name}: 유효하지 않은 라우터 (${typeof router})`);
+          failedRouters.push({ name, path, error: '유효하지 않은 라우터 타입' });
+          failedCount++;
+          continue;
+        }
+
+        // Express 앱에 라우터 연결
+        app.use(path, router);
+        console.log(`✅ ${name} 연결 성공: ${path}`);
+        connectedCount++;
+
+      } catch (error: any) {
+        console.error(`❌ ${name} 연결 실패:`, error.message);
+        failedRouters.push({ name, path, error: error.message });
+        failedCount++;
+      }
+    }
+
+    // 연결 결과 요약
+    console.log(`\n🎯 === 라우터 연결 완료 ===`);
+    console.log(`✅ 성공: ${connectedCount}개`);
+    console.log(`❌ 실패: ${failedCount}개`);
+
+    if (connectedCount > 0) {
+      console.log('\n📋 연결된 API 엔드포인트:');
+      console.log('🔐 인증: /api/auth/webauthn/*, /api/auth/session/*, /api/auth/*');
+      console.log('🤖 AI: /api/ai/chat/*, /api/ai/*');
+      console.log('💎 CUE: /api/cue/*, /api/cue/mining/*, /api/cue/complete/*');
+      console.log('🎫 기타: /api/passport/*, /api/platform/*, /api/vault/*, /api/debug/*');
+    }
+
+    if (failedCount > 0) {
+      console.log('\n⚠️ 연결 실패한 라우터들:');
+      failedRouters.forEach((failed, index) => {
+        console.log(`   ${index + 1}. ${failed.name} (${failed.path})`);
+        console.log(`      오류: ${failed.error}`);
+      });
+    }
+
+    return { connectedCount, failedCount, failedRouters };
+
+  } catch (error: any) {
+    console.error('❌ 라우터 연결 중 심각한 오류:', error);
+    return { connectedCount: 0, failedCount: 1, failedRouters: [{ error: error.message }] };
+  }
+}
+
+// ============================================================================
 // 📤 초기화 및 헬퍼 함수들
 // ============================================================================
 
 /**
- * 업데이트된 의존성 주입 시스템 초기화 (실제 DB만)
+ * 의존성 주입 시스템 초기화
  */
 export async function initializeDI(): Promise<DIContainer> {
   const startTime = Date.now();
-  console.log('🦙 업데이트된 의존성 주입 시스템 초기화 (실제 DB만)...');
-  console.log('  ✅ 기존 Auth 서비스 완전 활용');
-  console.log('  🗄️ 실제 데이터베이스만 사용 (Mock 제거)');
-  console.log('  🦙 Ollama AI 중심 설계');
-  console.log('  📦 모든 서비스 자동 등록');
+  console.log('🚀 === DI 시스템 초기화 시작 ===');
   
   const container = DIContainer.getInstance();
   
@@ -1145,14 +922,14 @@ export async function initializeDI(): Promise<DIContainer> {
     // 컨테이너 초기화
     await container.initialize();
     
-    // 모든 서비스 등록 (실제 DB만)
+    // 모든 서비스 등록
     await container.registerAllServices();
     
     // 모든 싱글톤 서비스 초기화
     container.initializeAll();
     
     const initTime = Date.now() - startTime;
-    console.log(`✅ 업데이트된 의존성 주입 시스템 초기화 완료 (${initTime}ms)`);
+    console.log(`✅ === DI 시스템 초기화 완료 (${initTime}ms) ===`);
     
     const status = container.getStatus();
     console.log('📊 등록된 서비스 현황:');
@@ -1164,16 +941,11 @@ export async function initializeDI(): Promise<DIContainer> {
       console.warn('⚠️ 발견된 문제:', status.health.issues);
     }
     
-    console.log('✅ 인증 시스템: 기존 Auth 서비스 완전 활용');
-    console.log('🗄️ 데이터베이스: 실제 Supabase만 사용 (Mock 제거)');
-    console.log('🦙 AI 제공자: Ollama (로컬 전용)');
-    console.log('💎 CUE 마이닝: 프라이버시 보너스 포함');
-    
     return container;
     
-  } catch (error) {
+  } catch (error: any) {
     const initTime = Date.now() - startTime;
-    console.error(`❌ 업데이트된 의존성 주입 시스템 초기화 실패 (${initTime}ms):`, error);
+    console.error(`❌ DI 시스템 초기화 실패 (${initTime}ms):`, error);
     throw error;
   }
 }
@@ -1182,12 +954,12 @@ export async function initializeDI(): Promise<DIContainer> {
  * 의존성 주입 시스템 종료
  */
 export function shutdownDI(): void {
-  console.log('🛑 의존성 주입 시스템 종료...');
+  console.log('🛑 DI 시스템 종료...');
   
   const container = DIContainer.getInstance();
   container.dispose();
   
-  console.log('✅ 의존성 주입 시스템 종료 완료');
+  console.log('✅ DI 시스템 종료 완료');
 }
 
 /**
@@ -1198,29 +970,8 @@ export function getDIStatus(): any {
 }
 
 /**
- * 빠른 서비스 접근을 위한 헬퍼 함수들
+ * 빠른 서비스 접근을 위한 헬퍼 함수
  */
 export const getService = <T>(key: string): T => {
   return DIContainer.getInstance().get<T>(key);
 };
-
-// 자주 사용되는 서비스들의 편의 함수 (업데이트됨)
-export const getUnifiedAuthService = () => getService<any>('UnifiedAuthAdapter'); // ✅ 어댑터 사용
-export const getAuthService = () => getService<any>('AuthService');
-export const getSessionService = () => getService<any>('SessionService');
-export const getWebAuthnService = () => getService<any>('WebAuthnService');
-export const getSessionRestoreService = () => getService<any>('SessionRestoreService');
-export const getAuthController = () => getService<any>('AuthController');
-export const getDatabaseService = () => getService<any>('ActiveDatabaseService');
-export const getCryptoService = () => getService<any>('CryptoService');
-export const getOllamaService = () => getService<any>('OllamaAIService');
-export const getAIService = () => getService<any>('OllamaAIService'); // Ollama 별칭
-export const getCueService = () => getService<any>('CueService');
-export const getPersonalizationService = () => getService<any>('PersonalizationService');
-export const getEmbeddingService = () => getService<any>('EmbeddingService');
-
-// ============================================================================
-// 📤 Exports
-// ============================================================================
-
-export default DIContainer;

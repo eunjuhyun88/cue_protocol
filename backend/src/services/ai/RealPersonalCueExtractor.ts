@@ -4,7 +4,7 @@
 // 목적: 대화에서 실시간으로 개인화 데이터 추출 및 학습
 // ============================================================================
 
-import { RealDatabaseService } from '../database/RealDatabaseService';
+import { DatabaseService } from '../database/DatabaseService';
 
 interface ChatContext {
   userMessage: string;
@@ -27,13 +27,15 @@ interface ExtractedCue {
 
 export class RealPersonalCueExtractor {
   private static instance: RealPersonalCueExtractor;
-  private db: RealDatabaseService;
+  private db: DatabaseService;
   private isInitialized: boolean = false;
 
-  private constructor() {
-    console.log('🧠 === RealPersonalCueExtractor 초기화 시작 ===');
-    this.db = RealDatabaseService.getInstance();
+  
+  constructor(databaseService: DatabaseService) {
+    this.db = databaseService;
+    console.log('🧠 === PersonalCueExtractor 초기화 (DatabaseService 전용) ===');
   }
+  
 
   public static getInstance(): RealPersonalCueExtractor {
     if (!RealPersonalCueExtractor.instance) {

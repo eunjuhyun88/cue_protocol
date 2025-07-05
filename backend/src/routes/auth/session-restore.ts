@@ -93,7 +93,13 @@ router.post('/validate', async (req: Request, res: Response): Promise<void> => {
     });
   }
 });
-
+// ✅ 로그 출력 (기존 로그 있으면 제거하고 이것만)
 console.log('✅ Session Restore routes initialized with DI');
-export default router;
 
+// ✅ 함수 형태 export (DI Container 호환)
+export function createAuthSessionRoutes(): Router {
+  return router;
+}
+
+// ✅ 기본 export (기존 호환성) - 기존 것 있으면 교체
+export default router;

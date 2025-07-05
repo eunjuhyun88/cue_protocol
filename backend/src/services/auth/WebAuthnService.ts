@@ -199,24 +199,56 @@ export class WebAuthnService {
     };
 
     await this.saveWebAuthnCredential(credentialData);
+try {
+  console.log('💰 웰컴 보너스 CUE 거래 생성 시작');
+  
+  // ✅ 실제 테이블 스키마에 정확히 맞는 데이터
+  const welcomeTransactionData = {
+    user_id: userId,                     // ✅ uuid, NOT NULL
+    user_did: userData.did,              // ✅ character varying, nullable
+    transaction_type: 'registration_bonus', // ✅ character varying, NOT NULL, default 'mining'
+    amount: 15428,                       // ✅ integer, NOT NULL
+    balance_after: 15428,                // ✅ integer, NOT NULL  
+    description: 'Welcome bonus for new user registration', // ✅ text, nullable
+    source_platform: 'system',          // ✅ character varying, nullable
+    metadata: {                          // ✅ jsonb, nullable, default '{}'
+      registration_id: userId,
+      device_info: sessionData.deviceInfo || {},
+      registration_time: new Date().toISOString()
+    },
+    status: 'completed',                 // ✅ character varying, nullable, default 'completed'
+    source: null                         // ✅ character varying, nullable (별도 컬럼)
+  };
 
-    // CUE 거래 저장
-    await this.createCUETransaction({
-      user_id: userId,
-      user_did: userData.did,
-      transaction_type: 'registration_bonus',
-      amount: 15428,
-      balance_after: 15428,
-      description: 'Welcome bonus for new user registration',
-      source_platform: 'system',
-      metadata: {
-        registration_id: userId,
-        device_info: sessionData.deviceInfo,
-        registration_time: new Date().toISOString()
-      },
-      created_at: new Date().toISOString()
-    });
+  console.log('📝 웰컴 보너스 거래 데이터 확인:', {
+    user_id: welcomeTransactionData.user_id ? '✅ 설정됨' : '❌ NULL',
+    user_did: welcomeTransactionData.user_did ? '✅ 설정됨' : '❌ NULL',
+    amount: welcomeTransactionData.amount,
+    transaction_type: welcomeTransactionData.transaction_type
+  });
 
+  // ✅ 필수 NOT NULL 필드 재검증
+  if (!welcomeTransactionData.user_id) {
+    throw new Error('user_id is required (NOT NULL constraint)');
+  }
+  if (!welcomeTransactionData.amount) {
+    throw new Error('amount is required (NOT NULL constraint)');
+  }
+  if (!welcomeTransactionData.transaction_type) {
+    throw new Error('transaction_type is required (NOT NULL constraint)');
+  }
+  if (!welcomeTransactionData.balance_after) {
+    throw new Error('balance_after is required (NOT NULL constraint)');
+  }
+
+  const cueResult = await this.createCUETransaction(welcomeTransactionData);
+  console.log('🎉 웰컴 보너스 CUE 지급 완료:', userData.did, '- Amount:', welcomeTransactionData.amount);
+
+} catch (cueError) {
+  console.error('❌ CUE 거래 생성 실패:', cueError);
+  // 웰컴 보너스 실패해도 회원가입은 계속 진행
+  console.warn('⚠️ CUE 거래 실패했지만 회원가입은 계속 진행');
+}
     // 세션 토큰 생성
     const sessionToken = this.generateSessionToken(userId, credential.id);
     
@@ -439,14 +471,82 @@ export class WebAuthnService {
   /**
    * CUE 거래 생성
    */
-  private async createCUETransaction(txData: any): Promise<any> {
+  
+// ============================================================================
+// 🔧 createCUETransaction 메서드도 완전 수정
+// ============================================================================
+
+/**
+ * CUE 거래 생성 (실제 테이블 스키마 맞춤)
+ */
+private async createCUETransaction(txData: any): Promise<any> {
+  try {
+    console.log('💰 === CUE 거래 생성 (스키마 검증) ===');
+    
+    // ✅ NOT NULL 제약조건 필드 검증
+    const requiredFields = ['user_id', 'transaction_type', 'amount', 'balance_after'];
+    for (const field of requiredFields) {
+      if (txData[field] === null || txData[field] === undefined) {
+        throw new Error(`${field} is required (NOT NULL constraint violated)`);
+      }
+    }
+
+    console.log('📝 CUE 거래 데이터 스키마 검증:', {
+      user_id: txData.user_id ? '✅ 유효' : '❌ NULL',
+      user_did: txData.user_did ? '✅ 설정됨' : '⚠️ NULL (허용)',
+      transaction_type: txData.transaction_type || '❌ NULL',
+      amount: txData.amount || '❌ NULL',
+      balance_after: txData.balance_after || '❌ NULL',
+      source_platform: txData.source_platform ? '✅ 설정됨' : '⚠️ NULL (허용)',
+      description: txData.description ? '✅ 설정됨' : '⚠️ NULL (허용)',
+      status: txData.status || 'completed (기본값)',
+      metadata: txData.metadata ? '✅ 설정됨' : '⚠️ 기본값 사용'
+    });
+
+    // ✅ 실제 DatabaseService의 createCUETransaction 호출
+    // source가 아닌 source_platform을 source로 매핑
+    const finalTransactionData = {
+      user_id: txData.user_id,
+      user_did: txData.user_did,
+      transaction_type: txData.transaction_type,
+      amount: parseInt(txData.amount.toString()),
+      source: txData.source_platform || 'system', // ✅ source_platform → source로 매핑
+      description: txData.description || 'CUE transaction',
+      metadata: txData.metadata || {}
+    };
+
+    console.log('📤 최종 DB 전송 데이터:', finalTransactionData);
+
+    return await this.db.createCUETransaction(finalTransactionData);
+  } catch (error) {
+    console.error('❌ CUE 거래 저장 실패:', error);
+    console.error('📋 실패한 데이터:', JSON.stringify(txData, null, 2));
+    throw error;
+  }
+}
+
+// ============================================================================
+// 🔧 findUserByCredentialId 메서드도 수정 (올바른 DB 메서드 사용)
+// ============================================================================
+
+/**
+ * credential ID로 사용자 찾기 (올바른 DB 메서드 사용)
+ */
+private async findUserByCredentialId(credentialId: string): Promise<any> {
+  if (this.authService && typeof this.authService.findUserByCredentialId === 'function') {
+    return await this.authService.findUserByCredentialId(credentialId);
+  } else {
+    // ✅ DatabaseService의 올바른 메서드 사용
     try {
-      return await this.db.createCUETransaction(txData);
+      console.log(`🔍 자격증명 ID로 사용자 조회: ${credentialId}`);
+      return await this.db.getUserByCredentialId(credentialId);
     } catch (error) {
-      console.error('❌ CUE 거래 저장 실패:', error);
-      throw error;
+      console.error('❌ credential_id로 사용자 조회 실패:', error);
+      return null;
     }
   }
+}
+
 
   /**
    * 자격증명 마지막 사용 시간 업데이트

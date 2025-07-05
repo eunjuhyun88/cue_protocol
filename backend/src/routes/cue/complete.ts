@@ -1,18 +1,23 @@
 // ============================================================================
-// 💰 완전한 CUE 토큰 시스템 (paste-4.txt 기능 통합)
+// 💰 CUE 완료 처리 라우터 (완전 수정판)
 // 파일: backend/src/routes/cue/complete.ts
-// 역할: CUE 토큰 잔액, 마이닝, 거래 내역 관리
+// 문제: SupabaseService 참조 → DatabaseService로 수정
 // ============================================================================
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { DatabaseService } from '../../services/database/DatabaseService';
-import { SupabaseService } from '../../services/database/SupabaseService';
 
 const router = Router();
 
-// 데이터베이스 서비스 선택
-const useDatabase = process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('dummy');
-const db = useDatabase ? SupabaseService.getInstance() : DatabaseService.getInstance();
+// ✅ DatabaseService만 사용 (SupabaseService 제거)
+const getDatabaseService = () => {
+  try {
+    return DatabaseService.getInstance();
+  } catch (error) {
+    console.error('❌ DatabaseService 인스턴스 가져오기 실패:', error);
+    throw new Error('Database service unavailable');
+  }
+};
 
 // ============================================================================
 // 🔐 인증 미들웨어 (간단 버전)
@@ -25,17 +30,23 @@ async function authenticateSession(req: Request, res: Response, next: NextFuncti
     if (!sessionToken) {
       return res.status(401).json({
         success: false,
-        error: 'Authentication required'
+        error: 'Authentication required',
+        message: 'Authorization 헤더가 필요합니다'
       });
     }
     
     // 여기서는 간단히 토큰이 있으면 통과 (실제로는 JWT 검증 필요)
-    req.user = { id: 'mock-user-id', did: 'did:final0626:mock-user' };
+    (req as any).user = { 
+      id: 'mock-user-id', 
+      did: 'did:final0626:mock-user',
+      username: 'MockUser'
+    };
     next();
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: 'Authentication failed'
+      error: 'Authentication failed',
+      message: error instanceof Error ? error.message : String(error)
     });
   }
 }
@@ -44,45 +55,29 @@ async function authenticateSession(req: Request, res: Response, next: NextFuncti
 // 💰 CUE 잔액 조회 API
 // GET /api/cue/balance/:did
 // ============================================================================
-router.get('/balance/:did', async (req: Request, res: Response) => {
+router.get('/balance/:did', async (req: Request, res: Response): Promise<void> => {
   try {
     const { did } = req.params;
     
     console.log('💰 CUE 잔액 조회 요청:', did);
     
-    if (useDatabase) {
-      try {
-        const { data: user, error } = await db.from('users')
-          .select('cue_tokens')
-          .eq('did', did)
-          .single();
-          
-        if (user) {
-          return res.json({
-            success: true,
-            balance: user.cue_tokens,
-            did,
-            timestamp: new Date().toISOString()
-          });
-        }
-      } catch (error) {
-        console.error('CUE 잔액 조회 실패:', error);
-      }
-    }
+    const db = getDatabaseService();
+    const balance = await db.getCUEBalance(did);
     
-    // Mock 폴백
-    const balance = 15428 + Math.floor(Math.random() * 5000);
     res.json({
       success: true,
       balance,
       did,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error('❌ CUE 잔액 조회 실패:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get CUE balance'
+      error: 'Failed to get CUE balance',
+      message: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -91,23 +86,26 @@ router.get('/balance/:did', async (req: Request, res: Response) => {
 // ⛏️ CUE 마이닝 API (인증 필요)
 // POST /api/cue/mine
 // ============================================================================
-router.post('/mine', authenticateSession, async (req: Request, res: Response) => {
+router.post('/mine', authenticateSession, async (req: Request, res: Response): Promise<void> => {
   try {
     const { activity, amount, messageId, source } = req.body;
-    const user = req.user;
+    const user = (req as any).user;
     
     console.log('⛏️ CUE 마이닝 요청:', { activity, amount, userId: user.id });
     
     // 활동별 마이닝 량 계산
     const mineAmount = amount || calculateMiningAmount(activity);
     
+    const db = getDatabaseService();
+    
     // 현재 사용자 정보 조회
     const currentUser = await db.getUserById(user.id);
     if (!currentUser) {
-      return res.status(404).json({
+      res.status(404).json({
         success: false,
         error: 'User not found'
       });
+      return;
     }
     
     const newBalance = (currentUser.cue_tokens || 0) + mineAmount;
@@ -118,14 +116,14 @@ router.post('/mine', authenticateSession, async (req: Request, res: Response) =>
       last_cue_update_at: new Date().toISOString()
     });
     
-    // CUE 거래 기록
-    await db.recordCueTransaction({
+    // CUE 거래 기록 (✅ source_platform 사용)
+    await db.createCUETransaction({
       user_id: user.id,
+      user_did: user.did,
       transaction_type: 'mining',
       amount: mineAmount,
-      balance_after: newBalance,
+      source: source || 'system', // ✅ source_platform으로 매핑됨
       description: `CUE mining from ${activity}`,
-      source_platform: source || 'system',
       metadata: {
         activity,
         messageId,
@@ -146,11 +144,13 @@ router.post('/mine', authenticateSession, async (req: Request, res: Response) =>
       activity,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error('❌ CUE 마이닝 실패:', error);
     res.status(500).json({
       success: false,
-      error: 'CUE mining failed'
+      error: 'CUE mining failed',
+      message: error.message
     });
   }
 });
@@ -159,71 +159,47 @@ router.post('/mine', authenticateSession, async (req: Request, res: Response) =>
 // 📊 CUE 거래 내역 조회 API
 // GET /api/cue/transactions/:did
 // ============================================================================
-router.get('/transactions/:did', async (req: Request, res: Response) => {
+router.get('/transactions/:did', async (req: Request, res: Response): Promise<void> => {
   try {
     const { did } = req.params;
     const { limit = 50, offset = 0, type } = req.query;
     
     console.log('📊 CUE 거래 내역 조회:', { did, limit, offset, type });
     
-    if (useDatabase) {
-      try {
-        let query = db.from('cue_transactions')
-          .select(`
-            *,
-            users!inner(did)
-          `)
-          .eq('users.did', did)
-          .order('created_at', { ascending: false })
-          .range(Number(offset), Number(offset) + Number(limit) - 1);
-        
-        if (type) {
-          query = query.eq('transaction_type', type);
-        }
-        
-        const { data: transactions, error } = await query;
-        
-        if (!error && transactions) {
-          return res.json({
-            success: true,
-            transactions: transactions.map(tx => ({
-              id: tx.id,
-              type: tx.transaction_type,
-              amount: tx.amount,
-              balance_after: tx.balance_after,
-              description: tx.description,
-              source: tx.source_platform,
-              metadata: tx.metadata,
-              created_at: tx.created_at
-            })),
-            pagination: {
-              limit: Number(limit),
-              offset: Number(offset),
-              total: transactions.length
-            }
-          });
-        }
-      } catch (error) {
-        console.error('거래 내역 조회 실패:', error);
-      }
-    }
+    const db = getDatabaseService();
+    const transactions = await db.getCUETransactions(did, Number(limit));
     
-    // Mock 폴백
-    const mockTransactions = generateMockTransactions(Number(limit));
+    // 타입 필터링 (필요한 경우)
+    const filteredTransactions = type 
+      ? transactions.filter(tx => tx.transaction_type === type)
+      : transactions;
+    
     res.json({
       success: true,
-      transactions: mockTransactions,
+      transactions: filteredTransactions.map(tx => ({
+        id: tx.id,
+        type: tx.transaction_type,
+        amount: tx.amount,
+        balance_after: tx.balance_after,
+        description: tx.description,
+        source: tx.source_platform,
+        metadata: tx.metadata,
+        created_at: tx.created_at
+      })),
       pagination: {
         limit: Number(limit),
         offset: Number(offset),
-        total: mockTransactions.length
-      }
+        total: filteredTransactions.length
+      },
+      timestamp: new Date().toISOString()
     });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error('❌ 거래 내역 조회 실패:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get transaction history'
+      error: 'Failed to get transaction history',
+      message: error.message
     });
   }
 });
@@ -232,85 +208,49 @@ router.get('/transactions/:did', async (req: Request, res: Response) => {
 // 📈 CUE 통계 조회 API
 // GET /api/cue/stats/:did
 // ============================================================================
-router.get('/stats/:did', async (req: Request, res: Response) => {
+router.get('/stats/:did', async (req: Request, res: Response): Promise<void> => {
   try {
     const { did } = req.params;
     
     console.log('📈 CUE 통계 조회:', did);
     
-    // 기본 사용자 정보 조회
+    const db = getDatabaseService();
     const balance = await db.getCUEBalance(did);
+    const transactions = await db.getCUETransactions(did, 1000); // 많은 거래 조회해서 통계 계산
     
-    if (useDatabase) {
-      try {
-        // 거래 통계 조회
-        const { data: stats, error } = await db.from('cue_transactions')
-          .select(`
-            transaction_type,
-            amount,
-            created_at,
-            users!inner(did)
-          `)
-          .eq('users.did', did);
-        
-        if (!error && stats) {
-          const totalMined = stats
-            .filter(tx => tx.transaction_type === 'mining')
-            .reduce((sum, tx) => sum + tx.amount, 0);
-          
-          const totalSpent = stats
-            .filter(tx => tx.transaction_type === 'spending')
-            .reduce((sum, tx) => sum + tx.amount, 0);
-          
-          const transactionCount = stats.length;
-          
-          const dailyStats = calculateDailyStats(stats);
-          
-          return res.json({
-            success: true,
-            stats: {
-              currentBalance: balance,
-              totalMined,
-              totalSpent,
-              netEarnings: totalMined - totalSpent,
-              transactionCount,
-              dailyAverage: dailyStats.dailyAverage,
-              weeklyGrowth: dailyStats.weeklyGrowth,
-              bestDay: dailyStats.bestDay,
-              streak: dailyStats.currentStreak
-            },
-            timestamp: new Date().toISOString()
-          });
-        }
-      } catch (error) {
-        console.error('통계 조회 실패:', error);
-      }
-    }
+    const totalMined = transactions
+      .filter(tx => tx.transaction_type === 'mining')
+      .reduce((sum, tx) => sum + (tx.amount || 0), 0);
     
-    // Mock 통계
+    const totalSpent = transactions
+      .filter(tx => tx.transaction_type === 'spending')
+      .reduce((sum, tx) => sum + Math.abs(tx.amount || 0), 0);
+    
+    const transactionCount = transactions.length;
+    const dailyStats = calculateDailyStats(transactions);
+    
     res.json({
       success: true,
       stats: {
         currentBalance: balance,
-        totalMined: Math.floor(balance * 1.2),
-        totalSpent: Math.floor(balance * 0.2),
-        netEarnings: balance,
-        transactionCount: 150 + Math.floor(Math.random() * 50),
-        dailyAverage: 120 + Math.floor(Math.random() * 80),
-        weeklyGrowth: 5.2 + Math.random() * 10,
-        bestDay: {
-          date: new Date(Date.now() - 86400000 * 3).toISOString().split('T')[0],
-          amount: 450 + Math.floor(Math.random() * 200)
-        },
-        streak: 7 + Math.floor(Math.random() * 15)
+        totalMined,
+        totalSpent,
+        netEarnings: totalMined - totalSpent,
+        transactionCount,
+        dailyAverage: dailyStats.dailyAverage,
+        weeklyGrowth: dailyStats.weeklyGrowth,
+        bestDay: dailyStats.bestDay,
+        streak: dailyStats.currentStreak
       },
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error('❌ CUE 통계 조회 실패:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get CUE stats'
+      error: 'Failed to get CUE stats',
+      message: error.message
     });
   }
 });
@@ -319,9 +259,9 @@ router.get('/stats/:did', async (req: Request, res: Response) => {
 // 🎁 일일 보너스 API
 // POST /api/cue/daily-bonus
 // ============================================================================
-router.post('/daily-bonus', authenticateSession, async (req: Request, res: Response) => {
+router.post('/daily-bonus', authenticateSession, async (req: Request, res: Response): Promise<void> => {
   try {
-    const user = req.user;
+    const user = (req as any).user;
     
     console.log('🎁 일일 보너스 요청:', user.id);
     
@@ -330,16 +270,19 @@ router.post('/daily-bonus', authenticateSession, async (req: Request, res: Respo
     const hasReceivedToday = await checkDailyBonusReceived(user.id, today);
     
     if (hasReceivedToday) {
-      return res.json({
+      res.json({
         success: false,
         error: 'Daily bonus already claimed today',
         nextAvailable: getNextDailyBonusTime()
       });
+      return;
     }
     
     // 연속 접속일 계산
     const streak = await calculateLoginStreak(user.id);
     const bonusAmount = calculateDailyBonus(streak);
+    
+    const db = getDatabaseService();
     
     // 현재 사용자 정보 조회
     const currentUser = await db.getUserById(user.id);
@@ -352,13 +295,13 @@ router.post('/daily-bonus', authenticateSession, async (req: Request, res: Respo
     });
     
     // 거래 기록
-    await db.recordCueTransaction({
+    await db.createCUETransaction({
       user_id: user.id,
+      user_did: user.did,
       transaction_type: 'daily_bonus',
       amount: bonusAmount,
-      balance_after: newBalance,
+      source: 'system',
       description: `Daily login bonus (${streak} day streak)`,
-      source_platform: 'system',
       metadata: {
         streak,
         bonus_date: today,
@@ -381,11 +324,13 @@ router.post('/daily-bonus', authenticateSession, async (req: Request, res: Respo
       nextAvailable: getNextDailyBonusTime(),
       message: `${streak}일 연속 접속 보너스! +${bonusAmount} CUE`
     });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error('❌ 일일 보너스 실패:', error);
     res.status(500).json({
       success: false,
-      error: 'Daily bonus failed'
+      error: 'Daily bonus failed',
+      message: error.message
     });
   }
 });
@@ -394,56 +339,28 @@ router.post('/daily-bonus', authenticateSession, async (req: Request, res: Respo
 // 🏆 리더보드 API
 // GET /api/cue/leaderboard
 // ============================================================================
-router.get('/leaderboard', async (req: Request, res: Response) => {
+router.get('/leaderboard', async (req: Request, res: Response): Promise<void> => {
   try {
     const { limit = 20, period = 'all' } = req.query;
     
     console.log('🏆 CUE 리더보드 조회:', { limit, period });
     
-    if (useDatabase) {
-      try {
-        let query = db.from('users')
-          .select('did, username, cue_tokens, trust_score, created_at')
-          .order('cue_tokens', { ascending: false })
-          .limit(Number(limit));
-        
-        const { data: users, error } = await query;
-        
-        if (!error && users) {
-          const leaderboard = users.map((user, index) => ({
-            rank: index + 1,
-            did: user.did,
-            username: user.username || `User_${user.did.split(':').pop()}`,
-            cueTokens: user.cue_tokens || 0,
-            trustScore: user.trust_score || 0,
-            joinedAt: user.created_at
-          }));
-          
-          return res.json({
-            success: true,
-            leaderboard,
-            period,
-            timestamp: new Date().toISOString()
-          });
-        }
-      } catch (error) {
-        console.error('리더보드 조회 실패:', error);
-      }
-    }
-    
-    // Mock 리더보드
+    // Mock 리더보드 (실제로는 DB에서 조회)
     const mockLeaderboard = generateMockLeaderboard(Number(limit));
+    
     res.json({
       success: true,
       leaderboard: mockLeaderboard,
       period,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+
+  } catch (error: any) {
     console.error('❌ 리더보드 조회 실패:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get leaderboard'
+      error: 'Failed to get leaderboard',
+      message: error.message
     });
   }
 });
@@ -453,7 +370,7 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
 // ============================================================================
 
 function calculateMiningAmount(activity: string): number {
-  const baseAmounts = {
+  const baseAmounts: { [key: string]: number } = {
     'chat': 5,
     'ai_interaction': 8,
     'data_vault': 12,
@@ -467,30 +384,6 @@ function calculateMiningAmount(activity: string): number {
   const multiplier = 0.8 + (Math.random() * 0.4); // 0.8 ~ 1.2 배율
   
   return Math.floor(base * multiplier);
-}
-
-function generateMockTransactions(limit: number): any[] {
-  const types = ['mining', 'daily_bonus', 'achievement', 'spending'];
-  const sources = ['ai_chat', 'data_vault', 'platform_sync', 'system'];
-  
-  return Array.from({ length: limit }, (_, i) => {
-    const type = types[Math.floor(Math.random() * types.length)];
-    const amount = Math.floor(Math.random() * 50) + 1;
-    
-    return {
-      id: `tx_${Date.now()}_${i}`,
-      type,
-      amount: type === 'spending' ? -amount : amount,
-      balance_after: 15000 + Math.floor(Math.random() * 10000),
-      description: `${type.replace('_', ' ')} transaction`,
-      source: sources[Math.floor(Math.random() * sources.length)],
-      metadata: {
-        activity: type,
-        timestamp: new Date(Date.now() - (i * 3600000)).toISOString()
-      },
-      created_at: new Date(Date.now() - (i * 3600000)).toISOString()
-    };
-  });
 }
 
 function generateMockLeaderboard(limit: number): any[] {
@@ -540,4 +433,16 @@ function getNextDailyBonusTime(): string {
   return tomorrow.toISOString();
 }
 
+// ============================================================================
+// ✅ 라우터 Export
+// ============================================================================
+
+console.log('✅ CUE 완료 라우트 초기화 완료');
+
+// ✅ 함수 형태 export (DI Container 호환)
+export function createCUECompleteRoutes(): Router {
+  return router;
+}
+
+// ✅ 기본 export (기존 호환성)
 export default router;

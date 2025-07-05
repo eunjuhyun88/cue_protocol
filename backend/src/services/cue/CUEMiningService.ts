@@ -1,42 +1,92 @@
 // ============================================================================
-// ⛏️ CUE 마이닝 서비스 (통합된 완전한 버전)
+// ⛏️ CUE 마이닝 서비스 (DatabaseService 전용 버전)
 // 경로: backend/src/services/cue/CUEMiningService.ts
-// 용도: CUE 토큰 마이닝 로직 및 보상 계산
-// 수정사항: 기존 간단한 버전과 고급 버전 통합
+// 용도: CUE 토큰 마이닝 로직 및 보상 계산 (DatabaseService만 사용)
+// 호출구조: DIContainer → CUEMiningService → DatabaseService
 // ============================================================================
 
-// Make sure the following import path is correct and the file exists.
-// If the file does not exist, create it or update the path accordingly.
 import { DatabaseService } from '../database/DatabaseService';
-import { supabaseService } from '../database/SupabaseService';
 import { v4 as uuidv4 } from 'uuid';
 
-export class CUEMiningService {
-  private db: any;
+interface MiningParams {
+  userDid: string;
+  messageContent: string;
+  aiResponse: string;
+  model: string;
+  personalContextUsed: number;
+  responseTime: number;
+  conversationId: string;
+}
 
-  constructor(database?: any) {
-    // 자동으로 적절한 데이터베이스 서비스 선택
-    this.db = database || (
-      process.env.USE_MOCK_DATABASE === 'true' || 
-      !process.env.SUPABASE_URL || 
-      process.env.SUPABASE_URL.includes('dummy')
-        ? DatabaseService.getInstance()
-        : supabaseService
-    );
+interface DataExtractionParams {
+  userDid: string;
+  dataType: string;
+  dataSize: number;
+  extractionQuality: number;
+  processingTime: number;
+}
+
+interface TransactionData {
+  user_did: string;
+  transaction_type: 'mining' | 'spending' | 'bonus' | 'penalty';
+  amount: number;
+  status: 'pending' | 'completed' | 'failed';
+  source: string;
+  description: string;
+  metadata?: any;
+}
+
+export class CUEMiningService {
+  private static instance: CUEMiningService;
+  private db: DatabaseService;
+  private isInitialized: boolean = false;
+
+  private constructor() {
+    console.log('⛏️ === CUEMiningService 초기화 (DatabaseService 전용) ===');
+    this.db = DatabaseService.getInstance();
+  }
+
+  public static getInstance(): CUEMiningService {
+    if (!CUEMiningService.instance) {
+      CUEMiningService.instance = new CUEMiningService();
+    }
+    return CUEMiningService.instance;
   }
 
   /**
-   * AI 상호작용으로부터 CUE 토큰을 마이닝합니다 (개선된 버전)
+   * 서비스 초기화
    */
-  async mineFromInteraction(params: {
-    userDid: string;
-    messageContent: string;
-    aiResponse: string;
-    model: string;
-    personalContextUsed: number;
-    responseTime: number;
-    conversationId: string;
-  }): Promise<number> {
+  public async initialize(): Promise<void> {
+    if (this.isInitialized) return;
+
+    console.log('🔧 CUEMiningService 초기화 중...');
+    
+    try {
+      // DatabaseService 연결 확인
+      if (!this.db.isConnected()) {
+        await this.db.connect();
+      }
+
+      this.isInitialized = true;
+      console.log('✅ CUEMiningService 초기화 완료');
+    } catch (error) {
+      console.error('❌ CUEMiningService 초기화 실패:', error);
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // 💰 메인 마이닝 기능들
+  // ============================================================================
+
+  /**
+   * AI 상호작용으로부터 CUE 토큰 마이닝 (개선된 버전)
+   */
+  public async mineFromInteraction(params: MiningParams): Promise<number> {
+    console.log('⛏️ === AI 상호작용 CUE 마이닝 시작 ===');
+    
+    await this.initialize();
+
     try {
       const { 
         userDid, 
@@ -48,214 +98,254 @@ export class CUEMiningService {
         conversationId 
       } = params;
 
-      // 기본 보상
-      let baseReward = 2.0;
+      console.log('📝 마이닝 파라미터:', {
+        userDid: userDid.substring(0, 20) + '...',
+        messageLength: messageContent.length,
+        responseLength: aiResponse.length,
+        model,
+        contextUsed: personalContextUsed,
+        responseTime: `${responseTime}ms`
+      });
+
+      // 기본 보상 계산
+      let baseReward = parseFloat(process.env.CUE_BASE_REWARD || '3');
+      console.log(`💰 기본 보상: ${baseReward} CUE`);
       
       // 개인화 컨텍스트 사용량에 따른 보너스
       const contextBonus = Math.min(personalContextUsed * 0.5, 5.0);
+      console.log(`🎯 개인화 보너스: ${contextBonus} CUE (컨텍스트: ${personalContextUsed}개)`);
       
       // 응답 품질에 따른 보너스 (응답 시간 기반)
-      const qualityBonus = responseTime < 3000 ? 1.0 : 0.5;
+      const qualityBonus = responseTime < 3000 ? 2.0 : responseTime < 5000 ? 1.0 : 0;
+      console.log(`⚡ 응답 속도 보너스: ${qualityBonus} CUE (${responseTime}ms)`);
       
-      // 메시지 복잡도에 따른 보너스
-      const complexityBonus = Math.min(messageContent.length / 100, 3.0);
+      // 메시지 길이에 따른 보너스
+      const lengthBonus = Math.min(messageContent.length * 0.01, 3.0);
+      console.log(`📏 메시지 길이 보너스: ${lengthBonus} CUE (${messageContent.length}자)`);
       
-      // AI 모델별 가중치
-      const modelMultipliers: Record<string, number> = {
-        'personalized-agent': 1.5,
-        'gpt-4o': 1.2,
-        'gpt-4': 1.2,
-        'claude-3.5-sonnet': 1.2,
-        'claude-sonnet': 1.1,
-        'gemini-pro': 1.0
-      };
-      const modelMultiplier = modelMultipliers[model] || 1.0;
+      // AI 응답 품질 보너스
+      const responseQualityBonus = Math.min(aiResponse.length * 0.005, 2.0);
+      console.log(`🤖 응답 품질 보너스: ${responseQualityBonus} CUE (${aiResponse.length}자)`);
       
-      // 고급 분석 추가
-      const advancedAnalysis = this.performAdvancedAnalysis(messageContent, aiResponse);
+      // 모델 타입별 보너스
+      const modelBonus = this.calculateModelBonus(model);
+      console.log(`🧠 모델 보너스: ${modelBonus} CUE (${model})`);
       
-      const totalReward = (
-        baseReward + 
-        contextBonus + 
-        qualityBonus + 
-        complexityBonus + 
-        advancedAnalysis.bonus
-      ) * modelMultiplier;
-      
-      const finalAmount = Math.round(totalReward * 100) / 100;
+      // 총 보상 계산
+      const totalReward = Math.round(
+        (baseReward + contextBonus + qualityBonus + lengthBonus + responseQualityBonus + modelBonus) * 100
+      ) / 100; // 소수점 둘째자리까지
 
-      // CUE 트랜잭션 생성
-      await this.recordTransaction({
+      // 최대 보상 제한
+      const maxReward = parseFloat(process.env.CUE_MAX_REWARD || '25');
+      const finalReward = Math.min(totalReward, maxReward);
+
+      console.log('💎 보상 계산 완료:', {
+        기본보상: baseReward,
+        개인화보너스: contextBonus,
+        속도보너스: qualityBonus,
+        길이보너스: lengthBonus,
+        응답품질보너스: responseQualityBonus,
+        모델보너스: modelBonus,
+        총보상: totalReward,
+        최종보상: finalReward
+      });
+
+      // CUE 토큰 지급
+      await this.awardCUE({
         user_did: userDid,
-        transaction_type: 'mining',
-        amount: finalAmount,
-        status: 'completed',
-        source: 'ai_chat',
-        description: `CUE mined from AI chat interaction (${model})`,
+        amount: finalReward,
+        source: 'ai_interaction',
         metadata: {
+          conversationId,
           model,
           messageLength: messageContent.length,
           responseLength: aiResponse.length,
+          personalContextUsed,
           responseTime,
-          contextUsed: personalContextUsed,
-          conversationId,
-          baseReward,
-          contextBonus,
-          qualityBonus,
-          complexityBonus,
-          modelMultiplier,
-          advancedAnalysis,
-          calculationTimestamp: new Date().toISOString()
+          rewards: {
+            base: baseReward,
+            context: contextBonus,
+            quality: qualityBonus,
+            length: lengthBonus,
+            responseQuality: responseQualityBonus,
+            model: modelBonus,
+            total: totalReward,
+            final: finalReward
+          }
         }
       });
 
-      console.log(`⛏️ CUE 마이닝 완료: ${finalAmount} tokens for ${userDid}`);
-      return finalAmount;
+      console.log(`✅ CUE 마이닝 완료: ${finalReward} CUE 지급`);
+      return finalReward;
 
-    } catch (error) {
-      console.error('CUE 마이닝 오류:', error);
-      return 0;
+    } catch (error: any) {
+      console.error('❌ AI 상호작용 마이닝 실패:', error);
+      throw new Error(`CUE 마이닝 실패: ${error.message}`);
     }
   }
 
   /**
-   * 고급 분석 수행 (메시지 품질, 기술적 복잡도 등)
+   * 데이터 추출로부터 CUE 마이닝
    */
-  private performAdvancedAnalysis(messageContent: string, aiResponse: string): {
-    bonus: number;
-    factors: string[];
-    details: any;
-  } {
-    let bonus = 0;
-    const factors: string[] = [];
-    const details: any = {};
-
-    // 질문 복잡도 분석
-    const hasQuestion = messageContent.includes('?') || 
-                       /how|what|why|when|where|어떻게|무엇|왜|언제|어디/.test(messageContent.toLowerCase());
-    if (hasQuestion) {
-      bonus += 0.5;
-      factors.push('질문 포함');
-      details.hasQuestion = true;
-    }
-
-    // 기술적 용어 분석
-    const techTerms = ['api', 'code', 'algorithm', 'system', 'data', 'programming', 
-                      '개발', '시스템', '알고리즘', 'database', 'server', 'client'];
-    const techTermCount = techTerms.filter(term => 
-      messageContent.toLowerCase().includes(term)
-    ).length;
+  public async mineFromDataExtraction(params: DataExtractionParams): Promise<number> {
+    console.log('⛏️ === 데이터 추출 CUE 마이닝 시작 ===');
     
-    if (techTermCount > 0) {
-      const techBonus = Math.min(techTermCount * 0.3, 1.5);
-      bonus += techBonus;
-      factors.push(`기술 용어 ${techTermCount}개`);
-      details.techTermCount = techTermCount;
-      details.techBonus = techBonus;
-    }
+    await this.initialize();
 
-    // 응답 품질 분석
-    const responseQuality = this.analyzeResponseQuality(aiResponse);
-    bonus += responseQuality.bonus;
-    factors.push(...responseQuality.factors);
-    details.responseQuality = responseQuality;
-
-    // 대화 길이 보너스
-    const conversationLengthBonus = this.calculateConversationBonus(messageContent, aiResponse);
-    bonus += conversationLengthBonus;
-    if (conversationLengthBonus > 0) {
-      factors.push('대화 길이 보너스');
-      details.conversationLengthBonus = conversationLengthBonus;
-    }
-
-    return {
-      bonus: Math.round(bonus * 100) / 100,
-      factors,
-      details
-    };
-  }
-
-  /**
-   * AI 응답 품질 분석
-   */
-  private analyzeResponseQuality(aiResponse: string): {
-    bonus: number;
-    factors: string[];
-  } {
-    let bonus = 0;
-    const factors: string[] = [];
-
-    // 응답 길이 적절성
-    if (aiResponse.length >= 100 && aiResponse.length <= 2000) {
-      bonus += 0.3;
-      factors.push('적절한 응답 길이');
-    } else if (aiResponse.length > 2000) {
-      bonus += 0.5;
-      factors.push('상세한 응답');
-    }
-
-    // 구조화된 응답 (리스트, 제목 등)
-    const hasStructure = /[\*\-\d+\.]\s/.test(aiResponse) || 
-                        aiResponse.includes('**') || 
-                        aiResponse.includes('##');
-    if (hasStructure) {
-      bonus += 0.4;
-      factors.push('구조화된 응답');
-    }
-
-    // 코드 블록 포함
-    if (aiResponse.includes('```') || aiResponse.includes('`')) {
-      bonus += 0.6;
-      factors.push('코드 예제 포함');
-    }
-
-    return { bonus, factors };
-  }
-
-  /**
-   * 대화 길이 보너스 계산
-   */
-  private calculateConversationBonus(messageContent: string, aiResponse: string): number {
-    const totalLength = messageContent.length + aiResponse.length;
-    
-    if (totalLength > 1000) return 0.5;
-    if (totalLength > 500) return 0.3;
-    if (totalLength > 200) return 0.1;
-    
-    return 0;
-  }
-
-  /**
-   * 거래 기록 생성 (호환성 보장)
-   */
-  private async recordTransaction(transactionData: any): Promise<void> {
     try {
-      // 적절한 메서드 사용 (호환성)
-      if (typeof this.db.recordCueTransaction === 'function') {
-        await this.db.recordCueTransaction(transactionData);
-      } else if (typeof this.db.createCUETransaction === 'function') {
-        await this.db.createCUETransaction(transactionData);
-      } else if (typeof this.db.createCUETransactionTyped === 'function') {
-        await this.db.createCUETransactionTyped(transactionData);
-      } else {
-        console.warn('⚠️ CUE 거래 기록 메서드를 찾을 수 없습니다');
-      }
-    } catch (error) {
-      console.error('CUE 거래 기록 오류:', error);
-      // 거래 기록 실패는 전체 프로세스를 중단시키지 않음
-    }
-  }
+      const { userDid, dataType, dataSize, extractionQuality, processingTime } = params;
 
-  /**
-   * CUE 소비 (기능 사용 시)
-   */
-  async spendCUE(userDid: string, amount: number, purpose: string, metadata: any = {}): Promise<number> {
-    try {
-      // CUE 잔액 확인
-      const balance = await this.getBalance(userDid);
+      console.log('📊 데이터 추출 파라미터:', {
+        userDid: userDid.substring(0, 20) + '...',
+        dataType,
+        dataSize: `${dataSize} bytes`,
+        quality: extractionQuality,
+        processingTime: `${processingTime}ms`
+      });
+
+      // 데이터 크기 기반 점수
+      const sizeScore = Math.min(dataSize / 1000, 10);
+      console.log(`📏 크기 점수: ${sizeScore} (${dataSize} bytes)`);
       
+      // 데이터 타입별 가중치
+      const typeMultipliers: Record<string, number> = {
+        'text': 1.0,
+        'image': 1.2,
+        'video': 1.5,
+        'audio': 1.3,
+        'document': 1.1,
+        'code': 1.4,
+        'conversation': 1.6,
+        'personal_data': 2.0
+      };
+      
+      const typeMultiplier = typeMultipliers[dataType] || 1.0;
+      console.log(`🏷️ 타입 가중치: ${typeMultiplier} (${dataType})`);
+      
+      // 추출 품질 보너스
+      const qualityBonus = extractionQuality * 2;
+      console.log(`⭐ 품질 보너스: ${qualityBonus} (품질: ${extractionQuality})`);
+      
+      // 처리 효율성 보너스
+      const efficiencyBonus = processingTime < 10000 ? 1.5 : processingTime < 30000 ? 1.0 : 0.5;
+      console.log(`⚡ 효율성 보너스: ${efficiencyBonus} (${processingTime}ms)`);
+
+      // 총 보상 계산
+      const totalReward = Math.round(
+        (sizeScore * typeMultiplier + qualityBonus + efficiencyBonus) * 100
+      ) / 100;
+
+      const finalReward = Math.min(totalReward, 15); // 데이터 추출 최대 보상 제한
+
+      console.log('💎 데이터 추출 보상 계산:', {
+        크기점수: sizeScore,
+        타입가중치: typeMultiplier,
+        품질보너스: qualityBonus,
+        효율성보너스: efficiencyBonus,
+        총보상: totalReward,
+        최종보상: finalReward
+      });
+
+      // CUE 토큰 지급
+      await this.awardCUE({
+        user_did: userDid,
+        amount: finalReward,
+        source: 'data_extraction',
+        metadata: {
+          dataType,
+          dataSize,
+          extractionQuality,
+          processingTime,
+          rewards: {
+            sizeScore,
+            typeMultiplier,
+            qualityBonus,
+            efficiencyBonus,
+            total: totalReward,
+            final: finalReward
+          }
+        }
+      });
+
+      console.log(`✅ 데이터 추출 마이닝 완료: ${finalReward} CUE 지급`);
+      return finalReward;
+
+    } catch (error: any) {
+      console.error('❌ 데이터 추출 마이닝 실패:', error);
+      throw new Error(`데이터 추출 마이닝 실패: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // 💰 CUE 토큰 관리 기능들
+  // ============================================================================
+
+  /**
+   * CUE 토큰 지급
+   */
+  public async awardCUE(params: {
+    user_did: string;
+    amount: number;
+    source: string;
+    metadata?: any;
+  }): Promise<void> {
+    console.log('💰 === CUE 토큰 지급 ===');
+
+    try {
+      const { user_did, amount, source, metadata = {} } = params;
+
+      // 현재 잔액 조회
+      const currentBalance = await this.db.getCUEBalance(user_did);
+      console.log(`현재 잔액: ${currentBalance} CUE`);
+
+      // 거래 기록 생성
+      const transactionData = {
+        user_did,
+        transaction_type: 'mining' as const,
+        amount: amount,
+        status: 'completed' as const,
+        source,
+        description: `CUE mined from ${source}`,
+        metadata: {
+          ...metadata,
+          balanceBefore: currentBalance,
+          balanceAfter: currentBalance + amount,
+          timestamp: new Date().toISOString()
+        }
+      };
+
+      // DatabaseService를 통한 거래 기록
+      await this.recordTransaction(transactionData);
+
+      // 사용자 잔액 업데이트 (DatabaseService의 updateUser 사용)
+      const user = await this.db.getUserByDID(user_did);
+      if (user) {
+        await this.db.updateUser(user.id, {
+          cue_tokens: currentBalance + amount
+        });
+      }
+
+      console.log(`✅ CUE 지급 완료: ${amount} CUE → 총 잔액: ${currentBalance + amount} CUE`);
+    } catch (error: any) {
+      console.error('❌ CUE 토큰 지급 실패:', error);
+      throw new Error(`CUE 지급 실패: ${error.message}`);
+    }
+  }
+
+  /**
+   * CUE 토큰 소비
+   */
+  public async spendCUE(userDid: string, amount: number, purpose: string, metadata: any = {}): Promise<number> {
+    console.log(`💸 === CUE 토큰 소비: ${amount} CUE (${purpose}) ===`);
+
+    try {
+      // 현재 잔액 확인
+      const balance = await this.db.getCUEBalance(userDid);
+      console.log(`현재 잔액: ${balance} CUE, 소비 요청: ${amount} CUE`);
+
       if (balance < amount) {
-        throw new Error(`Insufficient CUE balance. Current: ${balance}, Required: ${amount}`);
+        throw new Error(`CUE 잔액 부족. Current: ${balance}, Required: ${amount}`);
       }
 
       // 소비 트랜잭션 생성
@@ -275,10 +365,18 @@ export class CUEMiningService {
         }
       });
 
-      console.log(`💰 CUE 소비 완료: ${amount} tokens (${purpose})`);
+      // 사용자 잔액 업데이트
+      const user = await this.db.getUserByDID(userDid);
+      if (user) {
+        await this.db.updateUser(user.id, {
+          cue_tokens: balance - amount
+        });
+      }
+
+      console.log(`✅ CUE 소비 완료: ${amount} CUE (${purpose})`);
       return amount;
-    } catch (error) {
-      console.error('CUE 소비 오류:', error);
+    } catch (error: any) {
+      console.error('❌ CUE 소비 실패:', error);
       throw error;
     }
   }
@@ -286,16 +384,12 @@ export class CUEMiningService {
   /**
    * 사용자 CUE 잔액 조회
    */
-  async getBalance(userDid: string): Promise<number> {
+  public async getBalance(userDid: string): Promise<number> {
     try {
-      if (typeof this.db.getCUEBalance === 'function') {
-        return await this.db.getCUEBalance(userDid);
-      } else {
-        console.warn('CUE 잔액 조회 메서드를 찾을 수 없습니다');
-        return 0;
-      }
-    } catch (error) {
-      console.error('CUE 잔액 조회 오류:', error);
+      await this.initialize();
+      return await this.db.getCUEBalance(userDid);
+    } catch (error: any) {
+      console.error('❌ CUE 잔액 조회 실패:', error);
       return 0;
     }
   }
@@ -303,202 +397,242 @@ export class CUEMiningService {
   /**
    * 거래 내역 조회
    */
-  async getTransactionHistory(userDid: string, limit = 50): Promise<any[]> {
+  public async getTransactionHistory(userDid: string, limit = 50): Promise<any[]> {
     try {
-      if (typeof this.db.getCUETransactions === 'function') {
-        return await this.db.getCUETransactions(userDid, limit);
-      } else if (this.db.getClient && typeof this.db.getClient === 'function') {
-        // Supabase 직접 접근
-        const { data: transactions, error } = await this.db.getClient()
-          .from('cue_transactions')
-          .select('*')
-          .eq('user_did', userDid)
-          .order('created_at', { ascending: false })
-          .limit(limit);
-
-        if (error) throw error;
-        return transactions || [];
-      } else {
-        console.warn('거래 내역 조회 메서드를 찾을 수 없습니다');
-        return [];
-      }
-    } catch (error) {
-      console.error('거래 내역 조회 오류:', error);
+      await this.initialize();
+      return await this.db.getCUETransactions(userDid, limit);
+    } catch (error: any) {
+      console.error('❌ 거래 내역 조회 실패:', error);
       return [];
     }
   }
 
+  // ============================================================================
+  // 🔧 내부 헬퍼 메서드들
+  // ============================================================================
+
   /**
-   * 데이터 추출로부터 CUE 마이닝
+   * 거래 기록 저장
    */
-  async mineFromDataExtraction(params: {
-    userDid: string;
-    dataType: string;
-    dataSize: number;
-    extractionQuality: number;
-    processingTime: number;
-  }): Promise<number> {
+  private async recordTransaction(transactionData: TransactionData): Promise<void> {
     try {
-      const { userDid, dataType, dataSize, extractionQuality, processingTime } = params;
-
-      // 데이터 크기 기반 점수
-      const sizeScore = Math.min(dataSize / 1000, 10);
-      
-      // 데이터 타입별 가중치
-      const typeMultipliers: Record<string, number> = {
-        'text': 1.0,
-        'image': 1.2,
-        'video': 1.5,
-        'audio': 1.3,
-        'document': 1.1,
-        'code': 1.4
-      };
-      
-      const typeMultiplier = typeMultipliers[dataType] || 1.0;
-      const qualityBonus = extractionQuality * 2;
-      const efficiencyBonus = processingTime < 10000 ? 1 : 0.5;
-      
-      const totalCue = Math.round(
-        (sizeScore * typeMultiplier + qualityBonus + efficiencyBonus) * 100
-      ) / 100;
-
-      await this.recordTransaction({
-        user_did: userDid,
-        transaction_type: 'mining',
-        amount: totalCue,
-        status: 'completed',
-        source: 'data_extraction',
-        description: `Data extraction CUE mining (${dataType})`,
-        metadata: {
-          dataType,
-          dataSize,
-          extractionQuality,
-          processingTime,
-          sizeScore,
-          typeMultiplier,
-          qualityBonus,
-          efficiencyBonus
-        }
+      console.log('📝 거래 기록 저장:', {
+        type: transactionData.transaction_type,
+        amount: transactionData.amount,
+        source: transactionData.source
       });
 
-      console.log(`⛏️ 데이터 추출 CUE 마이닝 완료: ${totalCue} tokens`);
-      return totalCue;
-    } catch (error) {
-      console.error('데이터 추출 CUE 마이닝 오류:', error);
-      return 0;
+      await this.db.createCUETransaction({
+        id: uuidv4(),
+        ...transactionData,
+        created_at: new Date().toISOString()
+      });
+
+      console.log('✅ 거래 기록 저장 완료');
+    } catch (error: any) {
+      console.error('❌ 거래 기록 저장 실패:', error);
+      throw new Error(`거래 기록 실패: ${error.message}`);
     }
   }
 
   /**
-   * 일일 로그인 보너스
+   * 모델별 보너스 계산
    */
-  async mineLoginBonus(userDid: string): Promise<number> {
-    try {
-      const bonusAmount = 5.0;
+  private calculateModelBonus(model: string): number {
+    const modelBonuses: Record<string, number> = {
+      // Ollama 모델들
+      'llama3.2:3b': 1.0,
+      'llama3.2:1b': 0.8,
+      'llama3.1:8b': 1.2,
+      'llama3.1:70b': 1.5,
+      'deepseek-coder:6.7b': 1.3,
+      'codellama:7b': 1.2,
+      'codellama:13b': 1.4,
+      'phi3:mini': 0.9,
+      'phi3:latest': 1.1,
+      'mistral:latest': 1.0,
+      'mistral:7b': 1.0,
+      'mixtral:8x7b': 1.3,
+      'magicoder:7b': 1.2,
+      'starcoder2:15b': 1.4
+    };
 
-      await this.recordTransaction({
+    // 정확한 모델명 매칭
+    if (modelBonuses[model]) {
+      return modelBonuses[model];
+    }
+
+    // 부분 매칭
+    for (const [modelPattern, bonus] of Object.entries(modelBonuses)) {
+      if (model.includes(modelPattern.split(':')[0])) {
+        return bonus * 0.8; // 부분 매칭시 보너스 감소
+      }
+    }
+
+    return 0.5; // 기본 보너스
+  }
+
+  /**
+   * 일일 마이닝 보너스 지급
+   */
+  public async awardDailyBonus(userDid: string): Promise<number> {
+    console.log('🎁 === 일일 마이닝 보너스 지급 ===');
+
+    try {
+      await this.initialize();
+
+      const bonusAmount = parseFloat(process.env.DAILY_BONUS_CUE || '50');
+
+      await this.awardCUE({
         user_did: userDid,
-        transaction_type: 'reward',
         amount: bonusAmount,
-        status: 'completed',
-        source: 'daily_login',
-        description: 'Daily login bonus',
+        source: 'daily_bonus',
         metadata: {
-          bonusType: 'daily_login',
-          timestamp: new Date().toISOString()
+          bonusType: 'daily',
+          date: new Date().toISOString().split('T')[0]
         }
       });
 
-      console.log(`⛏️ 일일 로그인 보너스: ${bonusAmount} CUE`);
+      console.log(`✅ 일일 보너스 지급 완료: ${bonusAmount} CUE`);
       return bonusAmount;
-    } catch (error) {
-      console.error('로그인 보너스 마이닝 오류:', error);
-      return 0;
+    } catch (error: any) {
+      console.error('❌ 일일 보너스 지급 실패:', error);
+      throw error;
     }
   }
 
   /**
-   * CUE 마이닝 통계 조회
+   * 웰컴 보너스 지급
    */
-  async getMiningStats(userDid: string, days: number = 7): Promise<{
-    totalMined: number;
-    dailyAverage: number;
-    topSources: Array<{ source: string; amount: number }>;
-    recentTransactions: any[];
-  }> {
+  public async awardWelcomeBonus(userDid: string): Promise<number> {
+    console.log('🎉 === 웰컴 보너스 지급 ===');
+
     try {
-      const transactions = await this.getTransactionHistory(userDid, days * 10);
-      
-      // 마이닝 거래만 필터링
-      const miningTransactions = transactions.filter(tx => 
-        (tx.transaction_type === 'mining' || tx.transaction_type === 'reward') && 
-        new Date(tx.created_at) > new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-      );
+      await this.initialize();
 
-      const totalMined = miningTransactions.reduce((sum, tx) => 
-        sum + parseFloat(tx.amount), 0
-      );
-      const dailyAverage = totalMined / days;
+      const welcomeAmount = parseFloat(process.env.WELCOME_CUE_AMOUNT || '100');
 
-      // 소스별 집계
-      const sourceMap = new Map<string, number>();
-      miningTransactions.forEach(tx => {
-        const source = tx.source || 'unknown';
-        sourceMap.set(source, (sourceMap.get(source) || 0) + parseFloat(tx.amount));
-      });
-
-      const topSources = Array.from(sourceMap.entries())
-        .map(([source, amount]) => ({ source, amount }))
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 5);
-
-      return {
-        totalMined: Math.round(totalMined * 100) / 100,
-        dailyAverage: Math.round(dailyAverage * 100) / 100,
-        topSources,
-        recentTransactions: miningTransactions.slice(0, 10)
-      };
-    } catch (error) {
-      console.error('마이닝 통계 조회 오류:', error);
-      return {
-        totalMined: 0,
-        dailyAverage: 0,
-        topSources: [],
-        recentTransactions: []
-      };
-    }
-  }
-
-  /**
-   * CUE 보상 지급 (시스템 보상)
-   */
-  async awardCUE(params: {
-    userDid: string;
-    amount: number;
-    reason: string;
-    description?: string;
-    metadata?: any;
-  }): Promise<number> {
-    try {
-      const { userDid, amount, reason, description, metadata } = params;
-
-      await this.recordTransaction({
+      await this.awardCUE({
         user_did: userDid,
-        transaction_type: 'reward',
-        amount: amount,
-        status: 'completed',
-        source: reason,
-        description: description || `CUE reward: ${reason}`,
-        metadata: metadata || {}
+        amount: welcomeAmount,
+        source: 'welcome_bonus',
+        metadata: {
+          bonusType: 'welcome',
+          firstTime: true
+        }
       });
 
-      console.log(`🎁 CUE 보상 지급: ${amount} tokens (${reason})`);
-      return amount;
-    } catch (error) {
-      console.error('CUE 보상 지급 오류:', error);
-      return 0;
+      console.log(`✅ 웰컴 보너스 지급 완료: ${welcomeAmount} CUE`);
+      return welcomeAmount;
+    } catch (error: any) {
+      console.error('❌ 웰컴 보너스 지급 실패:', error);
+      throw error;
     }
+  }
+
+  // ============================================================================
+  // 📊 통계 및 분석
+  // ============================================================================
+
+  /**
+   * 마이닝 통계 조회
+   */
+  public async getMiningStats(userDid: string): Promise<any> {
+    try {
+      await this.initialize();
+
+      const transactions = await this.db.getCUETransactions(userDid, 1000);
+      const miningTransactions = transactions.filter(t => t.transaction_type === 'mining');
+
+      const totalMined = miningTransactions.reduce((sum, t) => sum + t.amount, 0);
+      const totalSpent = transactions
+        .filter(t => t.transaction_type === 'spending')
+        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+      const currentBalance = await this.db.getCUEBalance(userDid);
+
+      // 소스별 마이닝 통계
+      const sourceStats = miningTransactions.reduce((stats, transaction) => {
+        const source = transaction.source || 'unknown';
+        if (!stats[source]) {
+          stats[source] = { count: 0, total: 0 };
+        }
+        stats[source].count++;
+        stats[source].total += transaction.amount;
+        return stats;
+      }, {} as Record<string, { count: number; total: number }>);
+
+      return {
+        currentBalance,
+        totalMined,
+        totalSpent,
+        netEarnings: totalMined - totalSpent,
+        miningCount: miningTransactions.length,
+        sourceBreakdown: sourceStats,
+        averagePerMining: miningTransactions.length > 0 ? totalMined / miningTransactions.length : 0,
+        lastMiningAt: miningTransactions[0]?.created_at || null,
+        stats: {
+          last7Days: this.calculateRecentStats(miningTransactions, 7),
+          last30Days: this.calculateRecentStats(miningTransactions, 30)
+        }
+      };
+    } catch (error: any) {
+      console.error('❌ 마이닝 통계 조회 실패:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 최근 기간 통계 계산
+   */
+  private calculateRecentStats(transactions: any[], days: number) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+
+    const recentTransactions = transactions.filter(t => 
+      new Date(t.created_at) > cutoffDate
+    );
+
+    const total = recentTransactions.reduce((sum, t) => sum + t.amount, 0);
+    const count = recentTransactions.length;
+    const average = count > 0 ? total / count : 0;
+
+    return { total, count, average };
+  }
+
+  /**
+   * 서비스 상태 정보
+   */
+  public getServiceStatus(): any {
+    return {
+      serviceName: 'CUEMiningService',
+      initialized: this.isInitialized,
+      databaseConnected: this.db.isConnected(),
+      version: '2.0.0',
+      features: [
+        'ai_interaction_mining',
+        'data_extraction_mining',
+        'transaction_management',
+        'daily_bonus',
+        'welcome_bonus',
+        'mining_statistics'
+      ],
+      configuration: {
+        baseReward: process.env.CUE_BASE_REWARD || '3',
+        maxReward: process.env.CUE_MAX_REWARD || '25',
+        dailyBonus: process.env.DAILY_BONUS_CUE || '50',
+        welcomeBonus: process.env.WELCOME_CUE_AMOUNT || '100'
+      },
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  /**
+   * 서비스 정리 (DI Container에서 호출)
+   */
+  public dispose(): void {
+    console.log('🧹 CUEMiningService 정리 중...');
+    this.isInitialized = false;
+    console.log('✅ CUEMiningService 정리 완료');
   }
 }
-
-export default CUEMiningService;

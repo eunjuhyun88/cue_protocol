@@ -10,9 +10,9 @@ import {
   getDatabaseService, 
   getPersonalizationService,
   getCueService,
-  getPersonalCueExtractor,
   getAuthService 
 } from '../../core/DIContainer';
+import getPersonalCueExtractor from '../../core/DIContainer';
 import { v4 as uuidv4 } from 'uuid';
 
 const router: Router = express.Router();
@@ -188,7 +188,8 @@ function safeGetPersonalizationService() {
           }
         };
       },
-      compareProfiles(old: any, new: any) {
+      // 🔧 수정된 부분: 'new' 예약어를 'newProfile'로 변경
+compareProfiles(oldProfile: any, newProfile: any) {
         return [
           'Updated communication style',
           'Enhanced personality type',

@@ -4,7 +4,7 @@
 // 목적: Personal Cues를 활용한 실제 개인화 AI 시스템
 // ============================================================================
 
-import { RealDatabaseService } from '../database/RealDatabaseService';
+import { DatabaseService } from '../database/DatabaseService';
 import { EmbeddingService } from './EmbeddingService';
 
 interface PersonalCue {
