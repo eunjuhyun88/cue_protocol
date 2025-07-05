@@ -1,11 +1,13 @@
 // ============================================================================
-// 🔐 WebAuthn Service 최적화 - DI Container 호환 버전
-// 파일: backend/src/services/auth/WebAuthnService.ts
+// 🔐 WebAuthn Service 최적화 - 완전한 프로덕션 구현
+// 파일: backend/src/services/auth/WebAuthnService.ts (완전 교체)
 // 
-// 🎯 수정사항:
-// ✅ Redis 의존성을 메모리 기반으로 변경 (프론트엔드 호환)
-// ✅ DI Container 패턴 완전 적용
-// ✅ 강화된 보안 검증 유지
+// 🎯 최적화 목표:
+// ✅ 실제 @simplewebauthn/server 통합
+// ✅ 안전한 Challenge 관리 (Redis)
+// ✅ 멀티 디바이스 지원
+// ✅ 강화된 보안 검증
+// ✅ 완전한 에러 처리
 // ✅ 프로덕션 레벨 로깅
 // ============================================================================
 
@@ -21,8 +23,10 @@ import {
   type RegistrationResponseJSON,
   type AuthenticationResponseJSON,
 } from '@simplewebauthn/server';
+import Redis from 'ioredis';
 import crypto from 'crypto';
-import { DatabaseService } from '../../core/DIContainer';
+import { DatabaseService } from '../database/DatabaseService';
+
 
 // ============================================================================
 // 🔧 타입 정의
@@ -79,19 +83,16 @@ interface WebAuthnResult {
 }
 
 // ============================================================================
-// 🛡️ WebAuthn 보안 서비스 (메모리 기반)
+// 🛡️ WebAuthn 보안 서비스
 // ============================================================================
 
 export class WebAuthnService {
   private config: WebAuthnConfig;
+  private redis: Redis;
   private db: DatabaseService;
   private sessionPrefix = 'webauthn:session:';
   private challengePrefix = 'webauthn:challenge:';
   private rateLimitPrefix = 'webauthn:ratelimit:';
-  
-  // 메모리 기반 스토리지 (Redis 대체)
-  private challengeStore = new Map<string, StoredChallenge>();
-  private rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 
   constructor(
     config?: Partial<WebAuthnConfig>,
@@ -106,28 +107,50 @@ export class WebAuthnService {
       ...config
     };
 
+    // Redis 클라이언트 초기화
+    this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+      retryDelayOnFailover: 100,
+      enableReadyCheck: false,
+      maxRetriesPerRequest: null,
+    });
+
     // 데이터베이스 서비스
     this.db = databaseService || DatabaseService.getInstance();
 
-    console.log('🔐 WebAuthn Service 초기화됨 (메모리 기반):', {
+    console.log('🔐 WebAuthn Service 초기화됨:', {
       rpName: this.config.rpName,
       rpID: this.config.rpID,
       origin: this.config.origin,
-      storageType: 'memory'
+      redisConnected: this.redis.status === 'ready'
     });
 
-    // 정기적으로 만료된 데이터 정리
-    this.startCleanupInterval();
+    // Redis 연결 이벤트 처리
+    this.setupRedisEventHandlers();
   }
 
   // ============================================================================
   // 🔧 초기화 및 헬스체크
   // ============================================================================
 
+  private setupRedisEventHandlers(): void {
+    this.redis.on('connect', () => {
+      console.log('✅ Redis 연결됨');
+    });
+
+    this.redis.on('error', (error) => {
+      console.error('❌ Redis 오류:', error);
+    });
+
+    this.redis.on('close', () => {
+      console.warn('⚠️ Redis 연결 종료됨');
+    });
+  }
+
   /**
    * WebAuthn 서비스 상태 확인
    */
   async getWebAuthnStatus(): Promise<any> {
+    const redisStatus = this.redis.status;
     const dbStatus = await this.testDatabaseConnection();
     
     return {
@@ -139,7 +162,7 @@ export class WebAuthnService {
         timeout: this.config.timeout
       },
       connections: {
-        storage: 'memory',
+        redis: redisStatus,
         database: dbStatus
       },
       features: {
@@ -147,10 +170,6 @@ export class WebAuthnService {
         backupCodes: true,
         rateLimiting: true,
         auditLogging: true
-      },
-      sessions: {
-        challengeCount: this.challengeStore.size,
-        rateLimitCount: this.rateLimitStore.size
       },
       timestamp: new Date().toISOString()
     };
@@ -184,7 +203,12 @@ export class WebAuthnService {
       console.log(`🆕 패스키 등록 옵션 생성: ${userName} (${userID})`);
 
       // Rate Limiting 체크
-      if (!this.checkRateLimit(`reg:${ipAddress || 'unknown'}`, 10, 300)) {
+      const rateLimitKey = `${this.rateLimitPrefix}reg:${ipAddress || 'unknown'}`;
+      const attempts = await this.redis.incr(rateLimitKey);
+      if (attempts === 1) {
+        await this.redis.expire(rateLimitKey, 300); // 5분 윈도우
+      }
+      if (attempts > 10) {
         return {
           success: false,
           error: 'Too many registration attempts. Please try again later.',
@@ -213,9 +237,9 @@ export class WebAuthnService {
         authenticatorSelection: {
           residentKey: 'preferred',
           userVerification: 'preferred',
-          authenticatorAttachment: 'platform',
+          authenticatorAttachment: 'platform', // 생체 인식 우선
         },
-        supportedAlgorithmIDs: [-7, -257],
+        supportedAlgorithmIDs: [-7, -257], // ES256, RS256
       };
 
       const registrationOptions = await generateRegistrationOptions(options);
@@ -236,7 +260,11 @@ export class WebAuthnService {
         ipAddress
       };
 
-      this.challengeStore.set(sessionId, challengeData);
+      await this.redis.setex(
+        `${this.challengePrefix}${sessionId}`,
+        300,
+        JSON.stringify(challengeData)
+      );
 
       console.log(`✅ 등록 옵션 생성 완료: 세션 ${sessionId}`);
 
@@ -274,7 +302,7 @@ export class WebAuthnService {
       console.log(`✅ 패스키 등록 검증 시작: 세션 ${sessionId}`);
 
       // Challenge 데이터 조회 및 삭제
-      const challengeData = this.challengeStore.get(sessionId);
+      const challengeData = await this.getAndRemoveChallenge(sessionId);
       if (!challengeData || challengeData.type !== 'registration') {
         return {
           success: false,
@@ -282,19 +310,6 @@ export class WebAuthnService {
           errorCode: 'INVALID_SESSION'
         };
       }
-
-      // 만료 확인 (5분)
-      if (Date.now() - challengeData.timestamp > 300000) {
-        this.challengeStore.delete(sessionId);
-        return {
-          success: false,
-          error: 'Session expired',
-          errorCode: 'SESSION_EXPIRED'
-        };
-      }
-
-      // 세션 삭제 (일회용)
-      this.challengeStore.delete(sessionId);
 
       // IP 주소 일치 확인 (보안 강화)
       if (ipAddress && challengeData.ipAddress && challengeData.ipAddress !== ipAddress) {
@@ -388,7 +403,12 @@ export class WebAuthnService {
       console.log(`🔓 패스키 인증 옵션 생성: ${userID || '알려지지 않은 사용자'}`);
 
       // Rate Limiting 체크
-      if (!this.checkRateLimit(`auth:${ipAddress || 'unknown'}`, 20, 300)) {
+      const rateLimitKey = `${this.rateLimitPrefix}auth:${ipAddress || 'unknown'}`;
+      const attempts = await this.redis.incr(rateLimitKey);
+      if (attempts === 1) {
+        await this.redis.expire(rateLimitKey, 300);
+      }
+      if (attempts > 20) {
         return {
           success: false,
           error: 'Too many authentication attempts. Please try again later.',
@@ -433,7 +453,11 @@ export class WebAuthnService {
         ipAddress
       };
 
-      this.challengeStore.set(sessionId, challengeData);
+      await this.redis.setex(
+        `${this.challengePrefix}${sessionId}`,
+        300,
+        JSON.stringify(challengeData)
+      );
 
       console.log(`✅ 인증 옵션 생성 완료: 세션 ${sessionId}`);
 
@@ -471,7 +495,7 @@ export class WebAuthnService {
       console.log(`✅ 패스키 인증 검증 시작: 세션 ${sessionId}`);
 
       // Challenge 데이터 조회 및 삭제
-      const challengeData = this.challengeStore.get(sessionId);
+      const challengeData = await this.getAndRemoveChallenge(sessionId);
       if (!challengeData || challengeData.type !== 'authentication') {
         return {
           success: false,
@@ -479,19 +503,6 @@ export class WebAuthnService {
           errorCode: 'INVALID_SESSION'
         };
       }
-
-      // 만료 확인
-      if (Date.now() - challengeData.timestamp > 300000) {
-        this.challengeStore.delete(sessionId);
-        return {
-          success: false,
-          error: 'Session expired',
-          errorCode: 'SESSION_EXPIRED'
-        };
-      }
-
-      // 세션 삭제
-      this.challengeStore.delete(sessionId);
 
       // 자격 증명 조회
       const credential = await this.getCredentialByID(
@@ -710,7 +721,7 @@ export class WebAuthnService {
   }
 
   // ============================================================================
-  // 🛠️ 유틸리티 메서드 (메모리 기반)
+  // 🛠️ 유틸리티 메서드
   // ============================================================================
 
   /**
@@ -721,27 +732,23 @@ export class WebAuthnService {
   }
 
   /**
-   * Rate Limiting 체크 (메모리 기반)
+   * Challenge 조회 및 삭제
    */
-  private checkRateLimit(key: string, maxAttempts: number, windowMs: number): boolean {
-    const now = Date.now();
-    const record = this.rateLimitStore.get(key);
-
-    if (!record || now > record.resetTime) {
-      // 새로운 윈도우 시작
-      this.rateLimitStore.set(key, {
-        count: 1,
-        resetTime: now + windowMs * 1000
-      });
-      return true;
+  private async getAndRemoveChallenge(sessionId: string): Promise<StoredChallenge | null> {
+    try {
+      const key = `${this.challengePrefix}${sessionId}`;
+      const data = await this.redis.get(key);
+      
+      if (data) {
+        await this.redis.del(key);
+        return JSON.parse(data);
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('❌ Challenge 조회 실패:', error);
+      return null;
     }
-
-    if (record.count >= maxAttempts) {
-      return false;
-    }
-
-    record.count++;
-    return true;
   }
 
   /**
@@ -765,15 +772,6 @@ export class WebAuthnService {
     }
   }
 
-  /**
-   * 정기적 정리 작업 시작
-   */
-  private startCleanupInterval(): void {
-    setInterval(() => {
-      this.cleanup();
-    }, 60000); // 1분마다 실행
-  }
-
   // ============================================================================
   // 🧹 정리 및 유지보수
   // ============================================================================
@@ -783,27 +781,8 @@ export class WebAuthnService {
    */
   async cleanup(): Promise<void> {
     try {
-      const now = Date.now();
-      const fiveMinutes = 5 * 60 * 1000;
-
-      // 만료된 Challenge 정리
-      for (const [sessionId, challenge] of this.challengeStore.entries()) {
-        if (now - challenge.timestamp > fiveMinutes) {
-          this.challengeStore.delete(sessionId);
-        }
-      }
-
-      // 만료된 Rate Limit 정리
-      for (const [key, record] of this.rateLimitStore.entries()) {
-        if (now > record.resetTime) {
-          this.rateLimitStore.delete(key);
-        }
-      }
-
-      console.log('🧹 WebAuthn 메모리 정리 완료:', {
-        challenges: this.challengeStore.size,
-        rateLimits: this.rateLimitStore.size
-      });
+      // Redis에서 만료된 키 정리는 자동으로 처리됨
+      console.log('🧹 WebAuthn 세션 정리 완료');
     } catch (error) {
       console.error('❌ 정리 작업 실패:', error);
     }
@@ -814,8 +793,7 @@ export class WebAuthnService {
    */
   async dispose(): Promise<void> {
     try {
-      this.challengeStore.clear();
-      this.rateLimitStore.clear();
+      await this.redis.quit();
       console.log('👋 WebAuthn Service 종료됨');
     } catch (error) {
       console.error('❌ 서비스 종료 실패:', error);
