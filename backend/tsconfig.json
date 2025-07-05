@@ -1,38 +1,28 @@
+// ✨ 백엔드 tsconfig.json 업데이트
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2020",
     "module": "commonjs",
-    "lib": ["ES2022"],
-    "allowJs": true,
+    "lib": ["ES2020"],
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "noImplicitReturns": true,
-    "noImplicitAny": false,
-    "strictNullChecks": false,
-    "strictFunctionTypes": false,
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "node",
+    // 경로 매핑 추가
     "baseUrl": "./src",
     "paths": {
-      "@/*": ["./*"],
-      "@config/*": ["./config/*"],
+      "@shared/*": ["./shared/*"],
+      "@types/*": ["./shared/types/*"],
       "@services/*": ["./services/*"],
       "@routes/*": ["./routes/*"],
       "@middleware/*": ["./middleware/*"],
-      "@types/*": ["./types/*"],
-      "@core/*": ["./core/*"]
+      "@utils/*": ["./utils/*"]
     }
   },
   "include": [
@@ -40,13 +30,51 @@
   ],
   "exclude": [
     "node_modules",
-    "dist",
-    "**/*.test.ts",
-    "**/*.spec.ts",
-    "src/routes.backup.*",
-    "src/services/DatabaseService.ts"
+    "dist"
+  ]
+}
+
+// ✨ 프론트엔드 tsconfig.json 업데이트 (Next.js)
+{
+  "compilerOptions": {
+    "target": "es5",
+    "lib": ["dom", "dom.iterable", "es6"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    // 경로 매핑 추가
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@shared/*": ["./src/shared/*"],
+      "@types/*": ["./src/shared/types/*"],
+      "@components/*": ["./src/components/*"],
+      "@hooks/*": ["./src/hooks/*"],
+      "@services/*": ["./src/services/*"],
+      "@lib/*": ["./src/lib/*"],
+      "@utils/*": ["./src/utils/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts"
   ],
-  "ts-node": {
-    "esm": true
-  }
+  "exclude": [
+    "node_modules"
+  ]
 }
