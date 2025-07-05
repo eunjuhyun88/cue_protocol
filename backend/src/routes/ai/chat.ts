@@ -6,7 +6,6 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getService } from '../../core/DIContainer';
-import { DIContainer } from '../../core/DIContainer';
 
 const router = Router();
 

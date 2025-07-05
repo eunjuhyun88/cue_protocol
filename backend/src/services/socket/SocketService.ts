@@ -19,11 +19,11 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { createClient } from '@supabase/supabase-js';
-import { DatabaseService } from './services/database/DatabaseService';
-import { DIContainer } from './core/DIContainer';
+import { DatabaseService } from '../../core/DIContainer';
+import { DIContainer } from '../core/DIContainer';
 
 // SocketService 임포트 (개선된 버전)
-import SocketService from './services/socket/SocketService';
+import SocketService from '../services/socket/SocketService';
 
 dotenv.config();
 
