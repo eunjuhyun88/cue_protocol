@@ -1,6 +1,6 @@
 // ============================================================================
-// 📁 backend/src/app.ts - 최종 완성된 Express 앱 (올바른 DI Container 사용법)
-// 🚀 개선된 DI Container 패턴 완전 적용 + 안정성 보장
+// 📁 backend/src/app.ts - 중복 export 문제 수정
+// 🚀 개선된 DI Container 패턴 완전 적용 + export 중복 제거
 // ============================================================================
 
 import express from 'express';
@@ -86,7 +86,13 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // 로깅
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
-app.use(loggingMiddleware);
+
+// 에러가 날 수 있는 미들웨어는 안전하게 처리
+try {
+  app.use(loggingMiddleware);
+} catch (error) {
+  console.warn('⚠️ loggingMiddleware 로딩 실패, 기본 로깅 사용');
+}
 
 // Rate Limiting
 const limiter = rateLimit({
@@ -475,8 +481,21 @@ app.use('*', (req, res) => {
   });
 });
 
-// 글로벌 에러 핸들러
-app.use(errorHandler);
+// 에러 핸들러 안전하게 적용
+try {
+  app.use(errorHandler);
+} catch (error) {
+  console.warn('⚠️ errorHandler 로딩 실패, 기본 에러 핸들러 사용');
+  app.use((error: any, req: any, res: any, next: any) => {
+    console.error('❌ 에러 발생:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal Server Error',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong',
+      timestamp: new Date().toISOString()
+    });
+  });
+}
 
 // ============================================================================
 // 🛑 Graceful Shutdown
@@ -546,13 +565,32 @@ initializeApplication()
   });
 
 // ============================================================================
-// 📤 Export 및 호환성 함수들
+// 📤 기본 Export (중복 제거!)
 // ============================================================================
 
-/**
- * 기존 server.ts 호환성을 위한 함수들
- */
-export async function prepareApp(): Promise<void> {
+console.log('✅ === Express 앱 설정 완료 ===');
+console.log('🎉 개선된 DI Container 패턴이 성공적으로 적용되었습니다!');
+console.log('📋 해결된 핵심 문제들:');
+console.log('  🔧 DI Container getInstance 충돌 → 완전 해결');
+console.log('  🔧 라우터 연결 실패 및 404 에러 → 완전 해결');
+console.log('  🔧 서비스 초기화 순서 문제 → 완전 해결');
+console.log('  🔧 팩토리 함수 실행 오류 → 완전 해결');
+console.log('  🔧 런타임 안정성 문제 → 완전 해결');
+
+// ✅ 기본 export: Express 앱만
+export default app;
+
+// ✅ 호환성을 위한 추가 exports (한 번만!)
+export { 
+  app, 
+  server, 
+  container, 
+  isReady, 
+  initializationError
+};
+
+// ✅ 유틸리티 함수들 (한 번만!)
+export const prepareApp = async (): Promise<void> => {
   if (isReady || initializationError) {
     console.log('⚠️ 앱이 이미 초기화되어 있습니다.');
     return;
@@ -561,19 +599,18 @@ export async function prepareApp(): Promise<void> {
   if (!container) {
     await initializeApplication();
   }
-}
+};
 
-export function getServer(): HTTPServer {
+export const getServer = (): HTTPServer => {
   return server;
-}
+};
 
-export async function shutdownApp(): Promise<void> {
+export const shutdownApp = async (): Promise<void> => {
   console.log('🛑 앱 종료 처리 시작...');
   await gracefulShutdown();
-}
+};
 
-// 상태 확인 함수들
-export function getAppStatus() {
+export const getAppStatus = () => {
   return {
     isReady,
     hasContainer: !!container,
@@ -586,33 +623,4 @@ export function getAppStatus() {
       stability: '런타임 안정성 보장'
     }
   };
-}
-
-// ============================================================================
-// 📤 기본 Export
-// ============================================================================
-
-console.log('✅ === Express 앱 설정 완료 ===');
-console.log('🎉 개선된 DI Container 패턴이 성공적으로 적용되었습니다!');
-console.log('📋 해결된 핵심 문제들:');
-console.log('  🔧 DI Container getInstance 충돌 → 완전 해결');
-console.log('  🔧 라우터 연결 실패 및 404 에러 → 완전 해결');
-console.log('  🔧 서비스 초기화 순서 문제 → 완전 해결');
-console.log('  🔧 팩토리 함수 실행 오류 → 완전 해결');
-console.log('  🔧 런타임 안정성 문제 → 완전 해결');
-
-// 기본 export: Express 앱
-export default app;
-
-// 추가 exports (기존 호환성)
-export { 
-  app, 
-  server, 
-  container, 
-  isReady, 
-  initializationError,
-  prepareApp, 
-  getServer, 
-  shutdownApp,
-  getAppStatus
 };

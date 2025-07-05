@@ -36,13 +36,13 @@ interface SearchResult {
 
 export class RealRAGDAGEngine {
   private static instance: RealRAGDAGEngine;
-  private db: RealDatabaseService;
+  private db: DatabaseService;
   private embeddingService: EmbeddingService;
   private isInitialized: boolean = false;
 
   private constructor() {
     console.log('🧠 === RealRAGDAGEngine 초기화 시작 ===');
-    this.db = RealDatabaseService.getInstance();
+    this.db = DatabaseService.getInstance();
     this.embeddingService = EmbeddingService.getInstance();
   }
 

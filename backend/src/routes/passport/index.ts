@@ -1,6 +1,6 @@
 // ============================================================================
 // 📁 backend/src/routes/passport/index.ts
-// 🎫 DI Container 기반 향상된 AI Passport 라우트 시스템
+// 🎫 DI Container 기반 향상된 AI Passport 라우트 시스템 (import 오류 수정)
 // 목적: 기존 풍부한 기능 + DI 패턴 + 최신 구조 통합
 // ============================================================================
 
@@ -12,7 +12,8 @@ import {
   getCueService,
   getAuthService 
 } from '../../core/DIContainer';
-import getPersonalCueExtractor from '../../core/DIContainer';
+// ✅ 수정: 잘못된 import 제거
+// import getPersonalCueExtractor from '../../core/DIContainer'; // ❌ 문제가 되던 코드
 import { v4 as uuidv4 } from 'uuid';
 
 const router: Router = express.Router();
@@ -143,14 +144,14 @@ function safeGetPersonalizationService() {
   } catch (error) {
     console.warn('⚠️ PersonalizationService를 DI에서 가져올 수 없음, 기본값 반환');
     return {
-      async calculateTrustScore(data: any) {
+      calculateTrustScore: async (data: any) => {
         const base = 50;
         const cueBonus = Math.min((data.cueBalance || 0) / 10000, 20);
         const vaultBonus = Math.min((data.dataVaults?.length || 0) * 5, 25);
         const activityBonus = Math.min((data.totalInteractions || 0) / 100, 15);
         return Math.min(base + cueBonus + vaultBonus + activityBonus, 100);
       },
-      async analyzePersonalityInsights(profile: any) {
+      analyzePersonalityInsights: async (profile: any) => {
         return {
           dominantTraits: ['analytical', 'curious', 'tech-savvy'],
           communicationStyle: profile?.communicationStyle || 'adaptive',
@@ -160,7 +161,7 @@ function safeGetPersonalizationService() {
           confidenceLevel: 0.8
         };
       },
-      async analyzePersonality(profile: any, preferences: any) {
+      analyzePersonality: async (profile: any, preferences: any) => {
         return {
           ...profile,
           analyzedAt: new Date().toISOString(),
@@ -168,7 +169,7 @@ function safeGetPersonalizationService() {
           keyInsights: ['Tech-oriented', 'Detail-focused', 'Privacy-conscious']
         };
       },
-      async updatePersonalityProfile(existing: any, newData: any) {
+      updatePersonalityProfile: async (existing: any, newData: any) => {
         return {
           ...existing,
           ...newData,
@@ -176,7 +177,7 @@ function safeGetPersonalizationService() {
           version: (existing?.version || 0) + 1
         };
       },
-      async getPersonalityInsights(profile: any) {
+      getPersonalityInsights: async (profile: any) => {
         return {
           type: profile?.type || 'Adaptive',
           traits: profile?.traits || ['analytical', 'curious'],
@@ -188,8 +189,8 @@ function safeGetPersonalizationService() {
           }
         };
       },
-      // 🔧 수정된 부분: 'new' 예약어를 'newProfile'로 변경
-compareProfiles(oldProfile: any, newProfile: any) {
+      // 🔧 수정된 부분: 화살표 함수로 변경
+      compareProfiles: (oldProfile: any, newProfile: any) => {
         return [
           'Updated communication style',
           'Enhanced personality type',
@@ -209,14 +210,14 @@ function safeGetCueService() {
   } catch (error) {
     console.warn('⚠️ CueService를 DI에서 가져올 수 없음, 기본값 반환');
     return {
-      async getBalance(userDid: string) {
+      getBalance: async (userDid: string) => {
         return { 
           balance: 2500 + Math.floor(Math.random() * 5000), 
           amount: 2500 + Math.floor(Math.random() * 5000),
           lastUpdated: new Date().toISOString() 
         };
       },
-      async getTransactionHistory(userDid: string, options: any = {}) {
+      getTransactionHistory: async (userDid: string, options: any = {}) => {
         const limit = options.limit || 10;
         return Array.from({ length: Math.min(limit, 20) }, (_, i) => ({
           id: `tx_${Date.now()}_${i}`,
@@ -232,15 +233,16 @@ function safeGetCueService() {
 }
 
 /**
- * 안전한 개인 단서 추출 서비스 가져오기 (DI Container 패턴)
+ * ✅ 수정된 개인 단서 추출 서비스 가져오기 (DI Container 패턴)
  */
 function safeGetPersonalCueExtractor() {
   try {
-    return getPersonalCueExtractor();
+    // ✅ 올바른 방법으로 서비스 가져오기
+    return getService('PersonalCueExtractor');
   } catch (error) {
     console.warn('⚠️ PersonalCueExtractor를 DI에서 가져올 수 없음, 기본값 반환');
     return {
-      async extractPersonalCues(textData: string, options: any = {}) {
+      extractPersonalCues: async (textData: string, options: any = {}) => {
         const keywords = textData.match(/\b\w{4,}\b/g) || [];
         return keywords.slice(0, 5).map(keyword => ({
           content: keyword,
@@ -250,7 +252,7 @@ function safeGetPersonalCueExtractor() {
           category: 'behavioral'
         }));
       },
-      async analyzeCuePatterns(cues: any[]) {
+      analyzeCuePatterns: async (cues: any[]) => {
         return {
           patterns: cues.map(cue => ({
             pattern: cue.content,
@@ -327,7 +329,7 @@ const diAuthMiddleware = async (req: Request, res: Response, next: NextFunction)
   }
 };
 
-console.log('🎫 DI Container 기반 향상된 AI Passport 라우트 초기화');
+console.log('🎫 DI Container 기반 향상된 AI Passport 라우트 초기화 (import 오류 수정)');
 
 // ============================================================================
 // 🔍 AI Passport 정보 조회 (기존 + 신규 기능 통합)
@@ -569,7 +571,7 @@ router.get('/:did(*)', diAuthMiddleware, async (req: Request, res: Response): Pr
         includeVaults: includeVaults === 'true',
         includeTrustHistory: includeTrustHistory === 'true',
         lastUpdated: new Date().toISOString(),
-        version: '2.0-di-enhanced'
+        version: '2.0-di-enhanced-fixed'
       }
     };
 
@@ -1126,7 +1128,7 @@ router.get('/:did/stats(*)', diAuthMiddleware, async (req: Request, res: Respons
 });
 
 // ============================================================================
-// 🧠 DI Container 기반 개인화 프로필 분석
+// 🧠 DI Container 기반 개인화 프로필 분석 (수정됨)
 // POST /api/passport/:did/analyze
 // ============================================================================
 
@@ -1152,7 +1154,7 @@ router.post('/:did/analyze', diAuthMiddleware, async (req: Request, res: Respons
     // DI Container에서 서비스들 가져오기
     const db = safeGetDatabaseService();
     const personalizationService = safeGetPersonalizationService();
-    const personalCueExtractor = safeGetPersonalCueExtractor();
+    const personalCueExtractor = safeGetPersonalCueExtractor(); // ✅ 수정된 함수 사용
 
     const passport = await db.getPassport(did);
     if (!passport) {
@@ -1167,12 +1169,28 @@ router.post('/:did/analyze', diAuthMiddleware, async (req: Request, res: Respons
     let analysisResult = null;
     
     console.log('🔍 DI 기반 Personal CUE 추출 중...');
-    // DI 기반 Personal CUE 추출
-    const personalCues = await personalCueExtractor.extractPersonalCues(textData, {
-      existingProfile: passport.personality_profile || passport.personalityProfile,
-      preferences: preferences || passport.preferences,
-      context
-    });
+    // DI 기반 Personal CUE 추출 (안전한 방식)
+    let personalCues = [];
+    try {
+      const personalCueExtractor = safeGetPersonalCueExtractor();
+      personalCues = await personalCueExtractor.extractPersonalCues(textData, {
+        existingProfile: passport.personality_profile || passport.personalityProfile,
+        preferences: preferences || passport.preferences,
+        context
+      });
+    } catch (extractorError) {
+      console.warn('⚠️ Personal CUE 추출 실패:', extractorError);
+      // 기본값 사용
+      personalCues = [
+        {
+          content: 'user interaction',
+          content_type: 'behavioral',
+          confidence: 0.7,
+          timestamp: new Date().toISOString(),
+          category: 'general'
+        }
+      ];
+    }
 
     console.log('🧠 DI 기반 개인화 서비스로 프로필 업데이트 중...');
     // DI 기반 개인화 서비스로 프로필 업데이트
@@ -1432,18 +1450,6 @@ function calculateSecurityScore(passport: any, trustScore: number): number {
 }
 
 /**
- * 보안 레벨 계산
- */
-function calculateSecurityLevel(passport: any, trustScore: number): string {
-  const score = calculateSecurityScore(passport, trustScore);
-  if (score >= 90) return 'Maximum';
-  if (score >= 70) return 'High';
-  if (score >= 50) return 'Medium';
-  if (score >= 30) return 'Low';
-  return 'Minimal';
-}
-
-/**
  * 압축 비율 계산
  */
 function calculateCompressionRatio(vaults: any[]): number {
@@ -1505,10 +1511,14 @@ router.use((error: any, req: Request, res: Response, next: NextFunction) => {
   });
 });
 
-console.log('✅ DI Container 기반 향상된 AI Passport 라우트 초기화 완료');
+console.log('✅ DI Container 기반 향상된 AI Passport 라우트 초기화 완료 (import 오류 수정)');
 console.log('🎫 주요 기능: DI 패턴, Passport CRUD, 개인화 분석, 신뢰도 계산, 성취시스템, CUE 연동');
 console.log('🏗️ 아키텍처: Dependency Injection Container 완전 통합');
 console.log('🔧 서비스: DatabaseService, PersonalizationService, CueService, PersonalCueExtractor');
 console.log('📊 고급 기능: 실시간 통계, AI 기반 인사이트, 개인화 프로필 분석');
 
-export default router;
+// ✅ DI Container와 호환되는 export
+export default function createPassportRoutes(container: any): Router {
+  console.log('🏭 Passport Routes 팩토리 함수 실행 (import 오류 수정)');
+  return router;
+}

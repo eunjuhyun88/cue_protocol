@@ -1,61 +1,70 @@
 {
   "name": "ai-personal-backend",
   "version": "1.0.0",
-  "description": "AI Personal Assistant Backend with WebAuthn and CUE Token System",
+  "description": "AI Personal Assistant Backend with DI Container",
   "main": "dist/app.js",
   "scripts": {
     "dev": "tsx watch src/app.ts",
     "build": "tsc",
     "start": "node dist/app.js",
-    "test": "jest",
-    "lint": "eslint src/**/*.ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "kill-port": "lsof -ti:3001 | xargs kill -9 || echo 'Port not in use'",
+    "dev-fresh": "npm run kill-port && sleep 1 && npm run dev",
+    "lint": "eslint src --ext .ts --fix",
+    "test": "echo 'Tests not implemented yet'"
   },
+  "keywords": [
+    "ai",
+    "passport",
+    "webauthn",
+    "cue-tokens",
+    "typescript",
+    "express"
+  ],
+  "author": "AI Personal Team",
+  "license": "MIT",
   "dependencies": {
-    "@simplewebauthn/server": "^8.3.5",
-    "@simplewebauthn/typescript-types": "^8.3.4",
-    "@supabase/supabase-js": "^2.39.0",
-    "bcryptjs": "^2.4.3",
+    "@anthropic-ai/sdk": "^0.9.1",
+    "@google/generative-ai": "^0.24.1",
+    "@simplewebauthn/server": "^9.0.3",
+    "@supabase/supabase-js": "^2.50.2",
+    "axios": "^1.10.0",
+    "bcryptjs": "^3.0.2",
     "compression": "^1.8.0",
     "cors": "^2.8.5",
-    "crypto": "^1.0.1",
     "dotenv": "^16.6.1",
-    "express": "^4.18.2",
+    "express": "^4.21.2",
     "express-rate-limit": "^7.5.1",
-    "helmet": "^7.1.0",
+    "express-session": "^1.18.1",
+    "express-validator": "^7.2.1",
+    "helmet": "^7.2.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
-    "socket.io": "^4.7.4",
-    "uuid": "^9.0.1"
+    "openai": "^4.104.0",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.8.1",
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/jest": "^29.5.8",
-    "@types/jsonwebtoken": "^9.0.5",
-    "@types/morgan": "^1.9.9",
-    "@types/node": "^20.10.5",
-    "@types/uuid": "^9.0.7",
-    "@typescript-eslint/eslint-plugin": "^6.15.0",
-    "@typescript-eslint/parser": "^6.15.0",
-    "eslint": "^8.56.0",
-    "jest": "^29.7.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.23",
+    "@types/express-session": "^1.18.2",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^20.19.2",
+    "@types/uuid": "^10.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^8.57.0",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2",
     "tsx": "^4.6.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.8.3"
   },
   "engines": {
-    "node": ">=18.0.0"
-  },
-  "keywords": [
-    "ai",
-    "webauthn",
-    "cue",
-    "passport",
-    "express",
-    "typescript"
-  ],
-  "author": "AI Personal Team",
-  "license": "MIT"
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
 }

@@ -1,94 +1,52 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2022",
     "module": "commonjs",
-    "lib": ["ES2020", "DOM"],
+    "lib": ["ES2022"],
+    "allowJs": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "removeComments": true,
-    "strict": false,
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": true,
     "noImplicitAny": false,
     "strictNullChecks": false,
     "strictFunctionTypes": false,
-    "strictBindCallApply": false,
-    "strictPropertyInitialization": false,
-    "noImplicitReturns": false,
-    "noFallthroughCasesInSwitch": false,
-    "noUncheckedIndexedAccess": false,
-    "exactOptionalPropertyTypes": false,
-    "noImplicitOverride": false,
-    "allowUnusedLabels": true,
-    "allowUnreachableCode": true,
-    
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
     "moduleResolution": "node",
     "baseUrl": "./src",
     "paths": {
       "@/*": ["./*"],
-      "@/types/*": ["./types/*"],
-      "@/services/*": ["./services/*"],
-      "@/routes/*": ["./routes/*"],
-      "@/middleware/*": ["./middleware/*"],
-      "@/config/*": ["./config/*"],
-      "@/core/*": ["./core/*"],
-      "@/controllers/*": ["./controllers/*"]
-    },
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "skipLibCheck": true,
-    "allowJs": true,
-    "checkJs": false,
-    "declaration": false,
-    "declarationMap": false,
-    "sourceMap": true,
-    "inlineSourceMap": false,
-    "inlineSources": false,
-    
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    
-    "incremental": true,
-    "tsBuildInfoFile": "./dist/.tsbuildinfo",
-    
-    "noEmitOnError": false,
-    "preserveConstEnums": true,
-    "noPropertyAccessFromIndexSignature": false,
-    "noUncheckedIndexedAccess": false,
-    
-    "typeRoots": [
-      "./node_modules/@types",
-      "./src/types"
-    ],
-    "types": [
-      "node",
-      "express",
-      "jest"
-    ]
+      "@config/*": ["./config/*"],
+      "@services/*": ["./services/*"],
+      "@routes/*": ["./routes/*"],
+      "@middleware/*": ["./middleware/*"],
+      "@types/*": ["./types/*"],
+      "@core/*": ["./core/*"]
+    }
   },
   "include": [
-    "src/**/*",
-    "src/**/*.ts",
-    "src/**/*.js",
-    "src/**/*.json"
+    "src/**/*"
   ],
   "exclude": [
     "node_modules",
     "dist",
     "**/*.test.ts",
     "**/*.spec.ts",
-    "coverage",
-    "*.backup.*",
-    "**/*.backup.*"
+    "src/routes.backup.*",
+    "src/services/DatabaseService.ts"
   ],
   "ts-node": {
-    "esm": false,
-    "experimentalSpecifierResolution": "node",
-    "transpileOnly": true,
-    "files": true,
-    "compilerOptions": {
-      "module": "commonjs",
-      "target": "ES2020"
-    }
+    "esm": true
   }
 }

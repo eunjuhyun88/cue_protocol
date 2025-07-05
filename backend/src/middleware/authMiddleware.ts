@@ -18,7 +18,7 @@ async function loadServices() {
   if (!sessionService) {
     try {
       const SessionServiceModule = await import('../services/auth/SessionService');
-      sessionService = new SessionServiceModule.SessionService();
+      sessionService = new SessionServiceModule.SessionService({});
       console.log('✅ 기존 SessionService 로드 성공');
     } catch (error) {
       console.log('📦 SessionService 없음, 내장 서비스 사용');
