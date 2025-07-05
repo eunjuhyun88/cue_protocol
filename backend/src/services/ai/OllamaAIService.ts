@@ -210,48 +210,41 @@ export class OllamaAIService {
   /**
    * Ollama 서버 연결 상태 확인
    */
-  async checkConnection(): Promise<boolean> {
-    const now = Date.now();
+// 이 부분을 다음으로 교체:
+async checkConnection(): Promise<boolean> {
+  try {
+    console.log(`🔍 Ollama 연결 확인 중: ${this.baseUrl}`);
     
-    // 캐시된 연결 상태 사용 (성공한 경우만)
-    if (now - this.lastHealthCheck < this.healthCheckInterval && this.isAvailable) {
-      return this.isAvailable;
-    }
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(`${this.baseURL}/api/tags`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      this.isAvailable = true;
-      this.lastHealthCheck = now;
-      
-      return true;
-
-    } catch (error: any) {
-      this.isAvailable = false;
-      this.lastHealthCheck = now;
-      
-      if (error.name === 'AbortError') {
-        console.warn('⚠️ Ollama 서버 연결 시간 초과');
-      } else {
-        console.warn('⚠️ Ollama 서버 연결 실패:', error.message);
-      }
-      
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch(`${this.baseUrl}/api/tags`, {
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      console.warn(`⚠️ Ollama 서버 응답 오류: ${response.status}`);
       return false;
     }
+    
+    const data = await response.json();
+    console.log(`✅ Ollama 연결 성공, 모델 수: ${data.models?.length || 0}`);
+    return true;
+    
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      console.warn('⚠️ Ollama 서버 연결 타임아웃 (5초)');
+    } else if (error.message?.includes('ECONNREFUSED')) {
+      console.warn('⚠️ Ollama 서버가 실행되지 않음. `ollama serve` 명령으로 시작하세요.');
+    } else {
+      console.warn(`⚠️ Ollama 연결 실패: ${error.message}`);
+    }
+    return false;
   }
+}
 
   /**
    * 강제 헬스체크 (캐시 무시)

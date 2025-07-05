@@ -13,8 +13,8 @@ import cors from 'cors';
 import { Request, Response, NextFunction } from 'express';
 import { createServer } from 'http';
 import { DatabaseService } from '../database/DatabaseService';
-import { DIContainer } from './core/DIContainer';
-import SocketService from './services/socket/SocketService';
+import { DIContainer } from 'core/DIContainer';
+import SocketService from 'services/socket/SocketService';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
