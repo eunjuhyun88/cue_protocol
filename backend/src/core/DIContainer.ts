@@ -829,59 +829,6 @@ private async registerRoutes(): Promise<void> {
 }
 
 // ============================================================================
-// 🔍 강화된 팩토리 함수 탐지
-// ============================================================================
-
-private findCreateFunction(routeModule: any): Function | null {
-  console.log(`🔍 팩토리 함수 탐색... exports: ${Object.keys(routeModule).join(', ')}`);
-  
-  // 1순위: createXXXRoutes 패턴
-  const createRoutesFunctions = Object.keys(routeModule).filter(key => 
-    key.startsWith('create') && 
-    key.includes('Routes') && 
-    typeof routeModule[key] === 'function'
-  );
-  
-  if (createRoutesFunctions.length > 0) {
-    const functionName = createRoutesFunctions[0];
-    console.log(`🔍 createRoutes 패턴 발견: ${functionName}`);
-    return routeModule[functionName];
-  }
-
-  // 2순위: 특정 팩토리 함수명들
-  const factoryNames = [
-    'createUnifiedAuthRoutes',
-    'createAuthRoutes', 
-    'createRoutes',
-    'createRouter',
-    'create',
-    'factory',
-    'routerFactory'
-  ];
-  
-  for (const name of factoryNames) {
-    if (routeModule[name] && typeof routeModule[name] === 'function') {
-      console.log(`🔍 명명된 팩토리 함수 발견: ${name}`);
-      return routeModule[name];
-    }
-  }
-
-  // 3순위: 함수 타입의 모든 export 중 첫 번째
-  const allFunctions = Object.entries(routeModule)
-    .filter(([key, value]) => typeof value === 'function')
-    .map(([key]) => key);
-  
-  if (allFunctions.length === 1) {
-    const functionName = allFunctions[0];
-    console.log(`🔍 단일 함수 export 발견: ${functionName}`);
-    return routeModule[functionName];
-  }
-
-  console.error('❌ 팩토리 함수를 찾을 수 없음');
-  return null;
-}
-
-// ============================================================================
 // 🔍 Express Router 유효성 검사 강화
 // ============================================================================
 
@@ -950,18 +897,8 @@ public getRouterRegistrationStatus(): any {
 }
 
 // ============================================================================
-// 📝 로그 출력
-// ============================================================================
-
-console.log('🔧 DIContainer 라우터 등록 함수 수정 완료:');
-console.log('  ✅ 실제 존재하는 모든 파일 경로 확인됨');
-console.log('  ✅ session-restore, complete, debug, platform 파일들 모두 발견됨');
-console.log('  ✅ passport/index.ts와 passport/passport.ts 둘 다 등록됨');
-console.log('  ✅ 강화된 팩토리 함수 탐지 로직 적용됨');
-console.log('  ✅ 상세한 에러 로그 및 파일 시스템 확인 추가됨');
-// ============================================================================
 // 🔍 개선된 Express Router 유효성 검사
-// ============================================================================
+// ===========================================================================
 
 private isValidExpressRouter(router: any): boolean {
   if (!router) {
@@ -988,41 +925,6 @@ private isValidExpressRouter(router: any): boolean {
   return true;
 }
 
-
-  // ============================================================================
-  // 🔧 유틸리티 메서드들 (isValidExpressRouter 문법 오류 완전 해결)
-  // ============================================================================
-
-  /**
-   * Express Router 유효성 검사 (문법 오류 완전 해결됨)
-   */
-  private isValidExpressRouter(router: any): boolean {
-    if (!router || typeof router !== 'function') {
-      console.error(`❌ Router 검증 실패: router는 함수여야 함. 받은 타입: ${typeof router}`);
-      return false;
-    }
-
-    // Express Router의 핵심 메서드들 확인
-    const requiredMethods = ['use', 'get', 'post', 'put', 'delete', 'patch'];
-    const missingMethods = requiredMethods.filter(method => typeof router[method] !== 'function');
-    
-    if (missingMethods.length > 0) {
-      console.error(`❌ Router 검증 실패: 필수 메서드 누락: ${missingMethods.join(', ')}`);
-      return false;
-    }
-    
-    // Express Router의 고유 속성들 확인
-    const hasRouterProperties = 
-      (Array.isArray(router.stack) || router.stack === undefined) &&
-      (typeof router.params === 'object' || router.params === undefined);
-    
-    if (!hasRouterProperties) {
-      console.error('❌ Router 검증 실패: Express Router 속성 누락');
-      return false;
-    }
-    
-    return true;
-  }
 
   /**
    * 팩토리 함수 찾기

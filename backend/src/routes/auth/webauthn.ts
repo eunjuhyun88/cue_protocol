@@ -458,6 +458,399 @@ router.get('/health', (req: Request, res: Response): void => {
 });
 
 console.log('✅ WebAuthn routes loaded successfully (SupabaseService 문제 해결됨)');
+// ============================================================================
+// 🔧 백엔드 토큰 검증 API 추가
+// 파일: backend/src/routes/auth/webauthn.ts (기존 파일에 추가)
+// 용도: 새로고침 시 세션 복원을 위한 토큰 검증
+// ============================================================================
 
+// 기존 webauthn.ts 파일 마지막에 다음 API들을 추가하세요:
+
+// ============================================================================
+// 🔧 토큰 검증 API (세션 복원용)
+// POST /api/auth/verify-token
+// ============================================================================
+
+router.post('/verify-token', async (req: Request, res: Response): Promise<void> => {
+  try {
+    console.log('🔍 토큰 검증 요청 받음');
+    
+    const { token } = req.body;
+    
+    if (!token) {
+      res.status(400).json({
+        success: false,
+        error: 'Token is required',
+        message: '토큰이 필요합니다'
+      });
+      return;
+    }
+
+    // JWT 토큰 검증
+    let payload;
+    try {
+      payload = jwt.verify(token, jwtSecret) as any;
+      console.log('✅ JWT 토큰 검증 성공:', payload.userId);
+    } catch (jwtError: any) {
+      console.error('❌ JWT 토큰 검증 실패:', jwtError.message);
+      res.status(401).json({
+        success: false,
+        error: 'Invalid token',
+        message: '유효하지 않은 토큰입니다'
+      });
+      return;
+    }
+
+    // 사용자 정보 조회 (실제 DB에서)
+    let user;
+    try {
+      user = await db.getUserById(payload.userId);
+      
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          error: 'User not found',
+          message: '사용자를 찾을 수 없습니다'
+        });
+        return;
+      }
+    } catch (dbError: any) {
+      console.error('❌ 사용자 조회 실패:', dbError);
+      res.status(500).json({
+        success: false,
+        error: 'Database error',
+        message: '사용자 정보 조회 중 오류가 발생했습니다'
+      });
+      return;
+    }
+
+    // CUE 잔액 조회
+    let cueBalance = 0;
+    try {
+      cueBalance = await db.getCUEBalance(user.did);
+    } catch (cueError: any) {
+      console.error('❌ CUE 잔액 조회 실패:', cueError);
+      // CUE 잔액 조회 실패는 무시하고 계속 진행
+    }
+
+    // AI Passport 조회
+    let passport;
+    try {
+      passport = await db.getPassport(user.did);
+    } catch (passportError: any) {
+      console.error('❌ AI Passport 조회 실패:', passportError);
+      // Passport 조회 실패는 무시하고 계속 진행
+    }
+
+    console.log('✅ 토큰 검증 완료:', user.username);
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        did: user.did,
+        username: user.username,
+        email: user.email,
+        full_name: user.full_name,
+        cue_tokens: cueBalance,
+        passkey_registered: true,
+        last_login_at: user.last_login_at
+      },
+      passport,
+      tokenInfo: {
+        type: payload.type,
+        issuedAt: payload.iat,
+        expiresAt: payload.exp
+      },
+      message: '토큰이 유효합니다'
+    });
+
+  } catch (error: any) {
+    console.error('❌ 토큰 검증 오류:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Token verification failed',
+      message: '토큰 검증 중 오류가 발생했습니다',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ============================================================================
+// 🔧 로그아웃 API (토큰 무효화)
+// POST /api/auth/logout
+// ============================================================================
+
+router.post('/logout', async (req: Request, res: Response): Promise<void> => {
+  try {
+    console.log('🔓 로그아웃 요청 받음');
+    
+    const { token } = req.body;
+    
+    if (!token) {
+      res.status(400).json({
+        success: false,
+        error: 'Token is required',
+        message: '토큰이 필요합니다'
+      });
+      return;
+    }
+
+    // JWT 토큰 검증 (만료되었어도 사용자 정보는 추출)
+    let payload;
+    try {
+      payload = jwt.verify(token, jwtSecret, { ignoreExpiration: true }) as any;
+      console.log('🔍 로그아웃 대상 사용자:', payload.userId);
+    } catch (jwtError: any) {
+      console.error('❌ 토큰 파싱 실패:', jwtError.message);
+      // 토큰이 완전히 잘못되었어도 로그아웃은 성공으로 처리
+    }
+
+    // 실제로는 토큰 블랙리스트에 추가하거나 DB에서 세션 무효화
+    // 현재는 클라이언트에서 토큰을 삭제하는 것으로 충분
+
+    console.log('✅ 로그아웃 처리 완료');
+
+    res.json({
+      success: true,
+      message: '성공적으로 로그아웃되었습니다'
+    });
+
+  } catch (error: any) {
+    console.error('❌ 로그아웃 오류:', error);
+    
+    // 로그아웃은 항상 성공으로 처리 (클라이언트 세션 정리가 목적)
+    res.json({
+      success: true,
+      message: '로그아웃 처리됨'
+    });
+  }
+});
+
+// ============================================================================
+// 🔧 사용자 정보 업데이트 API (CUE 잔액 동기화용)
+// POST /api/auth/sync-user
+// ============================================================================
+
+router.post('/sync-user', async (req: Request, res: Response): Promise<void> => {
+  try {
+    console.log('🔄 사용자 정보 동기화 요청');
+    
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({
+        success: false,
+        error: 'No token provided',
+        message: '인증 토큰이 필요합니다'
+      });
+      return;
+    }
+
+    const token = authHeader.substring(7);
+    
+    // JWT 토큰 검증
+    let payload;
+    try {
+      payload = jwt.verify(token, jwtSecret) as any;
+    } catch (jwtError: any) {
+      res.status(401).json({
+        success: false,
+        error: 'Invalid token',
+        message: '유효하지 않은 토큰입니다'
+      });
+      return;
+    }
+
+    // 최신 사용자 정보 조회
+    const user = await db.getUserById(payload.userId);
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        error: 'User not found',
+        message: '사용자를 찾을 수 없습니다'
+      });
+      return;
+    }
+
+    // 최신 CUE 잔액 조회
+    const cueBalance = await db.getCUEBalance(user.did);
+
+    console.log('✅ 사용자 정보 동기화 완료:', user.username);
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        did: user.did,
+        username: user.username,
+        email: user.email,
+        full_name: user.full_name,
+        cue_tokens: cueBalance,
+        passkey_registered: true,
+        last_login_at: user.last_login_at
+      },
+      message: '사용자 정보가 동기화되었습니다'
+    });
+
+  } catch (error: any) {
+    console.error('❌ 사용자 동기화 오류:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Sync failed',
+      message: '사용자 정보 동기화에 실패했습니다'
+    });
+  }
+});
+
+// 기존 webauthn.ts 파일의 export default router; 앞에 위 코드들을 추가하세요
 // 라우터를 기본 내보내기로 명시적 export
+
+// ============================================================================
+// 🔧 백엔드 사용자 정보 조회 API 추가
+// 파일: backend/src/routes/auth/webauthn.ts (기존 파일에 추가)
+// 용도: useAuth.ts의 refreshUser()에서 호출하는 API
+// ============================================================================
+
+// 기존 webauthn.ts 파일에 다음 API를 추가하세요:
+
+// ============================================================================
+// 🔧 현재 사용자 정보 조회 API
+// GET /api/auth/me
+// ============================================================================
+
+router.get('/me', async (req: Request, res: Response): Promise<void> => {
+  try {
+    console.log('👤 현재 사용자 정보 조회 요청');
+    
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({
+        success: false,
+        error: 'No token provided',
+        message: '인증 토큰이 필요합니다'
+      });
+      return;
+    }
+
+    const token = authHeader.substring(7);
+    
+    // JWT 토큰 검증
+    let payload;
+    try {
+      payload = jwt.verify(token, jwtSecret) as any;
+      console.log('✅ JWT 토큰 검증 성공:', payload.userId);
+    } catch (jwtError: any) {
+      console.error('❌ JWT 토큰 검증 실패:', jwtError.message);
+      res.status(401).json({
+        success: false,
+        error: 'Invalid token',
+        message: '유효하지 않은 토큰입니다'
+      });
+      return;
+    }
+
+    // 사용자 정보 조회 (실제 DB에서)
+    let user;
+    try {
+      user = await db.getUserById(payload.userId);
+      
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          error: 'User not found',
+          message: '사용자를 찾을 수 없습니다'
+        });
+        return;
+      }
+    } catch (dbError: any) {
+      console.error('❌ 사용자 조회 실패:', dbError);
+      res.status(500).json({
+        success: false,
+        error: 'Database error',
+        message: '사용자 정보 조회 중 오류가 발생했습니다'
+      });
+      return;
+    }
+
+    // 최신 CUE 잔액 조회
+    let cueBalance = 0;
+    try {
+      cueBalance = await db.getCUEBalance(user.did);
+      console.log(`💰 최신 CUE 잔액: ${cueBalance}`);
+    } catch (cueError: any) {
+      console.error('❌ CUE 잔액 조회 실패:', cueError);
+      // CUE 잔액 조회 실패는 무시하고 기존 값 사용
+      cueBalance = user.cue_tokens || 0;
+    }
+
+    // AI Passport 조회
+    let passport;
+    try {
+      passport = await db.getPassport(user.did);
+      if (passport) {
+        console.log('✅ AI Passport 조회 성공');
+      }
+    } catch (passportError: any) {
+      console.error('❌ AI Passport 조회 실패:', passportError);
+      // Passport 조회 실패는 무시하고 계속 진행
+    }
+
+    // 최근 CUE 거래 조회 (선택적)
+    let recentTransactions = [];
+    try {
+      recentTransactions = await db.getCUETransactions(user.did, 5);
+    } catch (txError: any) {
+      console.error('❌ CUE 거래 내역 조회 실패:', txError);
+      // 거래 내역 조회 실패는 무시
+    }
+
+    console.log('✅ 사용자 정보 조회 완료:', user.username);
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        did: user.did,
+        username: user.username,
+        email: user.email,
+        full_name: user.full_name,
+        display_name: user.display_name,
+        cue_tokens: cueBalance, // 최신 CUE 잔액
+        cueBalance: cueBalance, // useAuth.ts 호환성
+        trust_score: user.trust_score || 50,
+        trustScore: user.trust_score || 50, // useAuth.ts 호환성
+        passport_level: passport?.level || 'Basic',
+        passportLevel: passport?.level || 'Basic', // useAuth.ts 호환성
+        passkey_registered: true,
+        last_login_at: user.last_login_at,
+        created_at: user.created_at,
+        updated_at: user.updated_at
+      },
+      passport,
+      recentActivity: {
+        recentTransactions: recentTransactions.slice(0, 3),
+        lastLoginAt: user.last_login_at,
+        totalInteractions: passport?.total_interactions || 0
+      },
+      tokenInfo: {
+        type: payload.type,
+        userId: payload.userId,
+        credentialId: payload.credentialId,
+        issuedAt: payload.iat,
+        expiresAt: payload.exp
+      },
+      message: '사용자 정보 조회 성공'
+    });
+
+  } catch (error: any) {
+    console.error('❌ 사용자 정보 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      error: 'User info retrieval failed',
+      message: '사용자 정보 조회 중 오류가 발생했습니다',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 export default router;
