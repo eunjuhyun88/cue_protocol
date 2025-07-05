@@ -1,9 +1,9 @@
 // ============================================================================
-// 🚀 AI Personal Ultimate Production Backend - 무한루프 해결 통합 최종 버전
-// 파일: backend/src/app.ts (기존 파일 완전 교체)
-// 통합 기능: DI Container + CryptoService + 무한루프 방지 + Production Ready
-// 특징: 모든 서비스 실제 연동, 안전한 초기화, 스마트 상태 관리
-// 버전: v3.1.0-infinite-loop-fixed-ultimate
+// 🚀 AI Personal Ultimate Fusion Backend - Production Ready
+// 파일: backend/src/app.ts (완전 통합 버전)
+// 융합: 1번 라우트 로딩 방식 + 2번 모든 기능 (DI Container + CryptoService)
+// 특징: 안전한 라우트 로딩 + 무한루프 방지 + Production Ready
+// 버전: v3.2.0-ultimate-fusion
 // ============================================================================
 
 import express, { Request, Response, NextFunction } from 'express';
@@ -25,7 +25,7 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 // ✅ HTTP 서버 생성 (Socket.IO 지원)
 const httpServer = createServer(app);
 
-console.log('🚀 === AI Personal Ultimate Backend 시작 (무한루프 해결) ===');
+console.log('🚀 === AI Personal Ultimate Fusion Backend 시작 ===');
 console.log(`🌍 환경: ${NODE_ENV}`);
 console.log(`🔗 프론트엔드: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
 
@@ -53,7 +53,8 @@ let initializationFlags = {
   healthCheckRunning: false,
   lastInitTime: 0,
   vaultTestRunning: false,
-  serviceStatusChecking: false
+  serviceStatusChecking: false,
+  routesLoaded: false
 };
 
 // 서비스 초기화 쿨다운 (60초)
@@ -130,9 +131,6 @@ async function initializeCryptoServiceSafely(): Promise<void> {
     } else {
       console.log('📋 암호화 기능 이미 테스트됨 (중복 방지)');
     }
-    
-    // ⚠️ Vault 테스트는 초기화 시 실행하지 않음 (API 요청 시에만)
-    console.log('📋 Vault 암호화 테스트는 /api/crypto/test 요청 시에만 실행됩니다');
     
     console.log('✅ CryptoService 안전한 초기화 완료');
     
@@ -438,167 +436,240 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 // ============================================================================
-// 🏥 안전한 헬스체크 시스템 (무한루프 완전 방지)
+// 🏥 Health Check 엔드포인트 (1번 파일 방식)
 // ============================================================================
 
-app.get('/health', async (req: Request, res: Response) => {
-  try {
-    // 헬스체크 중복 실행 방지
-    if (initializationFlags.healthCheckRunning) {
-      return res.json({
-        status: 'checking',
-        timestamp: new Date().toISOString(),
-        message: 'Health check already in progress',
-        requestId: (req as any).requestId
-      });
-    }
-    
-    initializationFlags.healthCheckRunning = true;
-    
-    const health = {
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      environment: NODE_ENV,
-      version: '3.1.0-infinite-loop-fixed-ultimate',
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      requestId: (req as any).requestId,
-      services: {} as any,
-      features: {
-        webauthnAuth: !!services.webauthn,
-        sessionManagement: !!services.sessionRestore,
-        realTimeUpdates: !!services.websocket,
-        aiIntegration: !!services.ollamaAI,
-        diContainer: !!container,
-        dataEncryption: !!services.crypto,
-        cryptoServiceDI: !!services.crypto && !!container?.has('CryptoService'),
-        databaseConnection: !!services.database,
-        infiniteLoopPrevention: true  // 추가
-      }
-    };
-
-    // ✨ 안전한 서비스 상태 수집 (무한루프 방지, 타임아웃 적용)
-    const serviceChecks = [
-      { 
-        name: 'database', 
-        service: services.database, 
-        method: 'getStatus',
-        timeout: 2000 
-      },
-      { 
-        name: 'websocket', 
-        service: services.websocket, 
-        method: 'getStatus', 
-        timeout: 1000 
-      }
-    ];
-
-    for (const { name, service, method, timeout } of serviceChecks) {
-      if (service && typeof service[method] === 'function') {
-        try {
-          const statusPromise = service[method]();
-          const timeoutPromise = new Promise(resolve => 
-            setTimeout(() => resolve({ status: 'timeout' }), timeout)
-          );
-          
-          health.services[name] = await Promise.race([statusPromise, timeoutPromise]);
-        } catch (error: any) {
-          health.services[name] = { 
-            status: 'error', 
-            error: error.message,
-            timestamp: new Date().toISOString()
-          };
-        }
-      } else {
-        health.services[name] = { 
-          status: 'not_available',
-          timestamp: new Date().toISOString()
-        };
-      }
-    }
-
-    // 🔐 CryptoService 간단한 상태만 체크 (테스트 실행 안함)
-    if (services.crypto) {
-      try {
-        const cryptoStatus = services.crypto.getStatus();
-        health.services.crypto = {
-          status: cryptoStatus.status,
-          keyConfigured: cryptoStatus.keyConfigured,
-          operationCount: cryptoStatus.operationCount,
-          diIntegrated: !!container?.has('CryptoService'),
-          testSkipped: true,
-          note: 'Detailed tests available via /api/crypto/test'
-        };
-      } catch (error: any) {
-        health.services.crypto = {
-          status: 'error',
-          error: error.message,
-          timestamp: new Date().toISOString()
-        };
-      }
-    }
-
-    // 🤖 AI 서비스 간단한 상태만 체크 (연결 확인 안함)
-    if (services.ollamaAI) {
-      health.services.ai = {
-        status: 'available',
-        connected: 'unknown',
-        timestamp: new Date().toISOString(),
-        connectionSkipped: true,
-        note: 'Connection check available via /api/ai/status'
-      };
-    } else {
-      health.services.ai = {
-        status: 'not_available',
-        timestamp: new Date().toISOString()
-      };
-    }
-
-    // DI Container 상태 (간단한 확인만)
-    if (container) {
-      try {
-        health.services.diContainer = {
-          status: 'active',
-          servicesRegistered: container.has ? 'check_available' : 'unknown',
-          cryptoServiceRegistered: container.has ? container.has('CryptoService') : 'unknown',
-          timestamp: new Date().toISOString(),
-          note: 'Detailed status available via /api/debug/container'
-        };
-      } catch (error: any) {
-        health.services.diContainer = { 
-          status: 'error', 
-          error: error.message 
-        };
-      }
-    }
-
-    // 전체 상태 판단 (간단한 기준)
-    const hasErrors = Object.values(health.services).some((service: any) => 
-      service.status === 'error'
-    );
-    
-    if (hasErrors) {
-      health.status = 'degraded';
-    }
-
-    initializationFlags.healthCheckRunning = false;
-    res.json(health);
-
-  } catch (error: any) {
-    initializationFlags.healthCheckRunning = false;
-    console.error('❌ 헬스체크 실패:', error);
-    res.status(500).json({
-      status: 'error',
-      timestamp: new Date().toISOString(),
-      error: error.message,
-      requestId: (req as any).requestId,
-      note: 'Safe health check with infinite loop prevention'
-    });
-  }
+app.get('/health', (req: Request, res: Response) => {
+  const requestOrigin = req.get('Origin') || 'no-origin';
+  
+  console.log(`🏥 Health Check 요청: ${requestOrigin}`);
+  
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    service: 'AI Passport CUE Backend',
+    version: '3.2.0-ultimate-fusion',
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    cors: {
+      enabled: true,
+      requestOrigin: requestOrigin,
+      allowAllOrigins: true
+    },
+    features: {
+      webauthnAuth: !!services.webauthn,
+      sessionManagement: !!services.sessionRestore,
+      realTimeUpdates: !!services.websocket,
+      aiIntegration: !!services.ollamaAI,
+      diContainer: !!container,
+      dataEncryption: !!services.crypto,
+      cryptoServiceDI: !!services.crypto && !!container?.has('CryptoService'),
+      databaseConnection: !!services.database,
+      infiniteLoopPrevention: true
+    },
+    endpoints: [
+      'GET /health',
+      'POST /api/auth/webauthn/register/start',
+      'POST /api/auth/webauthn/register/complete',
+      'POST /api/auth/webauthn/login/start', 
+      'POST /api/auth/webauthn/login/complete',
+      'GET /api/auth/webauthn/status',
+      'POST /api/ai/chat',
+      'POST /api/cue/mine',
+      'GET /api/cue/:userDid/balance',
+      'POST /api/vault/save',
+      'POST /api/vault/search',
+      'GET /api/passport/:did'
+    ]
+  });
 });
 
 // ============================================================================
-// 🔐 CryptoService 안전한 API 엔드포인트 (무한루프 방지)
+// 🛣️ 안전한 라우트 로딩 시스템 (1번 파일 방식 + 2번 기능)
+// ============================================================================
+
+/**
+ * 🛣️ 안전한 라우트 로딩 (1번 파일 방식)
+ */
+async function loadRoutesSafely() {
+  try {
+    if (initializationFlags.routesLoaded) {
+      console.log('📋 라우트 이미 로드됨 (중복 방지)');
+      return;
+    }
+
+    console.log('🚀 ===== 안전한 라우트 로딩 시작 =====');
+
+    // ✅ WebAuthn 라우트 (가장 중요 - 우선 로드)
+    console.log('📡 Loading WebAuthn routes...');
+    try {
+      const webauthnModule = await import('./routes/auth/webauthn');
+      const webauthnRouter = webauthnModule.default;
+      
+      if (webauthnRouter && typeof webauthnRouter === 'function') {
+        app.use('/api/auth/webauthn', webauthnRouter);
+        console.log('✅ WebAuthn routes loaded successfully at /api/auth/webauthn');
+      } else {
+        console.error('❌ WebAuthn router is not a valid Express router');
+        console.log('WebAuthn module exports:', Object.keys(webauthnModule));
+      }
+    } catch (error) {
+      console.error('❌ Failed to load WebAuthn routes:', error);
+      console.error('Stack:', error.stack);
+    }
+
+    // ✅ 통합 인증 라우트 (2번 파일에서 추가)
+    console.log('📡 Loading Unified Auth routes...');
+    try {
+      const unifiedAuthModule = await import('./routes/auth/unified');
+      const unifiedAuthRouter = unifiedAuthModule.default;
+      if (unifiedAuthRouter) {
+        app.use('/api/auth', unifiedAuthRouter);
+        console.log('✅ Unified Auth routes loaded successfully');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load Unified Auth routes:', error);
+    }
+
+    // ✅ 세션 복원 라우트 (2번 파일에서 추가)
+    console.log('📡 Loading Session Restore routes...');
+    try {
+      const sessionRestoreModule = await import('./routes/auth/session-restore');
+      const sessionRestoreRouter = sessionRestoreModule.default;
+      if (sessionRestoreRouter) {
+        app.use('/api/auth/session', sessionRestoreRouter);
+        console.log('✅ Session Restore routes loaded successfully');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load Session Restore routes:', error);
+    }
+
+    // ✅ AI 채팅 라우트
+    console.log('📡 Loading AI routes...');
+    try {
+      const aiModule = await import('./routes/ai/index');
+      const aiRouter = aiModule.default;
+      if (aiRouter) {
+        app.use('/api/ai', aiRouter);
+        console.log('✅ AI routes loaded successfully');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load AI routes:', error);
+      
+      // AI 인덱스 파일이 없으면 개별 파일 시도
+      try {
+        const aiChatModule = await import('./routes/ai/chat');
+        const aiChatRouter = aiChatModule.default;
+        if (aiChatRouter) {
+          app.use('/api/ai', aiChatRouter);
+          console.log('✅ AI Chat routes loaded successfully (fallback)');
+        }
+      } catch (fallbackError) {
+        console.error('❌ Failed to load AI Chat routes (fallback):', fallbackError);
+      }
+    }
+
+    // ✅ Passport 라우트
+    console.log('📡 Loading Passport routes...');
+    try {
+      const passportModule = await import('./routes/passport/index');
+      const passportRouter = passportModule.default;
+      if (passportRouter) {
+        app.use('/api/passport', passportRouter);
+        console.log('✅ Passport routes loaded successfully');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load Passport routes:', error);
+      
+      // 인덱스 파일이 없으면 개별 파일 시도
+      try {
+        const passportMainModule = await import('./routes/passport/passport');
+        const passportMainRouter = passportMainModule.default;
+        if (passportMainRouter) {
+          app.use('/api/passport', passportMainRouter);
+          console.log('✅ Passport routes loaded successfully (fallback)');
+        }
+      } catch (fallbackError) {
+        console.error('❌ Failed to load Passport routes (fallback):', fallbackError);
+      }
+    }
+
+    // ✅ CUE 라우트
+    console.log('📡 Loading CUE routes...');
+    try {
+      const cueModule = await import('./routes/cue/index');
+      const cueRouter = cueModule.default;
+      if (cueRouter) {
+        app.use('/api/cue', cueRouter);
+        console.log('✅ CUE routes loaded successfully');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load CUE routes:', error);
+      
+      // 인덱스 파일이 없으면 개별 파일 시도
+      try {
+        const cueMainModule = await import('./routes/cue/cue');
+        const cueMainRouter = cueMainModule.default;
+        if (cueMainRouter) {
+          app.use('/api/cue', cueMainRouter);
+          console.log('✅ CUE routes loaded successfully (fallback)');
+        }
+      } catch (fallbackError) {
+        console.error('❌ Failed to load CUE routes (fallback):', fallbackError);
+      }
+    }
+
+    // ✅ Data Vault 라우트
+    console.log('📡 Loading Data Vault routes...');
+    try {
+      const vaultModule = await import('./routes/vault/index');
+      const vaultRouter = vaultModule.default;
+      if (vaultRouter) {
+        app.use('/api/vault', vaultRouter);
+        console.log('✅ Data Vault routes loaded successfully');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load Data Vault routes:', error);
+    }
+
+    // ✅ Platform 라우트 (2번 파일에서 추가)
+    console.log('📡 Loading Platform routes...');
+    try {
+      const platformModule = await import('./routes/platform/index');
+      const platformRouter = platformModule.default;
+      if (platformRouter) {
+        app.use('/api/platform', platformRouter);
+        console.log('✅ Platform routes loaded successfully');
+      }
+    } catch (error) {
+      console.error('❌ Failed to load Platform routes:', error);
+    }
+
+    // ✅ 디버그 라우트 (개발 환경만)
+    if (NODE_ENV === 'development') {
+      console.log('📡 Loading Debug routes...');
+      try {
+        const debugModule = await import('./routes/debug/index');
+        const debugRouter = debugModule.default;
+        if (debugRouter) {
+          app.use('/api/debug', debugRouter);
+          console.log('✅ Debug routes loaded successfully (development mode)');
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to load Debug routes:', error);
+      }
+    }
+
+    initializationFlags.routesLoaded = true;
+    console.log('🚀 ===== 안전한 라우트 로딩 완료 =====');
+
+  } catch (error) {
+    console.error('❌ Routes loading failed:', error);
+  }
+}
+
+// ============================================================================
+// 🔐 CryptoService 안전한 API 엔드포인트 (2번 파일 기능)
 // ============================================================================
 
 /**
@@ -726,7 +797,7 @@ app.get('/api/crypto/status', (req: Request, res: Response) => {
 });
 
 // ============================================================================
-// 🤖 AI 서비스 안전한 API 엔드포인트 (무인루프 방지)
+// 🤖 AI 서비스 안전한 API 엔드포인트 (2번 파일 기능)
 // ============================================================================
 
 /**
@@ -790,146 +861,8 @@ app.get('/api/ai/status', async (req: Request, res: Response) => {
   }
 });
 
-// ============================================================================
-// 📡 Production 라우트 설정 (안전한 로딩)
-// ============================================================================
-
-async function setupProductionRoutes(): Promise<void> {
-  console.log('📡 === Production 라우트 설정 시작 ===');
-
-  // 1️⃣ WebAuthn 인증 라우트 (최우선 - 필수)
-  try {
-    const webauthnRoutes = await import('./routes/auth/webauthn');
-    const router = webauthnRoutes.default || webauthnRoutes;
-    app.use('/api/auth/webauthn', router);
-    console.log('✅ WebAuthn 라우트 등록 완료');
-  } catch (error: any) {
-    console.error('❌ WebAuthn 라우트 로드 실패:', error);
-    throw new Error('WebAuthn 라우트는 필수입니다');
-  }
-
-  // 2️⃣ 기타 라우트들 (안전한 로딩)
-  const routeConfigs = [
-    { path: './routes/auth/unified', mount: '/api/auth', name: '통합 인증' },
-    { path: './routes/auth/session-restore', mount: '/api/auth/session', name: '세션 관리' },
-    { path: './routes/ai/index', mount: '/api/ai', name: 'AI 서비스' },
-    { path: './routes/cue/index', mount: '/api/cue', name: 'CUE 토큰' },
-    { path: './routes/passport/index', mount: '/api/passport', name: 'AI Passport' },
-    { path: './routes/vault/index', mount: '/api/vault', name: 'Data Vault' },
-    { path: './routes/platform/index', mount: '/api/platform', name: 'Platform' }
-  ];
-
-  for (const config of routeConfigs) {
-    try {
-      const routeModule = await import(config.path);
-      const router = routeModule.default || routeModule.createRoutes?.() || routeModule;
-      app.use(config.mount, router);
-      console.log(`✅ ${config.name} 라우트 등록 완료`);
-    } catch (error: any) {
-      console.warn(`⚠️ ${config.name} 라우트 로드 실패:`, error.message);
-    }
-  }
-
-  // 3️⃣ 디버그 라우트 (개발 환경만)
-  if (NODE_ENV === 'development') {
-    try {
-      const debugRoutes = await import('./routes/debug/index');
-      app.use('/api/debug', debugRoutes.default);
-      console.log('✅ 디버그 라우트 등록 완료 (개발 모드)');
-    } catch (error: any) {
-      console.warn('⚠️ 디버그 라우트 로드 실패:', error.message);
-    }
-  }
-
-  console.log('🎯 === Production 라우트 설정 완료 ===');
-}
-
-// ============================================================================
-// 🔧 범용 세션 관리 API (빠진 부분 추가)
-// ============================================================================
-
 /**
- * 범용 세션 복원 API
- */
-app.post('/api/session/restore', async (req: Request, res: Response) => {
-  try {
-    console.log('🔄 범용 세션 복원 요청');
-    
-    const { sessionToken, sessionId } = req.body;
-    
-    if (!sessionToken && !sessionId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Session identifier required',
-        message: 'sessionToken 또는 sessionId가 필요합니다'
-      });
-    }
-
-    if (!services.sessionRestore) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service unavailable',
-        message: 'SessionRestoreService를 사용할 수 없습니다'
-      });
-    }
-
-    const result = await services.sessionRestore.restoreSession(sessionToken, sessionId);
-    
-    if (result.success) {
-      console.log('✅ 범용 세션 복원 성공:', result.user?.username);
-      res.json(result);
-    } else {
-      console.log('❌ 범용 세션 복원 실패:', result.message);
-      res.status(401).json(result);
-    }
-
-  } catch (error: any) {
-    console.error('💥 범용 세션 복원 오류:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Session restore failed',
-      message: error.message
-    });
-  }
-});
-
-/**
- * 범용 로그아웃 API
- */
-app.post('/api/session/logout', async (req: Request, res: Response) => {
-  try {
-    console.log('🚪 범용 로그아웃 요청');
-    
-    const { sessionToken, sessionId } = req.body;
-    
-    if (!services.sessionRestore) {
-      return res.status(503).json({
-        success: false,
-        error: 'Service unavailable'
-      });
-    }
-
-    const result = await services.sessionRestore.logout(sessionToken, sessionId);
-    
-    console.log(`${result.success ? '✅' : '❌'} 범용 로그아웃 ${result.success ? '성공' : '실패'}`);
-    res.json(result);
-
-  } catch (error: any) {
-    console.error('💥 범용 로그아웃 오류:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Logout failed',
-      message: error.message
-    });
-  }
-});
-
-// ============================================================================
-// 🤖 AI 서비스 완전한 API 엔드포인트 (빠진 부분 추가)
-// ============================================================================
-
-/**
- * 🤖 AI 채팅 API (안전한 메서드 호출)
+ * 🤖 AI 채팅 API (2번 파일 기능)
  */
 app.post('/api/ai/chat', async (req: Request, res: Response) => {
   try {
@@ -1076,32 +1009,117 @@ app.get('/api/ai/models', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
-// 🔌 WebSocket 정보 API (빠진 부분 추가)
+// 🔧 범용 세션 관리 API (2번 파일 기능)
 // ============================================================================
 
-if (services.websocket) {
-  app.get('/api/websocket/info', (req: Request, res: Response) => {
-    try {
-      const status = services.websocket.getStatus();
-      res.json({
-        status: 'active',
-        endpoint: '/socket.io/',
-        connectedUsers: status.connectedUsers || 0,
-        features: ['real-time-cue', 'live-updates', 'ai-streaming'],
-        timestamp: new Date().toISOString()
-      });
-    } catch (error: any) {
-      res.status(500).json({
+/**
+ * 범용 세션 복원 API
+ */
+app.post('/api/session/restore', async (req: Request, res: Response) => {
+  try {
+    console.log('🔄 범용 세션 복원 요청');
+    
+    const { sessionToken, sessionId } = req.body;
+    
+    if (!sessionToken && !sessionId) {
+      return res.status(400).json({
         success: false,
-        error: 'WebSocket status unavailable',
-        message: error.message
+        error: 'Session identifier required',
+        message: 'sessionToken 또는 sessionId가 필요합니다'
       });
     }
-  });
-}
+
+    if (!services.sessionRestore) {
+      return res.status(503).json({
+        success: false,
+        error: 'Service unavailable',
+        message: 'SessionRestoreService를 사용할 수 없습니다'
+      });
+    }
+
+    const result = await services.sessionRestore.restoreSession(sessionToken, sessionId);
+    
+    if (result.success) {
+      console.log('✅ 범용 세션 복원 성공:', result.user?.username);
+      res.json(result);
+    } else {
+      console.log('❌ 범용 세션 복원 실패:', result.message);
+      res.status(401).json(result);
+    }
+
+  } catch (error: any) {
+    console.error('💥 범용 세션 복원 오류:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Session restore failed',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * 범용 로그아웃 API
+ */
+app.post('/api/session/logout', async (req: Request, res: Response) => {
+  try {
+    console.log('🚪 범용 로그아웃 요청');
+    
+    const { sessionToken, sessionId } = req.body;
+    
+    if (!services.sessionRestore) {
+      return res.status(503).json({
+        success: false,
+        error: 'Service unavailable'
+      });
+    }
+
+    const result = await services.sessionRestore.logout(sessionToken, sessionId);
+    
+    console.log(`${result.success ? '✅' : '❌'} 범용 로그아웃 ${result.success ? '성공' : '실패'}`);
+    res.json(result);
+
+  } catch (error: any) {
+    console.error('💥 범용 로그아웃 오류:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Logout failed',
+      message: error.message
+    });
+  }
+});
 
 // ============================================================================
-// 🔧 범용 API 정보 엔드포인트
+// 🔌 WebSocket 정보 API (2번 파일 기능)
+// ============================================================================
+
+app.get('/api/websocket/info', (req: Request, res: Response) => {
+  try {
+    if (!services.websocket) {
+      return res.status(503).json({
+        success: false,
+        error: 'WebSocket service not available'
+      });
+    }
+
+    const status = services.websocket.getStatus();
+    res.json({
+      status: 'active',
+      endpoint: '/socket.io/',
+      connectedUsers: status.connectedUsers || 0,
+      features: ['real-time-cue', 'live-updates', 'ai-streaming'],
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: 'WebSocket status unavailable',
+      message: error.message
+    });
+  }
+});
+
+// ============================================================================
+// 🔧 범용 API 정보 엔드포인트 (2번 파일 기능)
 // ============================================================================
 
 /**
@@ -1127,13 +1145,15 @@ app.get('/api', (req: Request, res: Response) => {
 
   if (services.ollamaAI) {
     endpoints.ai.push(
-      'GET /api/ai/status - AI 서비스 상태 (무한루프 방지)'
+      'GET /api/ai/status - AI 서비스 상태 (무한루프 방지)',
+      'POST /api/ai/chat - AI 채팅',
+      'GET /api/ai/models - AI 모델 목록'
     );
   }
 
   res.json({
-    name: 'AI Personal Ultimate Backend API',
-    version: '3.1.0-infinite-loop-fixed-ultimate',
+    name: 'AI Personal Ultimate Fusion Backend API',
+    version: '3.2.0-ultimate-fusion',
     status: 'operational',
     timestamp: new Date().toISOString(),
     environment: NODE_ENV,
@@ -1145,7 +1165,8 @@ app.get('/api', (req: Request, res: Response) => {
       diContainer: !!container,
       cryptoServiceDI: !!services.crypto && !!container?.has('CryptoService'),
       dataEncryption: !!services.crypto,
-      infiniteLoopPrevention: true
+      infiniteLoopPrevention: true,
+      safeRouteLoading: true
     },
     endpoints,
     health: '/health',
@@ -1153,22 +1174,22 @@ app.get('/api', (req: Request, res: Response) => {
       cryptoTestCooldown: !initializationFlags.vaultTestRunning,
       aiConnectionCooldown: !initializationFlags.serviceStatusChecking,
       healthCheckCooldown: !initializationFlags.healthCheckRunning,
-      initializationCooldown: Date.now() - initializationFlags.lastInitTime > INITIALIZATION_COOLDOWN
+      initializationCooldown: Date.now() - initializationFlags.lastInitTime > INITIALIZATION_COOLDOWN,
+      routesLoaded: initializationFlags.routesLoaded
     }
   });
 });
 
 // ============================================================================
-// 🚨 에러 핸들링
+// 🔍 404 및 에러 처리 (1번 파일 방식)
 // ============================================================================
 
-/**
- * 404 핸들러
- */
 app.use('*', (req: Request, res: Response) => {
+  const requestOrigin = req.get('Origin') || 'no-origin';
+  
   console.log(`❌ 404 - 경로를 찾을 수 없음: ${req.method} ${req.originalUrl}`);
   
-  res.status(404).json({
+  res.status(404).json({ 
     success: false,
     error: 'Not Found',
     message: `경로 '${req.originalUrl}'을 찾을 수 없습니다`,
@@ -1179,41 +1200,24 @@ app.use('*', (req: Request, res: Response) => {
   });
 });
 
-/**
- * 전역 에러 핸들러
- */
 app.use((error: any, req: Request, res: Response, next: NextFunction) => {
-  console.error('💥 전역 에러:', {
-    error: error.message,
-    stack: NODE_ENV === 'development' ? error.stack : undefined,
-    url: req.originalUrl,
-    method: req.method,
-    requestId: (req as any).requestId,
-    timestamp: new Date().toISOString()
-  });
-  
-  res.status(error.status || 500).json({
+  console.error('🚨 서버 에러:', error);
+  res.status(500).json({
     success: false,
-    error: error.name || 'Internal Server Error',
-    message: NODE_ENV === 'production' 
-      ? '서버 내부 오류가 발생했습니다' 
-      : error.message,
+    error: 'Internal server error',
+    message: 'An unexpected error occurred',
     timestamp: new Date().toISOString(),
-    requestId: (req as any).requestId,
-    path: req.originalUrl,
-    method: req.method,
-    infiniteLoopPrevention: true,
-    ...(NODE_ENV === 'development' && { stack: error.stack })
+    requestId: (req as any).requestId
   });
 });
 
 // ============================================================================
-// 🚀 Ultimate 서버 시작 프로세스 (무한루프 방지)
+// 🚀 Ultimate Fusion 서버 시작 프로세스
 // ============================================================================
 
-async function startUltimateServer(): Promise<void> {
+async function startUltimateFusionServer(): Promise<void> {
   try {
-    console.log('\n🚀 === Ultimate Production 서버 시작 시퀀스 (무한루프 방지) ===');
+    console.log('\n🚀 === Ultimate Fusion 서버 시작 시퀀스 ===');
     
     // 1. 데이터베이스 연결 확인 (안전한 방식)
     try {
@@ -1231,20 +1235,21 @@ async function startUltimateServer(): Promise<void> {
       throw new Error('필수 서비스 초기화 실패');
     }
 
-    // 3. Production 라우트 설정
-    await setupProductionRoutes();
+    // 3. 안전한 라우트 로딩 (1번 파일 방식)
+    await loadRoutesSafely();
 
     // 4. HTTP 서버 시작
     const server = httpServer.listen(PORT, () => {
-      console.log('\n🎉 === AI Personal Ultimate Backend 완전 시작 (무한루프 해결) ===');
+      console.log('\n🎉 === AI Personal Ultimate Fusion Backend 완전 시작 ===');
       console.log(`🌐 서버 주소: http://localhost:${PORT}`);
       console.log(`🔧 환경: ${NODE_ENV}`);
       console.log(`⏰ 시작 시간: ${new Date().toISOString()}`);
       
-      console.log('\n🔥 === Ultimate Production 기능 (무한루프 해결) ===');
-      console.log('✅ 완전한 DI Container 서비스 관리');
-      console.log('✅ CryptoService DI 완전 통합');
-      console.log('✅ 무한루프 완전 방지 시스템');
+      console.log('\n🔥 === Ultimate Fusion 기능 ===');
+      console.log('✅ 안전한 라우트 로딩 시스템 (1번 파일)');
+      console.log('✅ 완전한 DI Container 서비스 관리 (2번 파일)');
+      console.log('✅ CryptoService DI 완전 통합 (2번 파일)');
+      console.log('✅ 무한루프 완전 방지 시스템 (2번 파일)');
       console.log('✅ 안전한 서비스 초기화 (쿨다운 적용)');
       console.log('✅ 타임아웃 기반 상태 확인');
       console.log('✅ WebAuthn 패스키 인증');
@@ -1264,33 +1269,34 @@ async function startUltimateServer(): Promise<void> {
       if (services.websocket) {
         console.log('🔌 WebSocket: /socket.io/');
       }
-      console.log('🏥 헬스체크: /health (무한루프 방지)');
-      console.log('📋 API 정보: /api');
+      console.log('🏥 헬스체크: /health (1번 방식)');
+      console.log('📋 API 정보: /api (2번 기능)');
       
       console.log('\n==============================================');
-      console.log('🚀 Ultimate Production Backend Ready!');
+      console.log('🚀 Ultimate Fusion Backend Ready!');
+      console.log('🔀 1번 라우트 로딩 + 2번 모든 기능');
       console.log('🚫 무한루프 완전 해결');
       console.log('💎 안전한 서비스 초기화');
       console.log('⚡ 최적화된 성능');
       console.log('==============================================');
     });
 
-    // 5. 우아한 종료 설정
+    // 5. 우아한 종료 설정 (2번 파일 방식)
     setupGracefulShutdown(server);
 
   } catch (error: any) {
-    console.error('💥 Ultimate 서버 시작 실패:', error);
+    console.error('💥 Ultimate Fusion 서버 시작 실패:', error);
     process.exit(1);
   }
 }
 
 // ============================================================================
-// 🛑 완전한 우아한 종료 처리
+// 🛑 완전한 우아한 종료 처리 (2번 파일 방식)
 // ============================================================================
 
 function setupGracefulShutdown(server: any): void {
   const shutdown = async (signal: string) => {
-    console.log(`\n🛑 ${signal} 신호 수신 - Ultimate 우아한 종료 시작...`);
+    console.log(`\n🛑 ${signal} 신호 수신 - Ultimate Fusion 우아한 종료 시작...`);
     
     try {
       // 1. 새로운 연결 거부
@@ -1334,7 +1340,7 @@ function setupGracefulShutdown(server: any): void {
         console.warn('⚠️ 데이터베이스 종료 실패:', dbError);
       }
 
-      console.log('👋 Ultimate 서버 종료 완료 (무한루프 해결)');
+      console.log('👋 Ultimate Fusion 서버 종료 완료');
       process.exit(0);
 
     } catch (error: any) {
@@ -1359,11 +1365,11 @@ function setupGracefulShutdown(server: any): void {
 }
 
 // ============================================================================
-// 🏁 Ultimate 서버 시작 실행
+// 🏁 Ultimate Fusion 서버 시작 실행
 // ============================================================================
 
-startUltimateServer().catch(error => {
-  console.error('💥 Ultimate 서버 시작 중 치명적 오류:', error);
+startUltimateFusionServer().catch(error => {
+  console.error('💥 Ultimate Fusion 서버 시작 중 치명적 오류:', error);
   process.exit(1);
 });
 
@@ -1378,5 +1384,5 @@ export {
   httpServer,
   container,
   services,
-  initializationFlags  // 무한루프 방지 플래그 추가 export
+  initializationFlags  // 무한루프 방지 플래그 export
 };
