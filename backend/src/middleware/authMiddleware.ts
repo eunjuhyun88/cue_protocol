@@ -1,6 +1,7 @@
 // ============================================================================
-// 📁 backend/src/middleware/authMiddleware.ts (완전 수정)
-// 🔧 force_token 문제 완전 해결 + 기존 서비스 100% 활용
+// 📁 backend/src/middleware/authMiddleware.ts - force_token 완전 차단 강화 버전
+// 🚀 수정 위치: backend/src/middleware/authMiddleware.ts (기존 파일 교체)
+// 🔧 paste.txt 기반 + force_token 문제 완전 해결 + 기존 서비스 100% 활용
 // ============================================================================
 
 import { Request, Response, NextFunction } from 'express';
@@ -18,7 +19,7 @@ async function loadServices() {
   if (!sessionService) {
     try {
       const SessionServiceModule = await import('../services/auth/SessionService');
-      sessionService = new SessionServiceModule.SessionService({});
+      sessionService = new SessionServiceModule.SessionService();
       console.log('✅ 기존 SessionService 로드 성공');
     } catch (error) {
       console.log('📦 SessionService 없음, 내장 서비스 사용');
@@ -29,7 +30,7 @@ async function loadServices() {
   if (!databaseService) {
     try {
       const DatabaseServiceModule = await import('../services/database/DatabaseService');
-      databaseService = DatabaseServiceModule.getInstance();
+      databaseService = DatabaseServiceModule.DatabaseService.getInstance();
       console.log('✅ 기존 DatabaseService 로드 성공');
     } catch (error) {
       console.log('📦 DatabaseService 없음, 내장 서비스 사용');
@@ -48,14 +49,21 @@ function validateJWTFormat(token: string): { isValid: boolean; error?: string } 
       return { isValid: false, error: 'Token is not a string' };
     }
 
-    // 🚨 force_token 완전 차단
-    if (token.startsWith('force_token')) {
-      return { isValid: false, error: 'force_token is not allowed' };
-    }
+    // 🚨 force_token 완전 차단 (모든 변형 포함)
+    const forbiddenTokens = [
+      'force_token',
+      'mock_token',
+      'temp_token',
+      'test_token',
+      'fake_token',
+      'dummy_token',
+      'bypass_token'
+    ];
 
-    // 🚨 임시 토큰들 차단
-    if (token.includes('mock_') || token.includes('temp_') || token.includes('test_')) {
-      return { isValid: false, error: 'Temporary tokens not allowed' };
+    for (const forbidden of forbiddenTokens) {
+      if (token.toLowerCase().includes(forbidden)) {
+        return { isValid: false, error: `${forbidden} is not allowed` };
+      }
     }
 
     // JWT 기본 형식 검증
@@ -102,8 +110,10 @@ async function verifyTokenSafely(token: string): Promise<any> {
     const decoded = jwt.verify(token, jwtSecret);
     console.log('✅ JWT 토큰 검증 성공:', (decoded as any).userId);
 
-    // 4. 데이터베이스에서 사용자 조회
+    // 4. 서비스 로드
     await loadServices();
+
+    // 5. 데이터베이스에서 사용자 조회
     if (databaseService && databaseService.getUserById) {
       const user = await databaseService.getUserById((decoded as any).userId);
       if (user) {
@@ -112,7 +122,7 @@ async function verifyTokenSafely(token: string): Promise<any> {
       }
     }
 
-    // 5. 기존 SessionService 활용
+    // 6. 기존 SessionService 활용
     if (sessionService && sessionService.getUserBySession) {
       const user = await sessionService.getUserBySession(token);
       if (user) {
@@ -121,7 +131,7 @@ async function verifyTokenSafely(token: string): Promise<any> {
       }
     }
 
-    // 6. 마지막 폴백 - 디코드된 정보로 사용자 객체 생성
+    // 7. 마지막 폴백 - 디코드된 정보로 사용자 객체 생성
     console.log('🔄 폴백 사용자 객체 생성');
     return {
       id: (decoded as any).userId || 'fallback_user',
@@ -142,7 +152,7 @@ async function verifyTokenSafely(token: string): Promise<any> {
 }
 
 // ============================================================================
-// 🔐 메인 인증 미들웨어
+// 🔐 메인 인증 미들웨어 (강화된 force_token 차단)
 // ============================================================================
 
 export const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -166,15 +176,25 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
       if (authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7).trim();
         
-        // 🚨 force_token 즉시 거부
-        if (token.startsWith('force_token')) {
-          console.log('🚫 force_token 감지, 즉시 거부');
+        // 🚨 force_token 및 모든 변형 즉시 거부
+        const forbiddenTokens = [
+          'force_token', 'mock_token', 'temp_token', 'test_token',
+          'fake_token', 'dummy_token', 'bypass_token', 'debug_token'
+        ];
+        
+        const isForbidden = forbiddenTokens.some(forbidden => 
+          token.toLowerCase().includes(forbidden)
+        );
+        
+        if (isForbidden) {
+          console.log('🚫 금지된 토큰 형식 감지, 즉시 거부:', token.substring(0, 20));
           return res.status(401).json({
             success: false,
             error: 'Invalid token format',
             message: '잘못된 토큰 형식입니다. 새로 로그인해주세요.',
-            details: 'force_token is not supported',
-            code: 'FORCE_TOKEN_REJECTED'
+            details: 'Forbidden token type detected',
+            code: 'FORBIDDEN_TOKEN_REJECTED',
+            timestamp: new Date().toISOString()
           });
         }
 
@@ -218,9 +238,10 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
         details: {
           hasAuthHeader: !!authHeader,
           hasSessionId: !!sessionId,
-          rejectedForceToken: authHeader?.includes('force_token') || false
+          rejectedForbiddenToken: authHeader?.includes('force_token') || false
         },
-        code: 'AUTH_REQUIRED'
+        code: 'AUTH_REQUIRED',
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -236,13 +257,14 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
       error: 'Authentication failed',
       message: '인증 처리 중 오류가 발생했습니다.',
       details: error.message,
-      code: 'AUTH_ERROR'
+      code: 'AUTH_ERROR',
+      timestamp: new Date().toISOString()
     });
   }
 };
 
 // ============================================================================
-// 🔧 세션 복원 지원 미들웨어 (선택적 인증)
+// 🔧 세션 복원 지원 미들웨어 (선택적 인증) - force_token 차단 포함
 // ============================================================================
 
 export const sessionRestoreMiddleware = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -254,9 +276,14 @@ export const sessionRestoreMiddleware = async (req: AuthenticatedRequest, res: R
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7).trim();
       
-      // force_token 거부
-      if (token.startsWith('force_token')) {
-        console.log('🚫 세션 복원에서 force_token 거부');
+      // 🚨 force_token 및 변형들 거부
+      const forbiddenTokens = ['force_token', 'mock_token', 'temp_token', 'test_token'];
+      const isForbidden = forbiddenTokens.some(forbidden => 
+        token.toLowerCase().includes(forbidden)
+      );
+      
+      if (isForbidden) {
+        console.log('🚫 세션 복원에서 금지된 토큰 거부');
         req.user = null;
         return next();
       }
@@ -286,21 +313,27 @@ function createMockSessionService() {
   return {
     getUserBySession: async (token: string) => {
       console.log('📦 Mock SessionService 사용');
-      // 기본적인 검증만 수행
-      if (token && token.length > 10 && !token.startsWith('force_token')) {
-        return {
-          id: 'mock_user_123',
-          username: 'MockUser',
-          email: 'mock@example.com',
-          did: 'did:mock:user123',
-          wallet_address: '0x1234567890123456789012345678901234567890',
-          cue_tokens: 1000,
-          trust_score: 75,
-          passport_level: 'Basic',
-          created_at: new Date().toISOString()
-        };
+      // 금지된 토큰 체크
+      const forbiddenTokens = ['force_token', 'mock_token', 'temp_token'];
+      const isForbidden = forbiddenTokens.some(forbidden => 
+        token.toLowerCase().includes(forbidden)
+      );
+      
+      if (isForbidden || !token || token.length < 10) {
+        return null;
       }
-      return null;
+      
+      return {
+        id: 'mock_user_123',
+        username: 'MockUser',
+        email: 'mock@example.com',
+        did: 'did:mock:user123',
+        wallet_address: '0x1234567890123456789012345678901234567890',
+        cue_tokens: 1000,
+        trust_score: 75,
+        passport_level: 'Basic',
+        created_at: new Date().toISOString()
+      };
     },
     getSession: (sessionId: string) => {
       if (sessionId && sessionId.length > 5) {
@@ -336,3 +369,12 @@ function createMockDatabaseService() {
     }
   };
 }
+
+// ============================================================================
+// 📤 Export
+// ============================================================================
+
+export default {
+  authMiddleware,
+  sessionRestoreMiddleware
+};
